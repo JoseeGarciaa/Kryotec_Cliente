@@ -7,6 +7,7 @@ import authRoutes from './routes/authRoutes';
 import dashboardRoutes from './routes/dashboardRoutes';
 import inventarioRoutes from './routes/inventarioRoutes';
 import registroRoutes from './routes/registroRoutes';
+import operacionRoutes from './routes/operacionRoutes';
 import jwt from 'jsonwebtoken';
 import { config } from './config';
 import expressStatic from 'express';
@@ -50,6 +51,7 @@ app.use('/auth', authRoutes);
 app.use('/dashboard', dashboardRoutes);
 app.use('/inventario', inventarioRoutes);
 app.use('/registro', registroRoutes);
+app.use('/operacion', operacionRoutes);
 app.get('/', (_req: Request, res: Response) => res.redirect('/auth/login'));
 app.get('/health', (_req: Request, res: Response) => res.json({ ok: true, env: process.env.NODE_ENV, port: process.env.PORT }));
 

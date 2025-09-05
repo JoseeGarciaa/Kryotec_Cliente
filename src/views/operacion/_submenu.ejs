@@ -1,0 +1,17 @@
+<div class="collapse collapse-arrow bg-base-200 mb-4">
+  <input type="checkbox" checked>
+  <div class="collapse-title text-md font-medium flex items-center gap-2">
+    <span>Operación</span>
+  </div>
+  <div class="collapse-content">
+    <ul class="menu">
+      <li><a class="<%= currentPath.endsWith('/todas') ? 'active' : '' %>" href="/operacion/todas">Todas las fases</a></li>
+      <li><a class="<%= currentPath.endsWith('/bodega') ? 'active' : '' %>" href="/operacion/bodega">En bodega</a></li>
+      <li><a class="<%= currentPath.endsWith('/preacond') ? 'active' : '' %>" href="/operacion/preacond">Registrar pre acondicionamiento</a></li>
+      <li><a class="<%= currentPath.endsWith('/acond') ? 'active' : '' %>" href="/operacion/acond">Acondicionamiento</a></li>
+      <li><a class="<%= currentPath.endsWith('/operacion') ? 'active' : '' %>" href="/operacion/operacion">Operación</a></li>
+      <li><a class="<%= currentPath.endsWith('/devolucion') ? 'active' : '' %>" href="/operacion/devolucion">Devolución</a></li>
+      <li><a class="<%= currentPath.endsWith('/inspeccion') ? 'active' : '' %>" href="/operacion/inspeccion">Inspección</a></li>
+    </ul>
+  </div>
+</div>
