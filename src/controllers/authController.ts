@@ -21,8 +21,19 @@ export const AuthController = {
     try {
       let user = null;
       if (tenantSchema) {
-        user = await withTenant(tenantSchema, async (client) => UsersModel.findByCorreo(client, correo));
-      } else {
+        try {
+          user = await withTenant(tenantSchema, async (client) => UsersModel.findByCorreo(client, correo));
+        } catch (e: any) {
+          // If tenant inferred is invalid or missing table, fall back to discovery
+          if (e?.code === '3F000' || e?.code === '42P01') {
+            tenantSchema = null;
+          } else {
+            throw e;
+          }
+        }
+      }
+
+      if (!tenantSchema) {
         const matches = await findUserInAnyTenant(correo);
         if (!matches) return res.status(401).render('auth/login', { error: 'Usuario o contraseña incorrectos', layout: 'layouts/auth', title: 'Acceso al Cliente' });
         if (matches.length > 1) {
@@ -53,6 +64,18 @@ export const AuthController = {
       console.error(err);
       const code = err?.code as string | undefined;
       if (code === '3F000' || code === '42P01') {
+        // As final fallback, attempt discovery
+        try {
+          const matches = await findUserInAnyTenant((req.body as any)?.correo);
+          if (matches && matches.length === 1) {
+            const tenant = matches[0].tenant;
+            const user = matches[0].user;
+            await withTenant(tenant, (client) => UsersModel.touchUltimoIngreso(client, user.id));
+            const token = jwt.sign({ sub: user.id, tenant, rol: user.rol }, config.jwtSecret, { expiresIn: '12h' });
+            res.cookie('token', token, { httpOnly: true, sameSite: 'lax', secure: process.env.NODE_ENV === 'production' });
+            return res.redirect('/inventario');
+          }
+        } catch {}
         return res.status(400).render('auth/login', { error: 'Tenant inválido o sin tabla de usuarios', layout: 'layouts/auth', title: 'Acceso al Cliente' });
       }
       res.status(500).render('auth/login', { error: 'Error del servidor', layout: 'layouts/auth', title: 'Acceso al Cliente' });
