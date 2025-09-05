@@ -83,7 +83,14 @@
   function fillLitrajePorTipo(tipo){
     litrajeEl.innerHTML = '<option value="" selected>Seleccione el litraje</option>';
     const list = (modelosByTipo && modelosByTipo[tipo]) || [];
-    for(const m of list){
+    // Sort by numeric liters if present in name (e.g., "Credo Cube 10L")
+    const parseLitros = (name)=>{
+      const m = (name||'').match(/(\d+(?:[\.,]\d+)?)\s*[lL]/);
+      if(!m) return Number.POSITIVE_INFINITY; // push unknowns to the end
+      return Number(String(m[1]).replace(',','.'));
+    };
+    const sorted = [...list].sort((a,b)=>parseLitros(a.name)-parseLitros(b.name));
+    for(const m of sorted){
       const opt = document.createElement('option');
       opt.value = String(m.id);
       opt.textContent = m.name;

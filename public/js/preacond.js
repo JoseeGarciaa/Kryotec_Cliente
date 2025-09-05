@@ -97,9 +97,10 @@
         : `<button class="btn btn-ghost btn-xs text-success" title="Iniciar" data-item-start="${r.rfid}" data-section="${section}">
              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" class="w-4 h-4" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
            </button>`;
-      const lotePill = r.item_lote || r.lote ? `<span class="badge badge-outline badge-sm">Lote: ${r.item_lote||r.lote}</span>` : '';
+      const loteVal = r.item_lote || r.lote || '';
+      const lotePill = loteVal ? `<span class="badge badge-ghost badge-xs sm:badge-sm whitespace-nowrap">L: ${loteVal}</span>` : '';
       tr.innerHTML = `<td>${r.rfid}</td><td class="hidden md:table-cell">${r.nombre_unidad||''}</td><td class="hidden lg:table-cell">${r.lote||r.item_lote||''}</td><td class="hidden md:table-cell">${r.estado||''}</td>
-        <td class="flex items-center gap-2">
+        <td class="flex flex-wrap items-center gap-1 sm:gap-2">
           <span class="badge ${isCompleted?'badge-info':'badge-neutral'} badge-sm" data-threshold="1"><span id="${timerId}">${active? '00:00:00' : ''}</span></span>
           ${lotePill}
           ${controls}
