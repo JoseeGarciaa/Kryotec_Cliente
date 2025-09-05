@@ -36,6 +36,11 @@
         <div class="text-xs opacity-60 mt-1">Escaneados: <span id="count">0</span> elementos</div>
       </div>
 
+      <div class="form-control md:col-span-2">
+        <label class="label"><span class="label-text">Lote (opcional)</span></label>
+        <input type="text" name="lote" class="input input-bordered" placeholder="Ingrese el número de lote" />
+      </div>
+
       <input type="hidden" name="modelo_id" id="modelo_id" />
       <div id="rfid-container"></div>
 
@@ -115,15 +120,17 @@
     resetRFIDs();
   });
 
-  scanEl.addEventListener('keydown', (e)=>{
-    if(e.key === 'Enter'){
-      e.preventDefault();
-      const v = scanEl.value.trim();
-      if(v && !rfids.includes(v)){
-        rfids.push(v);
+  // Regla: cada 24 caracteres se considera un RFID válido y se agrega automáticamente
+  scanEl.addEventListener('input', ()=>{
+    const v = scanEl.value.replace(/\s+/g, '');
+    if(v.length >= 24){
+      const chunk = v.slice(0,24);
+      const rest = v.slice(24);
+      if(chunk.length === 24 && !rfids.includes(chunk)){
+        rfids.push(chunk);
         renderRFIDs();
       }
-      scanEl.value = '';
+      scanEl.value = rest; // deja el resto por si vienen más tandas
     }
   });
 
