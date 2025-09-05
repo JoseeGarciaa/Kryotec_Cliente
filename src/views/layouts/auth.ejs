@@ -1,0 +1,18 @@
+<!DOCTYPE html>
+<html lang="es" data-theme="<%= theme === 'light' ? 'kryoLight' : 'kryoDark' %>">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title><%= (typeof title !== 'undefined' && title) ? title : 'Acceso' %></title>
+  <link rel="stylesheet" href="/static/css/app.css" />
+  <style>.auth-wrap{min-height:100vh;display:flex;align-items:center;justify-content:center;padding:24px}</style>
+</head>
+<body>
+  <div class="auth-wrap">
+    <%- body %>
+  </div>
+  <form class="theme-switch" method="post" action="/ui/theme-toggle" style="position:fixed;left:16px;bottom:16px">
+    <button class="button" type="submit">Tema: <%= theme === 'dark' ? 'Oscuro' : 'Claro' %></button>
+  </form>
+</body>
+</html>

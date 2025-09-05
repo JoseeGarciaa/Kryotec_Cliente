@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html lang="es" data-theme="<%= theme === 'light' ? 'kryoLight' : 'kryoDark' %>">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title><%= (typeof title !== 'undefined' && title) ? title : 'Kryotecsense' %></title>
+  <link rel="stylesheet" href="/static/css/app.css" />
+</head>
+<body class="min-h-screen">
+  <div class="drawer lg:drawer-open">
+    <input id="drawer-nav" type="checkbox" class="drawer-toggle" />
+    <div class="drawer-content flex flex-col">
+      <div class="navbar bg-base-200 sticky top-0 z-10">
+        <div class="flex-none lg:hidden">
+          <label for="drawer-nav" aria-label="open sidebar" class="btn btn-ghost btn-square">
+            <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16" /></svg>
+          </label>
+        </div>
+        <div class="flex-1">
+          <span class="text-xl font-semibold"><%= (typeof title !== 'undefined' && title) ? title : 'Kryotecsense' %></span>
+        </div>
+        <div class="flex-none">
+          <div class="mr-3 text-sm opacity-70">Tenant: <%= (user && user.tenant) || '-' %></div>
+          <form method="post" action="/ui/theme-toggle">
+            <button type="submit" class="btn btn-ghost"><%= theme === 'dark' ? 'Tema oscuro' : 'Tema claro' %></button>
+          </form>
+        </div>
+      </div>
+      <section class="p-4">
+        <%- body %>
+      </section>
+    </div>
+    <div class="drawer-side">
+      <label for="drawer-nav" aria-label="close sidebar" class="drawer-overlay"></label>
+      <aside class="min-h-full w-72 bg-base-200 p-4">
+        <div class="mb-4 px-2 text-lg font-bold">CredoCube</div>
+        <ul class="menu">
+          <li><a class="<%= currentPath.startsWith('/dashboard') ? 'active' : '' %>" href="/dashboard">Dashboard</a></li>
+          <li><a class="<%= currentPath.startsWith('/inventario') ? 'active' : '' %>" href="/inventario">Inventario</a></li>
+          <li><a class="<%= currentPath.startsWith('/usuarios') ? 'active' : '' %>" href="#">Usuarios</a></li>
+          <li>
+            <form method="post" action="/auth/logout">
+              <button class="btn btn-outline btn-sm mt-4">Salir</button>
+            </form>
+          </li>
+        </ul>
+      </aside>
+    </div>
+  </div>
+  <script src="/static/js/theme.js"></script>
+</body>
+</html>

@@ -1,0 +1,116 @@
+<% title = 'Inventario' %>
+
+<div class="card bg-base-200 mb-4">
+  <div class="card-body">
+    <form method="get" action="/inventario" class="grid grid-cols-1 md:grid-cols-4 gap-3 items-end">
+      <div class="form-control md:col-span-2">
+        <label class="label" for="q"><span class="label-text">Buscar</span></label>
+        <input class="input input-bordered" id="q" type="search" placeholder="Nombre o RFID" name="q" value="<%= q || '' %>" />
+      </div>
+      <div class="form-control">
+        <label class="label" for="modelo"><span class="label-text">Modelo</span></label>
+        <select class="select select-bordered" id="modelo" name="modelo">
+          <option value="">Todos los modelos</option>
+          <% modelos.forEach(m => { %>
+            <option value="<%= m.modelo_id %>" <%= (modelo==m.modelo_id? 'selected':'') %>><%= m.nombre_modelo %></option>
+          <% }) %>
+        </select>
+      </div>
+      <div class="form-control">
+        <label class="label" for="estado"><span class="label-text">Estado</span></label>
+        <select class="select select-bordered" id="estado" name="estado">
+          <option value="">Todos los estados</option>
+          <option <%= estado==='Disponible'?'selected':'' %>>Disponible</option>
+          <option <%= estado==='En Uso'?'selected':'' %>>En Uso</option>
+          <option <%= estado==='Mantenimiento'?'selected':'' %>>Mantenimiento</option>
+          <option <%= estado==='Pre-acondicionamiento'?'selected':'' %>>Pre-acondicionamiento</option>
+        </select>
+      </div>
+      <div class="md:col-span-4">
+        <button class="btn btn-primary">Filtrar</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<div class="card bg-base-200 mb-6">
+  <div class="card-body">
+    <h3 class="card-title">Registrar nuevo equipo</h3>
+    <form method="post" action="/inventario" class="grid grid-cols-1 md:grid-cols-3 gap-3">
+      <div class="form-control">
+        <label class="label"><span class="label-text">Modelo</span></label>
+        <select class="select select-bordered" name="modelo_id" required>
+          <% modelos.forEach(m => { %>
+            <option value="<%= m.modelo_id %>"><%= m.nombre_modelo %></option>
+          <% }) %>
+        </select>
+      </div>
+      <div class="form-control">
+        <label class="label"><span class="label-text">Nombre de Unidad</span></label>
+        <input class="input input-bordered" name="nombre_unidad" required />
+      </div>
+      <div class="form-control">
+        <label class="label"><span class="label-text">RFID</span></label>
+        <input class="input input-bordered" name="rfid" required />
+      </div>
+      <div class="form-control">
+        <label class="label"><span class="label-text">Lote</span></label>
+        <input class="input input-bordered" name="lote" />
+      </div>
+      <div class="form-control">
+        <label class="label"><span class="label-text">Estado</span></label>
+        <select class="select select-bordered" name="estado" required>
+          <option value="Disponible">Disponible</option>
+          <option value="En Uso">En Uso</option>
+          <option value="Mantenimiento">Mantenimiento</option>
+          <option value="Pre-acondicionamiento">Pre-acondicionamiento</option>
+        </select>
+      </div>
+      <div class="form-control">
+        <label class="label"><span class="label-text">Sub-estado</span></label>
+        <input class="input input-bordered" name="sub_estado" />
+      </div>
+      <div class="md:col-span-3">
+        <button class="btn btn-primary">Registrar</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<div class="card bg-base-200">
+  <div class="card-body">
+    <% if (typeof error !== 'undefined' && error) { %>
+      <div class="alert alert-error mb-3"><span><%= error %></span></div>
+    <% } %>
+    <div class="overflow-x-auto">
+      <table class="table table-zebra">
+        <thead>
+          <tr>
+            <th>ID</th>
+            <th>Modelo</th>
+            <th>Nombre</th>
+            <th>RFID</th>
+            <th>Estado</th>
+            <th>Sub-estado</th>
+            <th>Ingreso</th>
+          </tr>
+        </thead>
+        <tbody>
+          <% items.forEach(i => { %>
+            <tr>
+              <td><%= i.id %></td>
+              <td><%= i.nombre_modelo %></td>
+              <td><%= i.nombre_unidad %></td>
+              <td><%= i.rfid %></td>
+              <td>
+                <div class="badge badge-outline"><%= i.estado %></div>
+              </td>
+              <td><%= i.sub_estado || '' %></td>
+              <td><%= new Date(i.fecha_ingreso).toLocaleString() %></td>
+            </tr>
+          <% }) %>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>

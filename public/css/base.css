@@ -1,0 +1,18 @@
+:root{--bg:#0f172a;--surface:#111827;--border:#30384a;--text:#e5e7eb;--muted:#9ca3af;--primary:#6d6fff;--primary-2:#4f46e5;--ok:#22c55e;--warn:#f59e0b;--error:#ef4444}
+[data-theme='light']{--bg:#f6f7fb;--surface:#ffffff;--border:#e5e7eb;--text:#0f172a;--muted:#4b5563;--primary:#4f46e5;--primary-2:#4338ca}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--text);font-family:Inter,ui-sans-serif,system-ui,Segoe UI,Roboto,Ubuntu,Helvetica,Arial,sans-serif}
+.sidebar{position:fixed;inset:0 auto 0 0;width:260px;background:var(--surface);border-right:1px solid var(--border);padding:16px 12px}
+.sidebar .brand{font-weight:700;margin:8px 6px 18px}
+.sidebar nav{display:flex;flex-direction:column;gap:6px}
+.sidebar nav a{padding:10px 12px;border-radius:8px;text-decoration:none;color:var(--text)}
+.sidebar nav a.active,.sidebar nav a:hover{background:var(--primary);color:white}
+.theme-switch{position:absolute;bottom:16px;left:12px}
+.content{margin-left:260px;padding:24px}
+.page-header h1{margin:0 0 18px 0}
+.card{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:16px}
+.input{width:100%;padding:10px 12px;border-radius:8px;border:1px solid var(--border);background:transparent;color:inherit}
+.button{padding:10px 12px;border-radius:8px;border:1px solid var(--primary-2);background:var(--primary);color:white;cursor:pointer}
+.table{width:100%;border-collapse:separate;border-spacing:0}
+.table th,.table td{padding:10px;border-bottom:1px solid var(--border)}
+.table th{text-align:left;color:var(--muted);font-weight:600}
