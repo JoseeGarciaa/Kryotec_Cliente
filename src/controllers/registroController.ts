@@ -3,11 +3,11 @@ import { withTenant } from '../db/pool';
 
 type ModeloRow = { modelo_id: number; nombre_modelo: string; tipo: string | null };
 
-function normCat(tipo: string | null): 'TIC' | 'VIP' | 'Cubes' | 'Otros' {
+function normTipo(tipo: string | null): 'TIC' | 'VIP' | 'Cube' | 'Otros' {
   const t = (tipo || '').toLowerCase();
   if (t.startsWith('tic')) return 'TIC';
   if (t.startsWith('vip')) return 'VIP';
-  if (t.startsWith('cube') || t.startsWith('cubo')) return 'Cubes';
+  if (t.startsWith('cube') || t.startsWith('cubo')) return 'Cube';
   return 'Otros';
 }
 
@@ -18,15 +18,15 @@ export const RegistroController = {
     const modelos = modelosRes.rows;
 
     // Build a simple data structure { category: [{id, name}, ...] }
-    const byCat: Record<string, Array<{ id: number; name: string }>> = { TIC: [], VIP: [], Cubes: [], Otros: [] };
+    const byTipo: Record<string, Array<{ id: number; name: string }>> = { TIC: [], VIP: [], Cube: [], Otros: [] } as any;
     for (const m of modelos) {
-      const cat = normCat(m.tipo);
-      byCat[cat].push({ id: m.modelo_id, name: m.nombre_modelo });
+      const key = normTipo(m.tipo);
+      (byTipo[key] = byTipo[key] || []).push({ id: m.modelo_id, name: m.nombre_modelo });
     }
 
     res.render('registro/index', {
       title: 'Registro de Items',
-      modelosByCat: byCat,
+      modelosByTipo: byTipo,
     });
   },
 
@@ -36,7 +36,14 @@ export const RegistroController = {
     const modeloIdNum = Number(modelo_id);
     const rfidsArr: string[] = Array.isArray(rfids) ? rfids : [];
     if (!modeloIdNum || rfidsArr.length === 0) {
-      return res.status(400).render('registro/index', { title: 'Registro de Items', error: 'Complete tipo, litraje y escanee al menos un RFID', modelosByCat: {} });
+      // Rebuild modelosByTipo for re-render
+      const modelosRes = await withTenant(tenant, (c) => c.query<ModeloRow>('SELECT modelo_id, nombre_modelo, tipo FROM modelos ORDER BY nombre_modelo'));
+      const byTipo: Record<string, Array<{ id: number; name: string }>> = { TIC: [], VIP: [], Cube: [], Otros: [] } as any;
+      for (const m of modelosRes.rows) {
+        const key = normTipo(m.tipo);
+        (byTipo[key] = byTipo[key] || []).push({ id: m.modelo_id, name: m.nombre_modelo });
+      }
+      return res.status(400).render('registro/index', { title: 'Registro de Items', error: 'Complete tipo, litraje y escanee al menos un RFID', modelosByTipo: byTipo });
     }
 
     try {
@@ -64,8 +71,14 @@ export const RegistroController = {
     } catch (e: any) {
       console.error(e);
       const msg = e?.code === '23505' ? 'Uno o más RFID ya existen' : 'Error registrando items';
-      // Re-render with error; the view can recover using client-side state
-      return res.status(400).render('registro/index', { title: 'Registro de Items', error: msg, modelosByCat: {} });
+      // Re-render with error and modelosByTipo; the view can recover using client-side state
+      const modelosRes = await withTenant(tenant, (c) => c.query<ModeloRow>('SELECT modelo_id, nombre_modelo, tipo FROM modelos ORDER BY nombre_modelo'));
+      const byTipo: Record<string, Array<{ id: number; name: string }>> = { TIC: [], VIP: [], Cube: [], Otros: [] } as any;
+      for (const m of modelosRes.rows) {
+        const key = normTipo(m.tipo);
+        (byTipo[key] = byTipo[key] || []).push({ id: m.modelo_id, name: m.nombre_modelo });
+      }
+      return res.status(400).render('registro/index', { title: 'Registro de Items', error: msg, modelosByTipo: byTipo });
     }
   },
 };

@@ -15,10 +15,10 @@
 
     <form id="registro-form" method="post" action="/registro" class="grid grid-cols-1 md:grid-cols-2 gap-4">
       <div class="form-control">
-        <label class="label"><span class="label-text">Tipo de Contenedor</span></label>
+        <label class="label"><span class="label-text">Tipo</span></label>
         <select id="tipo" class="select select-bordered" required>
           <option value="" selected>Seleccione el tipo</option>
-          <option value="Cubes">CUBE</option>
+          <option value="Cube">Cube</option>
           <option value="VIP">VIP</option>
           <option value="TIC">TIC</option>
         </select>
@@ -34,6 +34,7 @@
         <label class="label"><span class="label-text flex items-center gap-2"> <span class="opacity-70">⟲</span> Escanear RFID</span></label>
         <input id="scan" type="text" class="input input-bordered w-full" placeholder="Complete tipo y litraje primero..." disabled />
         <div class="text-xs opacity-60 mt-1">Escaneados: <span id="count">0</span> elementos</div>
+  <div id="rfid-list" class="mt-3 flex flex-wrap gap-2"></div>
       </div>
 
       <div class="form-control md:col-span-2">
@@ -67,82 +68,6 @@
   </div>
 </div>
 
-<script id="modelos-data" type="application/json"><%- JSON.stringify(modelosByCat || {}) %></script>
-<script>
-  // modelosByCat recibido del servidor (desde script JSON embebido)
-  const modelosByCat = JSON.parse((document.getElementById('modelos-data')?.textContent || '{}'));
-  const tipoEl = document.getElementById('tipo');
-  const litrajeEl = document.getElementById('litraje');
-  const scanEl = document.getElementById('scan');
-  const modeloIdEl = document.getElementById('modelo_id');
-  const form = document.getElementById('registro-form');
-  const rfidContainer = document.getElementById('rfid-container');
-  const submitBtn = document.getElementById('submit-btn');
-  const countEl = document.getElementById('count');
-
-  let rfids = [];
-
-  function resetRFIDs(){ rfids = []; renderRFIDs(); }
-  function renderRFIDs(){
-    countEl.textContent = String(rfids.length);
-    submitBtn.textContent = `+ Registrar ${rfids.length} Item(s)`;
-    submitBtn.disabled = !(modeloIdEl.value && rfids.length > 0);
-    // Render as hidden inputs for server POST
-    rfidContainer.innerHTML = rfids.map((r,i)=>`<input type="hidden" name="rfids[${i}]" value="${r}">`).join('');
-  }
-
-  tipoEl.addEventListener('change', ()=>{
-    const tipo = tipoEl.value;
-    litrajeEl.innerHTML = '<option value="" selected>Seleccione el litraje</option>';
-    litrajeEl.disabled = !tipo;
-    scanEl.value = '';
-    scanEl.disabled = true;
-    modeloIdEl.value = '';
-    resetRFIDs();
-
-    if(!tipo) return;
-    // Litraje = lista de modelos dentro de esa categoría (nombre_modelo)
-    const list = modelosByCat[tipo] || [];
-    for(const m of list){
-      const opt = document.createElement('option');
-      opt.value = String(m.id);
-      opt.textContent = m.name;
-      litrajeEl.appendChild(opt);
-    }
-  });
-
-  litrajeEl.addEventListener('change', ()=>{
-    const selectedId = litrajeEl.value;
-    modeloIdEl.value = selectedId || '';
-    scanEl.disabled = !selectedId;
-    scanEl.placeholder = selectedId ? 'Listo para escanear...' : 'Complete tipo y litraje primero...';
-    scanEl.focus();
-    resetRFIDs();
-  });
-
-  // Regla: cada 24 caracteres se considera un RFID válido y se agrega automáticamente
-  scanEl.addEventListener('input', ()=>{
-    const v = scanEl.value.replace(/\s+/g, '');
-    if(v.length >= 24){
-      const chunk = v.slice(0,24);
-      const rest = v.slice(24);
-      if(chunk.length === 24 && !rfids.includes(chunk)){
-        rfids.push(chunk);
-        renderRFIDs();
-      }
-      scanEl.value = rest; // deja el resto por si vienen más tandas
-    }
-  });
-
-  form.addEventListener('submit', (e)=>{
-    if(!(modeloIdEl.value && rfids.length > 0)){
-      e.preventDefault();
-      return;
-    }
-  });
-
-  // Prefocus for quicker scanning
-  window.addEventListener('load', ()=>{
-    tipoEl.focus();
-  });
-</script>
+<!-- Datos para JS externo (evita inline scripts por CSP) -->
+<div id="registro-data" data-modelos='<%- JSON.stringify(modelosByTipo || {}) %>'></div>
+<script src="/static/js/registro.js" defer></script>
