@@ -1,112 +1,51 @@
 <% title = 'Inventario' %>
 
-<div class="card bg-base-200 mb-4">
-  <div class="card-body">
-    <form method="get" action="/inventario" class="grid grid-cols-1 md:grid-cols-4 gap-3 items-end">
-      <div class="form-control md:col-span-2">
-        <label class="label" for="q"><span class="label-text">Buscar</span></label>
-        <input class="input input-bordered" id="q" type="search" placeholder="Nombre o RFID" name="q" value="<%= q || '' %>" />
-      </div>
-      <div class="form-control">
-        <label class="label" for="modelo"><span class="label-text">Modelo</span></label>
-        <select class="select select-bordered" id="modelo" name="modelo">
-          <option value="">Todos los modelos</option>
-          <% modelos.forEach(m => { %>
-            <option value="<%= m.modelo_id %>" <%= (modelo==m.modelo_id? 'selected':'') %>><%= m.nombre_modelo %></option>
-          <% }) %>
-        </select>
-      </div>
-      <div class="form-control">
-        <label class="label" for="estado"><span class="label-text">Estado</span></label>
-        <select class="select select-bordered" id="estado" name="estado">
-          <option value="">Todos los estados</option>
-          <option <%= estado==='Disponible'?'selected':'' %>>Disponible</option>
-          <option <%= estado==='En Uso'?'selected':'' %>>En Uso</option>
-          <option <%= estado==='Mantenimiento'?'selected':'' %>>Mantenimiento</option>
-          <option <%= estado==='Pre-acondicionamiento'?'selected':'' %>>Pre-acondicionamiento</option>
-        </select>
-      </div>
-      <div class="md:col-span-4">
-        <button class="btn btn-primary">Filtrar</button>
-      </div>
-    </form>
-  </div>
+<div class="mb-2">
+  <p class="text-sm opacity-70">Gestión de credocubes y componentes RFID</p>
+  <form method="get" action="/inventario" class="mt-2">
+    <div class="form-control">
+      <label class="input input-bordered flex items-center gap-2">
+        <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="opacity-70"><circle cx="11" cy="11" r="8"></circle><path d="m21 21-4.3-4.3"></path></svg>
+        <input type="search" class="grow" placeholder="Buscar por nombre, RFID, lote o estado..." name="q" value="<%= q || '' %>" maxlength="24" />
+      </label>
+    </div>
+    <div class="text-xs opacity-60 mt-1">0/24 caracteres</div>
+    <div class="mt-3 flex flex-wrap gap-2">
+      <a class="btn btn-sm <%= !cat ? 'btn-primary' : '' %>" href="/inventario<%= q ? ('?q='+encodeURIComponent(q)) : '' %>">Todos (<%= counts?.total || 0 %>)</a>
+      <a class="btn btn-sm <%= cat==='cubes' ? 'btn-primary' : '' %>" href="/inventario?cat=cubes<%= q ? ('&q='+encodeURIComponent(q)) : '' %>">Cubes (<%= counts?.cubes || 0 %>)</a>
+      <a class="btn btn-sm <%= cat==='vips' ? 'btn-primary' : '' %>" href="/inventario?cat=vips<%= q ? ('&q='+encodeURIComponent(q)) : '' %>">VIPs (<%= counts?.vips || 0 %>)</a>
+      <a class="btn btn-sm <%= cat==='tics' ? 'btn-primary' : '' %>" href="/inventario?cat=tics<%= q ? ('&q='+encodeURIComponent(q)) : '' %>">TICs (<%= counts?.tics || 0 %>)</a>
+    </div>
+  </form>
 </div>
 
-<div class="card bg-base-200 mb-6">
-  <div class="card-body">
-    <h3 class="card-title">Registrar nuevo equipo</h3>
-    <form method="post" action="/inventario" class="grid grid-cols-1 md:grid-cols-3 gap-3">
-      <div class="form-control">
-        <label class="label"><span class="label-text">Modelo</span></label>
-        <select class="select select-bordered" name="modelo_id" required>
-          <% modelos.forEach(m => { %>
-            <option value="<%= m.modelo_id %>"><%= m.nombre_modelo %></option>
-          <% }) %>
-        </select>
-      </div>
-      <div class="form-control">
-        <label class="label"><span class="label-text">Nombre de Unidad</span></label>
-        <input class="input input-bordered" name="nombre_unidad" required />
-      </div>
-      <div class="form-control">
-        <label class="label"><span class="label-text">RFID</span></label>
-        <input class="input input-bordered" name="rfid" required />
-      </div>
-      <div class="form-control">
-        <label class="label"><span class="label-text">Lote</span></label>
-        <input class="input input-bordered" name="lote" />
-      </div>
-      <div class="form-control">
-        <label class="label"><span class="label-text">Estado</span></label>
-        <select class="select select-bordered" name="estado" required>
-          <option value="Disponible">Disponible</option>
-          <option value="En Uso">En Uso</option>
-          <option value="Mantenimiento">Mantenimiento</option>
-          <option value="Pre-acondicionamiento">Pre-acondicionamiento</option>
-        </select>
-      </div>
-      <div class="form-control">
-        <label class="label"><span class="label-text">Sub-estado</span></label>
-        <input class="input input-bordered" name="sub_estado" />
-      </div>
-      <div class="md:col-span-3">
-        <button class="btn btn-primary">Registrar</button>
-      </div>
-    </form>
-  </div>
-</div>
-
-<div class="card bg-base-200">
-  <div class="card-body">
-    <% if (typeof error !== 'undefined' && error) { %>
-      <div class="alert alert-error mb-3"><span><%= error %></span></div>
-    <% } %>
+<div class="card bg-base-200 shadow-lg transition-all hover:shadow-xl">
+  <div class="card-body animate-slide-up">
     <div class="overflow-x-auto">
       <table class="table table-zebra">
         <thead>
           <tr>
-            <th>ID</th>
-            <th>Modelo</th>
-            <th>Nombre</th>
+            <th>NOMBRE UNIDAD</th>
+            <th>MODELO ID</th>
             <th>RFID</th>
-            <th>Estado</th>
-            <th>Sub-estado</th>
-            <th>Ingreso</th>
+            <th>LOTE</th>
+            <th>ESTADO</th>
+            <th>SUB-ESTADO</th>
+            <th>CATEGORÍA</th>
+            <th>ÚLTIMA ACTUALIZACIÓN</th>
           </tr>
         </thead>
         <tbody>
           <% items.forEach(i => { %>
             <tr>
-              <td><%= i.id %></td>
-              <td><%= i.nombre_modelo %></td>
               <td><%= i.nombre_unidad %></td>
+              <td><%= i.modelo_id %></td>
               <td><%= i.rfid %></td>
-              <td>
-                <div class="badge badge-outline"><%= i.estado %></div>
-              </td>
+              <td><%= i.lote || '' %></td>
+              <td><div class="badge badge-primary badge-outline hover:badge-secondary transition-colors"><%= i.estado %></div></td>
               <td><%= i.sub_estado || '' %></td>
-              <td><%= new Date(i.fecha_ingreso).toLocaleString() %></td>
+              <td><%= i.categoria %></td>
+              <td><%= new Date(i.ultima_actualizacion).toLocaleString() %></td>
             </tr>
           <% }) %>
         </tbody>

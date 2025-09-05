@@ -25,7 +25,11 @@ app.use(helmet());
 app.use(express.urlencoded({ extended: true }));
 app.use(express.json());
 app.use(cookieParser());
-app.use('/static', expressStatic.static(path.join(process.cwd(), 'public')));
+const staticDir = path.join(process.cwd(), 'public');
+app.use('/static', expressStatic.static(staticDir, {
+	maxAge: process.env.NODE_ENV === 'production' ? '1d' : 0,
+	etag: true,
+}));
 
 // theme from cookie
 app.use((req, res, next) => {
