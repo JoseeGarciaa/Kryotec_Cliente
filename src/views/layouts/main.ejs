@@ -21,7 +21,7 @@
         </div>
         <div class="flex-none">
           <div class="mr-3 text-sm opacity-70">Tenant: <%= (user && user.tenant) || '-' %></div>
-          <form method="post" action="/ui/theme-toggle" class="hidden sm:block">
+          <form method="post" action="/ui/theme-toggle" class="hidden sm:block theme-switch">
             <input type="hidden" name="back" value="<%= currentPath %>">
             <button type="submit" class="btn btn-ghost"><%= theme === 'dark' ? 'Tema oscuro' : 'Tema claro' %></button>
           </form>
