@@ -6,6 +6,14 @@
 
 <div class="card bg-base-200 shadow-lg">
   <div class="card-body">
+    <% if (typeof error !== 'undefined' && error) { %>
+      <div class="alert alert-warning mb-2">
+        <span><%= error %></span>
+        <% if (typeof dups !== 'undefined' && dups && dups.length) { %>
+          <div class="text-xs mt-1 opacity-80">Duplicados: <%= dups.join(', ') %></div>
+        <% } %>
+      </div>
+    <% } %>
     <div class="flex items-center gap-2 mb-2">
       <div class="avatar placeholder">
         <div class="bg-primary text-primary-content rounded-full w-8"><span>▣</span></div>
@@ -16,11 +24,12 @@
     <form id="registro-form" method="post" action="/registro" class="grid grid-cols-1 md:grid-cols-2 gap-4">
       <div class="form-control">
         <label class="label"><span class="label-text">Tipo</span></label>
+        <% const __selectedTipo = (typeof selectedTipo !== 'undefined' ? selectedTipo : ''); %>
         <select id="tipo" class="select select-bordered" required>
           <option value="" selected>Seleccione el tipo</option>
-          <option value="Cube">Cube</option>
-          <option value="VIP">VIP</option>
-          <option value="TIC">TIC</option>
+          <option value="Cube" <%= __selectedTipo === 'Cube' ? 'selected' : '' %>>Cube</option>
+          <option value="VIP" <%= __selectedTipo === 'VIP' ? 'selected' : '' %>>VIP</option>
+          <option value="TIC" <%= __selectedTipo === 'TIC' ? 'selected' : '' %>>TIC</option>
         </select>
       </div>
       <div class="form-control">
@@ -35,6 +44,7 @@
         <input id="scan" type="text" class="input input-bordered w-full" placeholder="Complete tipo y litraje primero..." disabled />
         <div class="text-xs opacity-60 mt-1">Escaneados: <span id="count">0</span> elementos</div>
   <div id="rfid-list" class="mt-3 flex flex-wrap gap-2"></div>
+  <div id="dup-msg" class="text-xs text-error mt-1"></div>
       </div>
 
       <div class="form-control md:col-span-2">
@@ -42,7 +52,7 @@
         <input type="text" name="lote" class="input input-bordered" placeholder="Ingrese el número de lote" />
       </div>
 
-      <input type="hidden" name="modelo_id" id="modelo_id" />
+  <input type="hidden" name="modelo_id" id="modelo_id" value="<%= typeof selectedModelo !== 'undefined' ? selectedModelo : '' %>" />
       <div id="rfid-container"></div>
 
       <div class="md:col-span-2 flex justify-end">
@@ -69,5 +79,5 @@
 </div>
 
 <!-- Datos para JS externo (evita inline scripts por CSP) -->
-<div id="registro-data" data-modelos='<%- JSON.stringify(modelosByTipo || {}) %>'></div>
+<div id="registro-data" data-modelos='<%- JSON.stringify(modelosByTipo || {}) %>' data-rfids='<%- JSON.stringify(typeof rfids !== "undefined" ? rfids : []) %>' data-selected-tipo='<%- (typeof selectedTipo !== "undefined" ? selectedTipo : "") %>' data-selected-modelo='<%- (typeof selectedModelo !== "undefined" ? selectedModelo : "") %>' data-dups='<%- JSON.stringify(typeof dups !== "undefined" ? dups : []) %>'></div>
 <script src="/static/js/registro.js" defer></script>

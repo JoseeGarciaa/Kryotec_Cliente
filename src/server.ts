@@ -61,6 +61,7 @@ app.post('/ui/theme-toggle', (req, res) => {
 	const current = req.cookies?.theme || 'dark';
 	const next = current === 'dark' ? 'light' : 'dark';
 	res.cookie('theme', next, { httpOnly: false, sameSite: 'lax' });
-	const back = (req.headers.referer as string) || '/inventario';
+	const postedBack = (req.body && (req.body as any).back) as string | undefined;
+	const back = (postedBack && typeof postedBack === 'string') ? postedBack : ((req.headers.referer as string) || '/inventario');
 	res.redirect(back);
 });
