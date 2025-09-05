@@ -37,6 +37,8 @@ app.use('/static', expressStatic.static(staticDir, {
 app.use((req, res, next) => {
 	res.locals.theme = req.cookies?.theme || 'dark';
 	res.locals.currentPath = req.path;
+	// asset version for cache-busting across environments
+	(res.locals as any).assetVersion = process.env.ASSET_VERSION || process.env.RAILWAY_GIT_COMMIT_SHA || String(Date.now());
 	// expose user (decoded) if present
 	const token = req.cookies?.token;
 	if (token) {

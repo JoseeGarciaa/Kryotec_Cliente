@@ -20,12 +20,13 @@
       </div>
       <div class="flex items-center gap-3">
         <span class="loading loading-spinner loading-xs hidden" id="spin-cong"></span>
+        <div id="timer-cong" class="text-sm opacity-80"></div>
         <div class="flex items-center gap-2">
           <button id="btn-add-cong" class="btn btn-primary gap-2">
             <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" viewBox="0 0 24 24" fill="currentColor"><path d="M11 11V5a1 1 0 1 1 2 0v6h6a1 1 0 1 1 0 2h-6v6a1 1 0 1 1-2 0v-6H5a1 1 0 1 1 0-2h6Z"/></svg>
             Agregar TICs
           </button>
-          <div class="dropdown dropdown-end">
+      <div class="dropdown dropdown-end">
             <label tabindex="0" class="btn btn-primary px-2">
               <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" viewBox="0 0 24 24" fill="currentColor"><path d="M7 10l5 5 5-5H7z"/></svg>
             </label>
@@ -33,6 +34,9 @@
               <li><button type="button" class="justify-start" data-open-scan="congelamiento">Escanear RFIDs</button></li>
               <li><button type="button" class="justify-start" disabled>Buscar en inventario</button></li>
               <li><button type="button" class="justify-start" disabled>Pegar desde Excel</button></li>
+        <li class="menu-title">Cronómetro</li>
+        <li><button type="button" class="justify-start" data-open-timer="congelamiento">Iniciar cronómetro…</button></li>
+        <li><button type="button" class="justify-start" data-clear-timer="congelamiento">Detener y limpiar</button></li>
             </ul>
           </div>
         </div>
@@ -73,6 +77,7 @@
       </div>
       <div class="flex items-center gap-3">
         <span class="loading loading-spinner loading-xs hidden" id="spin-atem"></span>
+        <div id="timer-atem" class="text-sm opacity-80"></div>
         <div class="flex items-center gap-2">
           <button id="btn-add-atem" class="btn btn-warning gap-2">
             <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" viewBox="0 0 24 24" fill="currentColor"><path d="M11 11V5a1 1 0 1 1 2 0v6h6a1 1 0 1 1 0 2h-6v6a1 1 0 1 1-2 0v-6H5a1 1 0 1 1 0-2h6Z"/></svg>
@@ -86,6 +91,9 @@
               <li><button type="button" class="justify-start" data-open-scan="atemperamiento">Escanear RFIDs</button></li>
               <li><button type="button" class="justify-start" disabled>Buscar en inventario</button></li>
               <li><button type="button" class="justify-start" disabled>Pegar desde Excel</button></li>
+              <li class="menu-title">Cronómetro</li>
+              <li><button type="button" class="justify-start" data-open-timer="atemperamiento">Iniciar cronómetro…</button></li>
+              <li><button type="button" class="justify-start" data-clear-timer="atemperamiento">Detener y limpiar</button></li>
             </ul>
           </div>
         </div>
@@ -137,6 +145,6 @@
   </div>
 </dialog>
 
-<script src="/static/js/preacond.js" defer></script>
+<script src="/static/js/preacond.js?v=<%= assetVersion %>" defer></script>
         </tbody>
 

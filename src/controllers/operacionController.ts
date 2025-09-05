@@ -14,15 +14,18 @@ export const OperacionController = {
   // Data for pre-acondicionamiento lists
   preacondData: async (req: Request, res: Response) => {
     const tenant = (req as any).user?.tenant;
-   // Ensure columns for timers exist
-   await withTenant(tenant, (c) => c.query(
-    `ALTER TABLE inventario_credocubes
-      ADD COLUMN IF NOT EXISTS preacond_cong_started_at timestamptz,
-      ADD COLUMN IF NOT EXISTS preacond_atem_started_at timestamptz`));
+    // Ensure timers table exists (global per-section timer)
+    await withTenant(tenant, (c) => c.query(
+      `CREATE TABLE IF NOT EXISTS preacond_timers (
+         section text PRIMARY KEY,
+         started_at timestamptz,
+         duration_sec integer,
+         active boolean NOT NULL DEFAULT false,
+         updated_at timestamptz NOT NULL DEFAULT NOW()
+       )`));
 
    const rowsCong = await withTenant(tenant, (c) => c.query(
       `SELECT ic.rfid, ic.nombre_unidad, ic.lote, ic.estado, ic.sub_estado
-        , ic.preacond_cong_started_at AS started_at
      FROM inventario_credocubes ic
        JOIN modelos m ON m.modelo_id = ic.modelo_id
        WHERE ic.estado = 'Pre Acondicionamiento' AND ic.sub_estado = 'Congelamiento'
@@ -31,15 +34,18 @@ export const OperacionController = {
        LIMIT 500`));
    const rowsAtem = await withTenant(tenant, (c) => c.query(
       `SELECT ic.rfid, ic.nombre_unidad, ic.lote, ic.estado, ic.sub_estado
-        , ic.preacond_atem_started_at AS started_at
      FROM inventario_credocubes ic
        JOIN modelos m ON m.modelo_id = ic.modelo_id
        WHERE ic.estado = 'Pre Acondicionamiento' AND ic.sub_estado = 'Atemperamiento'
          AND (m.nombre_modelo ILIKE '%tic%')
        ORDER BY ic.id DESC
        LIMIT 500`));
-   const nowRes = await withTenant(tenant, (c) => c.query<{ now: string }>(`SELECT NOW()::timestamptz AS now`));
-   res.json({ now: nowRes.rows[0]?.now, congelamiento: rowsCong.rows, atemperamiento: rowsAtem.rows });
+    const nowRes = await withTenant(tenant, (c) => c.query<{ now: string }>(`SELECT NOW()::timestamptz AS now`));
+    const timers = await withTenant(tenant, (c) => c.query(
+      `SELECT section, started_at, duration_sec, active FROM preacond_timers WHERE section IN ('congelamiento','atemperamiento')`));
+    const map: any = { congelamiento: null, atemperamiento: null };
+    for(const r of timers.rows as any[]) map[r.section] = r;
+    res.json({ now: nowRes.rows[0]?.now, timers: map, congelamiento: rowsCong.rows, atemperamiento: rowsAtem.rows });
   },
 
   // Scan/move TICs into Congelamiento or Atemperamiento
@@ -84,17 +90,11 @@ export const OperacionController = {
       }
     }
 
-    if (accept.length) {
-      // Ensure columns exist before update
-      await withTenant(tenant, (c) => c.query(
-        `ALTER TABLE inventario_credocubes
-           ADD COLUMN IF NOT EXISTS preacond_cong_started_at timestamptz,
-           ADD COLUMN IF NOT EXISTS preacond_atem_started_at timestamptz`));
+  if (accept.length) {
       if (t === 'congelamiento') {
         await withTenant(tenant, (c) => c.query(
           `UPDATE inventario_credocubes ic
-              SET estado = 'Pre Acondicionamiento', sub_estado = 'Congelamiento',
-                  preacond_cong_started_at = COALESCE(preacond_cong_started_at, NOW())
+        SET estado = 'Pre Acondicionamiento', sub_estado = 'Congelamiento'
             FROM modelos m
            WHERE ic.modelo_id = m.modelo_id
              AND ic.rfid = ANY($1::text[])
@@ -102,8 +102,7 @@ export const OperacionController = {
       } else {
         await withTenant(tenant, (c) => c.query(
           `UPDATE inventario_credocubes ic
-              SET estado = 'Pre Acondicionamiento', sub_estado = 'Atemperamiento',
-                  preacond_atem_started_at = COALESCE(preacond_atem_started_at, NOW())
+        SET estado = 'Pre Acondicionamiento', sub_estado = 'Atemperamiento'
             FROM modelos m
            WHERE ic.modelo_id = m.modelo_id
              AND ic.rfid = ANY($1::text[])
@@ -150,5 +149,51 @@ export const OperacionController = {
     }
 
     res.json({ ok: true, valid: ok, invalid });
+  },
+
+  // Start/clear global timers per section
+  preacondTimerStart: async (req: Request, res: Response) => {
+    const tenant = (req as any).user?.tenant;
+    const { section, durationSec } = req.body as any;
+    const s = typeof section === 'string' ? section.toLowerCase() : '';
+    const dur = Number(durationSec);
+    if(!['congelamiento','atemperamiento'].includes(s) || !Number.isFinite(dur) || dur <= 0){
+      return res.status(400).json({ ok:false, error:'Entrada inválida' });
+    }
+    await withTenant(tenant, async (c) => {
+      await c.query(`CREATE TABLE IF NOT EXISTS preacond_timers (
+         section text PRIMARY KEY,
+         started_at timestamptz,
+         duration_sec integer,
+         active boolean NOT NULL DEFAULT false,
+         updated_at timestamptz NOT NULL DEFAULT NOW()
+      )`);
+      await c.query(
+        `INSERT INTO preacond_timers(section, started_at, duration_sec, active, updated_at)
+           VALUES ($1, NOW(), $2, true, NOW())
+         ON CONFLICT (section) DO UPDATE
+           SET started_at = EXCLUDED.started_at,
+               duration_sec = EXCLUDED.duration_sec,
+               active = true,
+               updated_at = NOW()`,
+        [s, dur]
+      );
+    });
+    res.json({ ok:true });
+  },
+
+  preacondTimerClear: async (req: Request, res: Response) => {
+    const tenant = (req as any).user?.tenant;
+    const { section } = req.body as any;
+    const s = typeof section === 'string' ? section.toLowerCase() : '';
+    if(!['congelamiento','atemperamiento'].includes(s)) return res.status(400).json({ ok:false, error:'Entrada inválida' });
+    await withTenant(tenant, (c) => c.query(
+      `INSERT INTO preacond_timers(section, started_at, duration_sec, active, updated_at)
+         VALUES ($1, NULL, NULL, false, NOW())
+       ON CONFLICT (section) DO UPDATE
+         SET started_at = NULL, duration_sec = NULL, active = false, updated_at = NOW()`,
+      [s]
+    ));
+    res.json({ ok:true });
   },
 };

@@ -75,4 +75,4 @@
 
 <!-- Datos para JS externo (evita inline scripts por CSP) -->
 <div id="registro-data" data-modelos='<%- JSON.stringify(modelosByTipo || {}) %>' data-rfids='<%- JSON.stringify(typeof rfids !== "undefined" ? rfids : []) %>' data-selected-tipo='<%- (typeof selectedTipo !== "undefined" ? selectedTipo : "") %>' data-selected-modelo='<%- (typeof selectedModelo !== "undefined" ? selectedModelo : "") %>' data-dups='<%- JSON.stringify(typeof dups !== "undefined" ? dups : []) %>'></div>
-<script src="/static/js/registro.js?v=<%= Date.now() %>" defer></script>
+<script src="/static/js/registro.js?v=<%= assetVersion %>" defer></script>

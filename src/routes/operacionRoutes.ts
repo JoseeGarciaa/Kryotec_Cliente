@@ -10,6 +10,8 @@ router.get('/preacond', requireAuth, OperacionController.preacond);
 router.get('/preacond/data', requireAuth, OperacionController.preacondData);
 router.post('/preacond/scan', requireAuth, OperacionController.preacondScan);
 router.post('/preacond/validate', requireAuth, OperacionController.preacondValidate);
+router.post('/preacond/timer/start', requireAuth, OperacionController.preacondTimerStart);
+router.post('/preacond/timer/clear', requireAuth, OperacionController.preacondTimerClear);
 router.get('/acond', requireAuth, OperacionController.acond);
 router.get('/operacion', requireAuth, OperacionController.operacion);
 router.get('/devolucion', requireAuth, OperacionController.devolucion);

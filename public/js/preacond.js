@@ -7,6 +7,8 @@
   const countAtem = qs('#count-atem');
   const spinCong = qs('#spin-cong');
   const spinAtem = qs('#spin-atem');
+  const timerCongEl = qs('#timer-cong');
+  const timerAtemEl = qs('#timer-atem');
 
   // Modal elements
   const dlg = qs('#dlg-scan');
@@ -45,6 +47,8 @@
       render(tableAtemBody, j.atemperamiento, 'No hay TICs en atemperamiento');
       countCong.textContent = `(${j.congelamiento.length} de ${j.congelamiento.length})`;
       countAtem.textContent = `(${j.atemperamiento.length} de ${j.atemperamiento.length})`;
+      setupSectionTimer('congelamiento', j.timers?.congelamiento || null);
+      setupSectionTimer('atemperamiento', j.timers?.atemperamiento || null);
     }catch(e){ console.error(e); }
     finally{ setSpin('cong', false); setSpin('atem', false); }
   }
@@ -82,9 +86,49 @@
         const id = tr.getAttribute('data-timer-id');
         if(started && id){ const el = document.getElementById(id); if(el) el.textContent = fmt(now - started); }
       });
+      // Update section timers
+      updateSectionTimer(now, 'congelamiento');
+      updateSectionTimer(now, 'atemperamiento');
       rafId = requestAnimationFrame(step);
     };
     step();
+  }
+
+  // Section Timers (global per section)
+  const sectionTimers = {
+    congelamiento: { startedAt: null, durationSec: 0, active: false },
+    atemperamiento: { startedAt: null, durationSec: 0, active: false }
+  };
+  function setupSectionTimer(section, data){
+    const t = sectionTimers[section];
+    t.startedAt = data && data.started_at ? new Date(data.started_at).getTime() : null;
+    t.durationSec = data && Number.isFinite(data.duration_sec) ? Number(data.duration_sec) : 0;
+    t.active = !!(data && data.active);
+  }
+  function sectionEl(section){ return section==='congelamiento' ? timerCongEl : timerAtemEl; }
+  function updateSectionTimer(now, section){
+    const t = sectionTimers[section]; const el = sectionEl(section); if(!el) return;
+    if(!t.active || !t.startedAt || !t.durationSec){ el.textContent=''; return; }
+    const elapsed = Math.floor((now - t.startedAt)/1000);
+    const remaining = Math.max(0, t.durationSec - elapsed);
+    const hh = String(Math.floor(remaining/3600)).padStart(2,'0');
+    const mm = String(Math.floor((remaining%3600)/60)).padStart(2,'0');
+    const ss = String(remaining%60).padStart(2,'0');
+    el.textContent = `⏱️ ${hh}:${mm}:${ss}`;
+    if(remaining===0){ t.active=false; }
+  }
+
+  async function startSectionTimer(section){
+    const minutesStr = prompt('Duración (minutos):');
+    if(!minutesStr) return; const minutes = Number(minutesStr);
+    if(!Number.isFinite(minutes) || minutes<=0) return;
+    const durationSec = Math.round(minutes*60);
+    await fetch('/operacion/preacond/timer/start', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ section, durationSec }) });
+    await loadData();
+  }
+  async function clearSectionTimer(section){
+    await fetch('/operacion/preacond/timer/clear', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ section }) });
+    await loadData();
   }
 
   function openModal(toTarget){
@@ -155,6 +199,12 @@
   // Openers from dropdowns
   document.querySelectorAll('[data-open-scan]')?.forEach((el)=>{
     el.addEventListener('click', ()=>{ const to=(el).getAttribute('data-open-scan'); openModal(to==='atemperamiento'?'atemperamiento':'congelamiento'); });
+  });
+  document.querySelectorAll('[data-open-timer]')?.forEach((el)=>{
+    el.addEventListener('click', ()=>{ const s=(el).getAttribute('data-open-timer'); startSectionTimer(s); });
+  });
+  document.querySelectorAll('[data-clear-timer]')?.forEach((el)=>{
+    el.addEventListener('click', ()=>{ const s=(el).getAttribute('data-clear-timer'); clearSectionTimer(s); });
   });
 
   // Also primary buttons
