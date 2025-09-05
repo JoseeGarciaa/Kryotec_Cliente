@@ -25,11 +25,22 @@
     el.classList.toggle('hidden', !on);
   }
 
+  let serverNowOffsetMs = 0; // client_now - server_now to keep sync
+  function fmt(ms){
+    const s = Math.max(0, Math.floor(ms/1000));
+    const hh = String(Math.floor(s/3600)).padStart(2,'0');
+    const mm = String(Math.floor((s%3600)/60)).padStart(2,'0');
+    const ss = String(s%60).padStart(2,'0');
+    return `${hh}:${mm}:${ss}`;
+  }
+
   async function loadData(){
     try{
       setSpin('cong', true); setSpin('atem', true);
       const r = await fetch('/operacion/preacond/data', { headers: { 'Accept':'application/json' } });
       const j = await r.json();
+      const serverNow = new Date(j.now).getTime();
+      serverNowOffsetMs = Date.now() - serverNow;
       render(tableCongBody, j.congelamiento, 'No hay TICs en congelamiento');
       render(tableAtemBody, j.atemperamiento, 'No hay TICs en atemperamiento');
       countCong.textContent = `(${j.congelamiento.length} de ${j.congelamiento.length})`;
@@ -47,9 +58,33 @@
     }
     for(const r of rows){
       const tr = document.createElement('tr');
-      tr.innerHTML = `<td>${r.rfid}</td><td>${r.nombre_unidad||''}</td><td>${r.lote||''}</td><td>${r.estado||''}</td><td></td>`;
+      const started = r.started_at ? new Date(r.started_at).getTime() : null;
+      const tableId = (tbody.closest('table') && tbody.closest('table').id) || 'x';
+      const timerId = `tm-${tableId}-${r.rfid}`;
+      tr.innerHTML = `<td>${r.rfid}</td><td>${r.nombre_unidad||''}</td><td>${r.lote||''}</td><td>${r.estado||''}</td><td><span id="${timerId}">${started? '00:00:00' : ''}</span></td>`;
+      if(started){
+        tr.setAttribute('data-timer-started', String(started));
+        tr.setAttribute('data-timer-id', timerId);
+      }
       tbody.appendChild(tr);
     }
+    // ensure ticking is running
+    startGlobalTick();
+  }
+
+  let ticking = false, rafId = 0;
+  function startGlobalTick(){
+    if(ticking) return; ticking = true;
+    const step = ()=>{
+      const now = Date.now() - serverNowOffsetMs;
+      document.querySelectorAll('tr[data-timer-started]').forEach((tr)=>{
+        const started = Number(tr.getAttribute('data-timer-started')||'');
+        const id = tr.getAttribute('data-timer-id');
+        if(started && id){ const el = document.getElementById(id); if(el) el.textContent = fmt(now - started); }
+      });
+      rafId = requestAnimationFrame(step);
+    };
+    step();
   }
 
   function openModal(toTarget){

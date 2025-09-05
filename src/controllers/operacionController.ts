@@ -14,23 +14,32 @@ export const OperacionController = {
   // Data for pre-acondicionamiento lists
   preacondData: async (req: Request, res: Response) => {
     const tenant = (req as any).user?.tenant;
-    const rowsCong = await withTenant(tenant, (c) => c.query(
+   // Ensure columns for timers exist
+   await withTenant(tenant, (c) => c.query(
+    `ALTER TABLE inventario_credocubes
+      ADD COLUMN IF NOT EXISTS preacond_cong_started_at timestamptz,
+      ADD COLUMN IF NOT EXISTS preacond_atem_started_at timestamptz`));
+
+   const rowsCong = await withTenant(tenant, (c) => c.query(
       `SELECT ic.rfid, ic.nombre_unidad, ic.lote, ic.estado, ic.sub_estado
-       FROM inventario_credocubes ic
+        , ic.preacond_cong_started_at AS started_at
+     FROM inventario_credocubes ic
        JOIN modelos m ON m.modelo_id = ic.modelo_id
        WHERE ic.estado = 'Pre Acondicionamiento' AND ic.sub_estado = 'Congelamiento'
          AND (m.nombre_modelo ILIKE '%tic%')
        ORDER BY ic.id DESC
        LIMIT 500`));
-    const rowsAtem = await withTenant(tenant, (c) => c.query(
+   const rowsAtem = await withTenant(tenant, (c) => c.query(
       `SELECT ic.rfid, ic.nombre_unidad, ic.lote, ic.estado, ic.sub_estado
-       FROM inventario_credocubes ic
+        , ic.preacond_atem_started_at AS started_at
+     FROM inventario_credocubes ic
        JOIN modelos m ON m.modelo_id = ic.modelo_id
        WHERE ic.estado = 'Pre Acondicionamiento' AND ic.sub_estado = 'Atemperamiento'
          AND (m.nombre_modelo ILIKE '%tic%')
        ORDER BY ic.id DESC
        LIMIT 500`));
-    res.json({ congelamiento: rowsCong.rows, atemperamiento: rowsAtem.rows });
+   const nowRes = await withTenant(tenant, (c) => c.query<{ now: string }>(`SELECT NOW()::timestamptz AS now`));
+   res.json({ now: nowRes.rows[0]?.now, congelamiento: rowsCong.rows, atemperamiento: rowsAtem.rows });
   },
 
   // Scan/move TICs into Congelamiento or Atemperamiento
@@ -76,10 +85,16 @@ export const OperacionController = {
     }
 
     if (accept.length) {
+      // Ensure columns exist before update
+      await withTenant(tenant, (c) => c.query(
+        `ALTER TABLE inventario_credocubes
+           ADD COLUMN IF NOT EXISTS preacond_cong_started_at timestamptz,
+           ADD COLUMN IF NOT EXISTS preacond_atem_started_at timestamptz`));
       if (t === 'congelamiento') {
         await withTenant(tenant, (c) => c.query(
           `UPDATE inventario_credocubes ic
-              SET estado = 'Pre Acondicionamiento', sub_estado = 'Congelamiento'
+              SET estado = 'Pre Acondicionamiento', sub_estado = 'Congelamiento',
+                  preacond_cong_started_at = COALESCE(preacond_cong_started_at, NOW())
             FROM modelos m
            WHERE ic.modelo_id = m.modelo_id
              AND ic.rfid = ANY($1::text[])
@@ -87,7 +102,8 @@ export const OperacionController = {
       } else {
         await withTenant(tenant, (c) => c.query(
           `UPDATE inventario_credocubes ic
-              SET estado = 'Pre Acondicionamiento', sub_estado = 'Atemperamiento'
+              SET estado = 'Pre Acondicionamiento', sub_estado = 'Atemperamiento',
+                  preacond_atem_started_at = COALESCE(preacond_atem_started_at, NOW())
             FROM modelos m
            WHERE ic.modelo_id = m.modelo_id
              AND ic.rfid = ANY($1::text[])
