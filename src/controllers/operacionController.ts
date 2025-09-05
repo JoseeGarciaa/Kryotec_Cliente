@@ -20,29 +20,51 @@ export const OperacionController = {
          section text PRIMARY KEY,
          started_at timestamptz,
          duration_sec integer,
+         lote text,
          active boolean NOT NULL DEFAULT false,
          updated_at timestamptz NOT NULL DEFAULT NOW()
        )`));
+    // Ensure item timers table exists (per-RFID timers)
+    await withTenant(tenant, (c) => c.query(
+      `CREATE TABLE IF NOT EXISTS preacond_item_timers (
+         rfid text NOT NULL,
+         section text NOT NULL,
+         started_at timestamptz,
+         duration_sec integer,
+         lote text,
+         active boolean NOT NULL DEFAULT false,
+         updated_at timestamptz NOT NULL DEFAULT NOW(),
+         PRIMARY KEY (rfid, section)
+       )`));
+
+    // Try to add missing columns if table existed before
+    await withTenant(tenant, (c) => c.query(`ALTER TABLE preacond_timers ADD COLUMN IF NOT EXISTS lote text`));
 
    const rowsCong = await withTenant(tenant, (c) => c.query(
-      `SELECT ic.rfid, ic.nombre_unidad, ic.lote, ic.estado, ic.sub_estado
-     FROM inventario_credocubes ic
+      `SELECT ic.rfid, ic.nombre_unidad, ic.lote, ic.estado, ic.sub_estado,
+              pit.started_at AS started_at, pit.duration_sec AS duration_sec, pit.active AS item_active, pit.lote AS item_lote
+       FROM inventario_credocubes ic
        JOIN modelos m ON m.modelo_id = ic.modelo_id
+       LEFT JOIN preacond_item_timers pit
+         ON pit.rfid = ic.rfid AND pit.section = 'congelamiento'
        WHERE ic.estado = 'Pre Acondicionamiento' AND ic.sub_estado = 'Congelamiento'
          AND (m.nombre_modelo ILIKE '%tic%')
        ORDER BY ic.id DESC
        LIMIT 500`));
    const rowsAtem = await withTenant(tenant, (c) => c.query(
-      `SELECT ic.rfid, ic.nombre_unidad, ic.lote, ic.estado, ic.sub_estado
-     FROM inventario_credocubes ic
+      `SELECT ic.rfid, ic.nombre_unidad, ic.lote, ic.estado, ic.sub_estado,
+              pit.started_at AS started_at, pit.duration_sec AS duration_sec, pit.active AS item_active, pit.lote AS item_lote
+       FROM inventario_credocubes ic
        JOIN modelos m ON m.modelo_id = ic.modelo_id
+       LEFT JOIN preacond_item_timers pit
+         ON pit.rfid = ic.rfid AND pit.section = 'atemperamiento'
        WHERE ic.estado = 'Pre Acondicionamiento' AND ic.sub_estado = 'Atemperamiento'
          AND (m.nombre_modelo ILIKE '%tic%')
        ORDER BY ic.id DESC
        LIMIT 500`));
     const nowRes = await withTenant(tenant, (c) => c.query<{ now: string }>(`SELECT NOW()::timestamptz AS now`));
     const timers = await withTenant(tenant, (c) => c.query(
-      `SELECT section, started_at, duration_sec, active FROM preacond_timers WHERE section IN ('congelamiento','atemperamiento')`));
+      `SELECT section, started_at, duration_sec, active, lote FROM preacond_timers WHERE section IN ('congelamiento','atemperamiento')`));
     const map: any = { congelamiento: null, atemperamiento: null };
     for(const r of timers.rows as any[]) map[r.section] = r;
     res.json({ now: nowRes.rows[0]?.now, timers: map, congelamiento: rowsCong.rows, atemperamiento: rowsAtem.rows });
@@ -109,6 +131,17 @@ export const OperacionController = {
              AND (m.nombre_modelo ILIKE '%tic%')
              AND ic.estado = 'Pre Acondicionamiento' AND ic.sub_estado = 'Congelamiento'`, [accept]));
       }
+
+      // If there is an active group timer with a lote set for the target section, apply that lote to these RFIDs
+      const timer = await withTenant(tenant, (c) => c.query(
+        `SELECT lote FROM preacond_timers WHERE section = $1 AND active = true AND lote IS NOT NULL`, [t]
+      ));
+      const lote = timer.rows?.[0]?.lote as string | undefined;
+      if (lote) {
+        await withTenant(tenant, (c) => c.query(
+          `UPDATE inventario_credocubes SET lote = $1 WHERE rfid = ANY($2::text[])`, [lote, accept]
+        ));
+      }
     }
 
     res.json({ ok: true, moved: accept, rejected: rejects, target: t });
@@ -154,10 +187,11 @@ export const OperacionController = {
   // Start/clear global timers per section
   preacondTimerStart: async (req: Request, res: Response) => {
     const tenant = (req as any).user?.tenant;
-    const { section, durationSec } = req.body as any;
+    const { section, durationSec, lote, rfids } = req.body as any;
     const s = typeof section === 'string' ? section.toLowerCase() : '';
     const dur = Number(durationSec);
-    if(!['congelamiento','atemperamiento'].includes(s) || !Number.isFinite(dur) || dur <= 0){
+    const loteVal = typeof lote === 'string' ? lote.trim() : '';
+    if(!['congelamiento','atemperamiento'].includes(s) || !Number.isFinite(dur) || dur <= 0 || !loteVal){
       return res.status(400).json({ ok:false, error:'Entrada inválida' });
     }
     await withTenant(tenant, async (c) => {
@@ -165,19 +199,49 @@ export const OperacionController = {
          section text PRIMARY KEY,
          started_at timestamptz,
          duration_sec integer,
+         lote text,
          active boolean NOT NULL DEFAULT false,
          updated_at timestamptz NOT NULL DEFAULT NOW()
       )`);
+      await c.query(`ALTER TABLE preacond_timers ADD COLUMN IF NOT EXISTS lote text`);
       await c.query(
-        `INSERT INTO preacond_timers(section, started_at, duration_sec, active, updated_at)
-           VALUES ($1, NOW(), $2, true, NOW())
+        `INSERT INTO preacond_timers(section, started_at, duration_sec, lote, active, updated_at)
+           VALUES ($1, NOW(), $2, $3, true, NOW())
          ON CONFLICT (section) DO UPDATE
            SET started_at = EXCLUDED.started_at,
                duration_sec = EXCLUDED.duration_sec,
+               lote = EXCLUDED.lote,
                active = true,
                updated_at = NOW()`,
-        [s, dur]
+        [s, dur, loteVal]
       );
+      // If a list of RFIDs is provided, tag those items with the lote now
+      const list = Array.isArray(rfids) ? rfids.filter((x:any)=>typeof x==='string' && x.trim()).map((x:string)=>x.trim()) : [];
+      if(list.length){
+        await c.query(`UPDATE inventario_credocubes SET lote = $1 WHERE rfid = ANY($2::text[])`, [loteVal, list]);
+        await c.query(`CREATE TABLE IF NOT EXISTS preacond_item_timers (
+           rfid text NOT NULL,
+           section text NOT NULL,
+           started_at timestamptz,
+           duration_sec integer,
+           lote text,
+           active boolean NOT NULL DEFAULT false,
+           updated_at timestamptz NOT NULL DEFAULT NOW(),
+           PRIMARY KEY (rfid, section)
+        )`);
+        await c.query(
+          `INSERT INTO preacond_item_timers(rfid, section, started_at, duration_sec, lote, active, updated_at)
+             SELECT rfid, $1, NOW(), $2, $3, true, NOW()
+               FROM UNNEST($4::text[]) AS rfid
+           ON CONFLICT (rfid, section) DO UPDATE
+             SET started_at = EXCLUDED.started_at,
+                 duration_sec = EXCLUDED.duration_sec,
+                 lote = EXCLUDED.lote,
+                 active = true,
+                 updated_at = NOW()`,
+          [s, dur, loteVal, list]
+        );
+      }
     });
     res.json({ ok:true });
   },
@@ -191,9 +255,82 @@ export const OperacionController = {
       `INSERT INTO preacond_timers(section, started_at, duration_sec, active, updated_at)
          VALUES ($1, NULL, NULL, false, NOW())
        ON CONFLICT (section) DO UPDATE
-         SET started_at = NULL, duration_sec = NULL, active = false, updated_at = NOW()`,
+         SET started_at = NULL, duration_sec = NULL, lote = NULL, active = false, updated_at = NOW()`,
       [s]
     ));
+    res.json({ ok:true });
+  },
+
+  // Item-level timers
+  preacondItemTimerStart: async (req: Request, res: Response) => {
+    const tenant = (req as any).user?.tenant;
+    const { section, rfid, durationSec, lote } = req.body as any;
+    const s = typeof section === 'string' ? section.toLowerCase() : '';
+    const r = typeof rfid === 'string' ? rfid.trim() : '';
+    const dur = Number(durationSec);
+    const loteVal = typeof lote === 'string' ? lote.trim() : '';
+    if (!['congelamiento','atemperamiento'].includes(s) || !r || !Number.isFinite(dur) || dur <= 0 || !loteVal) {
+      return res.status(400).json({ ok:false, error: 'Entrada inválida' });
+    }
+    await withTenant(tenant, async (c) => {
+      await c.query(`CREATE TABLE IF NOT EXISTS preacond_item_timers (
+         rfid text NOT NULL,
+         section text NOT NULL,
+         started_at timestamptz,
+         duration_sec integer,
+         lote text,
+         active boolean NOT NULL DEFAULT false,
+         updated_at timestamptz NOT NULL DEFAULT NOW(),
+         PRIMARY KEY (rfid, section)
+      )`);
+      await c.query(
+        `INSERT INTO preacond_item_timers(rfid, section, started_at, duration_sec, lote, active, updated_at)
+           VALUES ($1, $2, NOW(), $3, $4, true, NOW())
+         ON CONFLICT (rfid, section) DO UPDATE
+           SET started_at = EXCLUDED.started_at,
+               duration_sec = EXCLUDED.duration_sec,
+               lote = EXCLUDED.lote,
+               active = true,
+               updated_at = NOW()`,
+        [r, s, dur, loteVal]
+      );
+      // Optionally tag the item's lote field too
+      await c.query(`UPDATE inventario_credocubes SET lote = $1 WHERE rfid = $2`, [loteVal, r]);
+    });
+    res.json({ ok:true });
+  },
+
+  preacondItemTimerClear: async (req: Request, res: Response) => {
+    const tenant = (req as any).user?.tenant;
+    const { section, rfid } = req.body as any;
+    const s = typeof section === 'string' ? section.toLowerCase() : '';
+    const r = typeof rfid === 'string' ? rfid.trim() : '';
+    if (!['congelamiento','atemperamiento'].includes(s) || !r) {
+      return res.status(400).json({ ok:false, error: 'Entrada inválida' });
+    }
+    await withTenant(tenant, async (c) => {
+      await c.query(`CREATE TABLE IF NOT EXISTS preacond_item_timers (
+         rfid text NOT NULL,
+         section text NOT NULL,
+         started_at timestamptz,
+         duration_sec integer,
+         lote text,
+         active boolean NOT NULL DEFAULT false,
+         updated_at timestamptz NOT NULL DEFAULT NOW(),
+         PRIMARY KEY (rfid, section)
+      )`);
+      await c.query(
+        `INSERT INTO preacond_item_timers(rfid, section, started_at, duration_sec, lote, active, updated_at)
+           VALUES ($1, $2, NULL, NULL, NULL, false, NOW())
+         ON CONFLICT (rfid, section) DO UPDATE
+           SET started_at = NULL,
+               duration_sec = NULL,
+               lote = NULL,
+               active = false,
+               updated_at = NOW()`,
+        [r, s]
+      );
+    });
     res.json({ ok:true });
   },
 };

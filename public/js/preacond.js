@@ -5,6 +5,8 @@
   const tableAtemBody = qs('#tabla-atem tbody');
   const countCong = qs('#count-cong');
   const countAtem = qs('#count-atem');
+  const qtyCongEl = qs('#qty-cong');
+  const qtyAtemEl = qs('#qty-atem');
   const spinCong = qs('#spin-cong');
   const spinAtem = qs('#spin-atem');
   const timerCongEl = qs('#timer-cong');
@@ -16,6 +18,17 @@
   const chipsBox = qs('#chips');
   const msg = qs('#scan-msg');
   const btnConfirm = qs('#btn-confirm');
+
+  // Group timer modal elements
+  const gDlg = qs('#dlg-gtimer');
+  const gLote = qs('#gtimer-lote');
+  const gMin = qs('#gtimer-min');
+  const gMsg = qs('#gtimer-msg');
+  const gConfirm = qs('#gtimer-confirm');
+  const gSectionLabel = qs('#gtimer-section-label');
+  const gCount = qs('#gtimer-count');
+
+  let currentSectionForModal = 'congelamiento';
   let target = 'congelamiento';
   let rfids = [];
   let invalid = [];
@@ -43,17 +56,21 @@
       const j = await r.json();
       const serverNow = new Date(j.now).getTime();
       serverNowOffsetMs = Date.now() - serverNow;
-      render(tableCongBody, j.congelamiento, 'No hay TICs en congelamiento');
-      render(tableAtemBody, j.atemperamiento, 'No hay TICs en atemperamiento');
-      countCong.textContent = `(${j.congelamiento.length} de ${j.congelamiento.length})`;
-      countAtem.textContent = `(${j.atemperamiento.length} de ${j.atemperamiento.length})`;
+  render(tableCongBody, j.congelamiento, 'No hay TICs en congelamiento', 'congelamiento');
+  render(tableAtemBody, j.atemperamiento, 'No hay TICs en atemperamiento', 'atemperamiento');
+  const nCong = j.congelamiento.length;
+  const nAtem = j.atemperamiento.length;
+  countCong.textContent = `(${nCong} de ${nCong})`;
+  countAtem.textContent = `(${nAtem} de ${nAtem})`;
+  if(qtyCongEl) qtyCongEl.textContent = String(nCong);
+  if(qtyAtemEl) qtyAtemEl.textContent = String(nAtem);
       setupSectionTimer('congelamiento', j.timers?.congelamiento || null);
       setupSectionTimer('atemperamiento', j.timers?.atemperamiento || null);
     }catch(e){ console.error(e); }
     finally{ setSpin('cong', false); setSpin('atem', false); }
   }
 
-  function render(tbody, rows, emptyText){
+  function render(tbody, rows, emptyText, section){
     tbody.innerHTML = '';
     if(!rows || !rows.length){
       const tr = document.createElement('tr'); const td = document.createElement('td');
@@ -63,10 +80,26 @@
     for(const r of rows){
       const tr = document.createElement('tr');
       const started = r.started_at ? new Date(r.started_at).getTime() : null;
+      const duration = Number(r.duration_sec)||0;
+      const active = !!r.item_active && !!started && duration>0;
       const tableId = (tbody.closest('table') && tbody.closest('table').id) || 'x';
       const timerId = `tm-${tableId}-${r.rfid}`;
-      tr.innerHTML = `<td>${r.rfid}</td><td>${r.nombre_unidad||''}</td><td>${r.lote||''}</td><td>${r.estado||''}</td><td><span id="${timerId}">${started? '00:00:00' : ''}</span></td>`;
-      if(started){
+      const controls = active
+        ? `<button class="btn btn-ghost btn-xs text-error" title="Detener" data-item-clear="${r.rfid}" data-section="${section}">
+             <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" class="w-4 h-4" fill="currentColor"><path d="M6 6h12v12H6z"/></svg>
+           </button>`
+        : `<button class="btn btn-ghost btn-xs text-success" title="Iniciar" data-item-start="${r.rfid}" data-section="${section}">
+             <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" class="w-4 h-4" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
+           </button>`;
+      const lotePill = r.item_lote || r.lote ? `<span class="badge badge-outline badge-sm">Lote: ${r.item_lote||r.lote}</span>` : '';
+      tr.innerHTML = `<td>${r.rfid}</td><td>${r.nombre_unidad||''}</td><td>${r.lote||r.item_lote||''}</td><td>${r.estado||''}</td>
+        <td class="flex items-center gap-2">
+          <span class="badge badge-neutral badge-sm"><span id="${timerId}">${active? '00:00:00' : ''}</span></span>
+          ${lotePill}
+          ${controls}
+        </td>`;
+      if(active){
+        tr.setAttribute('data-item-duration', String(duration));
         tr.setAttribute('data-timer-started', String(started));
         tr.setAttribute('data-timer-id', timerId);
       }
@@ -83,8 +116,19 @@
       const now = Date.now() - serverNowOffsetMs;
       document.querySelectorAll('tr[data-timer-started]').forEach((tr)=>{
         const started = Number(tr.getAttribute('data-timer-started')||'');
+        const duration = Number(tr.getAttribute('data-item-duration')||'0');
         const id = tr.getAttribute('data-timer-id');
-        if(started && id){ const el = document.getElementById(id); if(el) el.textContent = fmt(now - started); }
+        if(started && id){
+          const el = document.getElementById(id);
+          if(el){
+            if(duration>0){
+              const remaining = Math.max(0, duration - Math.floor((now - started)/1000));
+              el.textContent = fmt(remaining*1000);
+            } else {
+              el.textContent = fmt(now - started);
+            }
+          }
+        }
       });
       // Update section timers
       updateSectionTimer(now, 'congelamiento');
@@ -96,14 +140,15 @@
 
   // Section Timers (global per section)
   const sectionTimers = {
-    congelamiento: { startedAt: null, durationSec: 0, active: false },
-    atemperamiento: { startedAt: null, durationSec: 0, active: false }
+    congelamiento: { startedAt: null, durationSec: 0, active: false, lote: '' },
+    atemperamiento: { startedAt: null, durationSec: 0, active: false, lote: '' }
   };
   function setupSectionTimer(section, data){
     const t = sectionTimers[section];
     t.startedAt = data && data.started_at ? new Date(data.started_at).getTime() : null;
     t.durationSec = data && Number.isFinite(data.duration_sec) ? Number(data.duration_sec) : 0;
     t.active = !!(data && data.active);
+    t.lote = data && data.lote ? String(data.lote) : '';
   }
   function sectionEl(section){ return section==='congelamiento' ? timerCongEl : timerAtemEl; }
   function updateSectionTimer(now, section){
@@ -114,16 +159,13 @@
     const hh = String(Math.floor(remaining/3600)).padStart(2,'0');
     const mm = String(Math.floor((remaining%3600)/60)).padStart(2,'0');
     const ss = String(remaining%60).padStart(2,'0');
-    el.textContent = `⏱️ ${hh}:${mm}:${ss}`;
+    el.textContent = `⏱️ ${hh}:${mm}:${ss}${t.lote?` • Lote: ${t.lote}`:''}`;
     if(remaining===0){ t.active=false; }
   }
 
-  async function startSectionTimer(section){
-    const minutesStr = prompt('Duración (minutos):');
-    if(!minutesStr) return; const minutes = Number(minutesStr);
-    if(!Number.isFinite(minutes) || minutes<=0) return;
+  async function startSectionTimer(section, lote, minutes, rfids){
     const durationSec = Math.round(minutes*60);
-    await fetch('/operacion/preacond/timer/start', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ section, durationSec }) });
+    await fetch('/operacion/preacond/timer/start', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ section, durationSec, lote, rfids }) });
     await loadData();
   }
   async function clearSectionTimer(section){
@@ -200,12 +242,60 @@
   document.querySelectorAll('[data-open-scan]')?.forEach((el)=>{
     el.addEventListener('click', ()=>{ const to=(el).getAttribute('data-open-scan'); openModal(to==='atemperamiento'?'atemperamiento':'congelamiento'); });
   });
-  document.querySelectorAll('[data-open-timer]')?.forEach((el)=>{
-    el.addEventListener('click', ()=>{ const s=(el).getAttribute('data-open-timer'); startSectionTimer(s); });
+  // Old dropdown timer actions removed
+
+  // New Start All / Clear All buttons
+  qs('#btn-startall-cong')?.addEventListener('click', ()=>openGroupTimer('congelamiento'));
+  qs('#btn-clearall-cong')?.addEventListener('click', ()=>clearSectionTimer('congelamiento'));
+  qs('#btn-startall-atem')?.addEventListener('click', ()=>openGroupTimer('atemperamiento'));
+  qs('#btn-clearall-atem')?.addEventListener('click', ()=>clearSectionTimer('atemperamiento'));
+
+  function openGroupTimer(section){
+    currentSectionForModal = section;
+    if(gSectionLabel) gSectionLabel.textContent = section === 'congelamiento' ? 'Congelamiento' : 'Atemperamiento';
+    const n = section==='congelamiento' ? (qtyCongEl?.textContent||'0') : (qtyAtemEl?.textContent||'0');
+    if(gCount) gCount.textContent = n;
+    if(gMsg) gMsg.textContent = '';
+    if(gLote) gLote.value = '';
+    if(gMin) gMin.value = '';
+    gDlg?.showModal?.();
+    setTimeout(()=>gLote?.focus?.(), 50);
+  }
+
+  gConfirm?.addEventListener('click', async ()=>{
+    const lote = (gLote?.value||'').trim();
+    const minutes = Number(gMin?.value||'');
+    if(!lote || !Number.isFinite(minutes) || minutes<=0){ if(gMsg) gMsg.textContent='Completa lote y minutos.'; return; }
+    // Collect visible RFIDs in that section now
+    const tbody = currentSectionForModal==='congelamiento' ? tableCongBody : tableAtemBody;
+    const rfids = Array.from(tbody?.querySelectorAll('tr>td:first-child')||[]).map(td=>td.textContent?.trim()).filter(Boolean);
+    gDlg?.close?.();
+    await startSectionTimer(currentSectionForModal, lote, minutes, rfids);
   });
-  document.querySelectorAll('[data-clear-timer]')?.forEach((el)=>{
-    el.addEventListener('click', ()=>{ const s=(el).getAttribute('data-clear-timer'); clearSectionTimer(s); });
-  });
+
+  // Item timer actions (event delegation on both tables)
+  function onTableClick(e){
+    const t = e.target; if(!(t instanceof Element)) return;
+    const startR = t.closest('[data-item-start]');
+    const clearR = t.closest('[data-item-clear]');
+    if(startR){
+      const rfid = startR.getAttribute('data-item-start');
+      const section = startR.getAttribute('data-section');
+      const lote = prompt('Número de lote para este TIC:'); if(!lote) return;
+      const minutesStr = prompt('Duración (minutos):'); if(!minutesStr) return; const minutes = Number(minutesStr);
+      if(!Number.isFinite(minutes) || minutes<=0) return;
+      const durationSec = Math.round(minutes*60);
+      fetch('/operacion/preacond/item-timer/start', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ section, rfid, durationSec, lote }) })
+        .then(()=>loadData());
+    } else if(clearR){
+      const rfid = clearR.getAttribute('data-item-clear');
+      const section = clearR.getAttribute('data-section');
+      fetch('/operacion/preacond/item-timer/clear', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ section, rfid }) })
+        .then(()=>loadData());
+    }
+  }
+  tableCongBody?.addEventListener('click', onTableClick);
+  tableAtemBody?.addEventListener('click', onTableClick);
 
   // Also primary buttons
   qs('#btn-add-cong')?.addEventListener('click', ()=>openModal('congelamiento'));

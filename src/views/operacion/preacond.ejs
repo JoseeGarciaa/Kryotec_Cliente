@@ -19,6 +19,11 @@
   <div id="count-cong" class="text-sm opacity-70">(0 de 0)</div>
       </div>
       <div class="flex items-center gap-3">
+        <button id="btn-startall-cong" class="btn btn-success btn-sm md:btn-md gap-2" type="button">
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" class="w-4 h-4" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
+          Iniciar cronómetro por lote (<span id="qty-cong">0</span>)
+        </button>
+        <button id="btn-clearall-cong" class="btn btn-error btn-sm md:btn-md" type="button">Limpiar todos</button>
         <span class="loading loading-spinner loading-xs hidden" id="spin-cong"></span>
         <div id="timer-cong" class="text-sm opacity-80"></div>
         <div class="flex items-center gap-2">
@@ -34,9 +39,6 @@
               <li><button type="button" class="justify-start" data-open-scan="congelamiento">Escanear RFIDs</button></li>
               <li><button type="button" class="justify-start" disabled>Buscar en inventario</button></li>
               <li><button type="button" class="justify-start" disabled>Pegar desde Excel</button></li>
-        <li class="menu-title">Cronómetro</li>
-        <li><button type="button" class="justify-start" data-open-timer="congelamiento">Iniciar cronómetro…</button></li>
-        <li><button type="button" class="justify-start" data-clear-timer="congelamiento">Detener y limpiar</button></li>
             </ul>
           </div>
         </div>
@@ -76,6 +78,11 @@
   <div id="count-atem" class="text-sm opacity-70">(0 de 0)</div>
       </div>
       <div class="flex items-center gap-3">
+        <button id="btn-startall-atem" class="btn btn-success btn-sm md:btn-md gap-2" type="button">
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" class="w-4 h-4" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
+          Iniciar cronómetro por lote (<span id="qty-atem">0</span>)
+        </button>
+        <button id="btn-clearall-atem" class="btn btn-error btn-sm md:btn-md" type="button">Limpiar todos</button>
         <span class="loading loading-spinner loading-xs hidden" id="spin-atem"></span>
         <div id="timer-atem" class="text-sm opacity-80"></div>
         <div class="flex items-center gap-2">
@@ -91,9 +98,6 @@
               <li><button type="button" class="justify-start" data-open-scan="atemperamiento">Escanear RFIDs</button></li>
               <li><button type="button" class="justify-start" disabled>Buscar en inventario</button></li>
               <li><button type="button" class="justify-start" disabled>Pegar desde Excel</button></li>
-              <li class="menu-title">Cronómetro</li>
-              <li><button type="button" class="justify-start" data-open-timer="atemperamiento">Iniciar cronómetro…</button></li>
-              <li><button type="button" class="justify-start" data-clear-timer="atemperamiento">Detener y limpiar</button></li>
             </ul>
           </div>
         </div>
@@ -141,6 +145,29 @@
         <button class="btn btn-ghost">Cancelar</button>
       </form>
       <button id="btn-confirm" class="btn btn-primary" disabled>Confirmar</button>
+    </div>
+  </div>
+</dialog>
+
+<!-- Modal: iniciar cronómetro grupal -->
+<dialog id="dlg-gtimer" class="modal">
+  <div class="modal-box">
+    <h3 class="font-bold text-lg">Iniciar cronómetro por lote</h3>
+    <p class="text-sm opacity-70">Se aplicará a los TICs listados actualmente en <span id="gtimer-section-label"></span> (<span id="gtimer-count">0</span> TICs).</p>
+    <div class="mt-4 grid gap-3">
+      <label class="form-control">
+        <span class="label-text">Número de lote</span>
+        <input id="gtimer-lote" type="text" class="input input-bordered" placeholder="Ej. 20250905" />
+      </label>
+      <label class="form-control">
+        <span class="label-text">Duración (minutos)</span>
+        <input id="gtimer-min" type="number" min="1" step="1" class="input input-bordered" placeholder="Ej. 30" />
+      </label>
+      <div id="gtimer-msg" class="text-sm text-error"></div>
+    </div>
+    <div class="modal-action">
+      <form method="dialog"><button class="btn btn-ghost">Cancelar</button></form>
+      <button id="gtimer-confirm" class="btn btn-primary">Iniciar</button>
     </div>
   </div>
 </dialog>
