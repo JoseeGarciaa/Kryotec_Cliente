@@ -43,6 +43,17 @@ export const AuthController = {
         user = matches[0].user;
       }
 
+      // If we still don't have a user (e.g., DEFAULT_TENANT provided but user belongs to another tenant), try discovery
+      if (!user) {
+        const matches = await findUserInAnyTenant(correo);
+        if (!matches) return res.status(401).render('auth/login', { error: 'Usuario o contraseña incorrectos', layout: 'layouts/auth', title: 'Acceso al Cliente' });
+        if (matches.length > 1) {
+          return res.status(409).render('auth/login', { error: 'Correo duplicado en múltiples tenants', layout: 'layouts/auth', title: 'Acceso al Cliente' });
+        }
+        tenantSchema = matches[0].tenant;
+        user = matches[0].user;
+      }
+
   if (!user) return res.status(401).render('auth/login', { error: 'Usuario o contraseña incorrectos', layout: 'layouts/auth', title: 'Acceso al Cliente' });
   if (!user.activo) return res.status(403).render('auth/login', { error: 'Usuario inactivo', layout: 'layouts/auth', title: 'Acceso al Cliente' });
 
