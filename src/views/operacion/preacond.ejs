@@ -13,34 +13,24 @@
 <!-- Bloque: TICs para Congelamiento -->
 <div class="card bg-primary/10 mb-8 border border-primary/20">
   <div class="card-body">
-    <div class="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+  <div class="grid grid-cols-1 lg:grid-cols-[auto,1fr] items-start lg:items-center gap-3">
       <div>
   <div class="text-xl font-semibold">TICs para Congelamiento</div>
   <div id="count-cong" class="text-sm opacity-70">(0 de 0)</div>
       </div>
-      <div class="flex items-center gap-3">
-        <button id="btn-startall-cong" class="btn btn-success btn-sm md:btn-md gap-2" type="button">
+      <div class="flex flex-col sm:flex-row flex-wrap items-stretch sm:items-center gap-2 sm:gap-3 justify-start lg:justify-end w-full lg:w-auto">
+        <button id="btn-startall-cong" class="btn btn-success btn-sm md:btn-md gap-2 w-full sm:w-auto" type="button">
           <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" class="w-4 h-4" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
           Iniciar cronómetro por lote (<span id="qty-cong">0</span>)
         </button>
-  <button id="btn-clearall-cong" class="btn btn-error btn-sm md:btn-md" type="button">Parar todos los cronómetros</button>
+  <button id="btn-clearall-cong" class="btn btn-error btn-sm md:btn-md w-full sm:w-auto" type="button">Parar todos los cronómetros</button>
         <span class="loading loading-spinner loading-xs hidden" id="spin-cong"></span>
         <div id="timer-cong" class="text-sm opacity-80"></div>
-        <div class="flex items-center gap-2">
-          <button id="btn-add-cong" class="btn btn-primary gap-2">
+        <div class="shrink-0 w-full sm:w-auto">
+          <button id="btn-add-cong" class="btn btn-primary gap-2 w-full sm:w-auto">
             <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" viewBox="0 0 24 24" fill="currentColor"><path d="M11 11V5a1 1 0 1 1 2 0v6h6a1 1 0 1 1 0 2h-6v6a1 1 0 1 1-2 0v-6H5a1 1 0 1 1 0-2h6Z"/></svg>
             Agregar TICs
           </button>
-      <div class="dropdown dropdown-end">
-            <label tabindex="0" class="btn btn-primary px-2">
-              <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" viewBox="0 0 24 24" fill="currentColor"><path d="M7 10l5 5 5-5H7z"/></svg>
-            </label>
-            <ul tabindex="0" class="dropdown-content menu p-2 shadow bg-base-100 rounded-box w-56">
-              <li><button type="button" class="justify-start" data-open-scan="congelamiento">Escanear RFIDs</button></li>
-              <li><button type="button" class="justify-start" disabled>Buscar en inventario</button></li>
-              <li><button type="button" class="justify-start" disabled>Pegar desde Excel</button></li>
-            </ul>
-          </div>
         </div>
       </div>
     </div>
@@ -48,18 +38,18 @@
     <div class="mt-4">
   <label class="input input-bordered flex items-center gap-2 w-full">
         <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 opacity-70" viewBox="0 0 24 24" fill="currentColor"><path d="M10 2a8 8 0 105.293 14.293l4.207 4.207a1 1 0 001.414-1.414l-4.207-4.207A8 8 0 0010 2zm0 2a6 6 0 110 12A6 6 0 0110 4z"/></svg>
-        <input type="text" class="grow" placeholder="Buscar por RFID, nombre o lote..." />
+        <input id="search-cong" type="text" class="grow" placeholder="Buscar por RFID, nombre o lote..." />
       </label>
     </div>
 
     <div class="overflow-x-auto mt-4">
-      <table id="tabla-cong" class="table">
+      <table id="tabla-cong" class="table table-xs sm:table-sm">
         <thead>
           <tr>
             <th>RFID</th>
-            <th>NOMBRE</th>
-            <th>LOTE</th>
-            <th>ESTADO</th>
+            <th class="hidden md:table-cell">NOMBRE</th>
+            <th class="hidden lg:table-cell">LOTE</th>
+            <th class="hidden md:table-cell">ESTADO</th>
             <th>CRONÓMETRO</th>
           </tr>
         </thead>
@@ -72,53 +62,43 @@
 <!-- Bloque: TICs para Atemperamiento -->
 <div class="card bg-warning/10 border border-warning/20">
   <div class="card-body">
-    <div class="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+  <div class="grid grid-cols-1 lg:grid-cols-[auto,1fr] items-start lg:items-center gap-3">
       <div>
   <div class="text-xl font-semibold">TICs para Atemperamiento</div>
   <div id="count-atem" class="text-sm opacity-70">(0 de 0)</div>
       </div>
-      <div class="flex items-center gap-3">
-        <button id="btn-startall-atem" class="btn btn-success btn-sm md:btn-md gap-2" type="button">
+      <div class="flex flex-col sm:flex-row flex-wrap items-stretch sm:items-center gap-2 sm:gap-3 justify-start lg:justify-end w-full lg:w-auto">
+        <button id="btn-startall-atem" class="btn btn-success btn-sm md:btn-md gap-2 w-full sm:w-auto" type="button">
           <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" class="w-4 h-4" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
           Iniciar cronómetro por lote (<span id="qty-atem">0</span>)
         </button>
-  <button id="btn-clearall-atem" class="btn btn-error btn-sm md:btn-md" type="button">Parar todos los cronómetros</button>
+  <button id="btn-clearall-atem" class="btn btn-error btn-sm md:btn-md w-full sm:w-auto" type="button">Parar todos los cronómetros</button>
         <span class="loading loading-spinner loading-xs hidden" id="spin-atem"></span>
         <div id="timer-atem" class="text-sm opacity-80"></div>
-        <div class="flex items-center gap-2">
-          <button id="btn-add-atem" class="btn btn-warning gap-2">
+        <div class="shrink-0 w-full sm:w-auto">
+          <button id="btn-add-atem" class="btn btn-warning gap-2 w-full sm:w-auto">
             <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" viewBox="0 0 24 24" fill="currentColor"><path d="M11 11V5a1 1 0 1 1 2 0v6h6a1 1 0 1 1 0 2h-6v6a1 1 0 1 1-2 0v-6H5a1 1 0 1 1 0-2h6Z"/></svg>
             Agregar TICs
           </button>
-          <div class="dropdown dropdown-end">
-            <label tabindex="0" class="btn btn-warning px-2">
-              <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" viewBox="0 0 24 24" fill="currentColor"><path d="M7 10l5 5 5-5H7z"/></svg>
-            </label>
-            <ul tabindex="0" class="dropdown-content menu p-2 shadow bg-base-100 rounded-box w-56">
-              <li><button type="button" class="justify-start" data-open-scan="atemperamiento">Escanear RFIDs</button></li>
-              <li><button type="button" class="justify-start" disabled>Buscar en inventario</button></li>
-              <li><button type="button" class="justify-start" disabled>Pegar desde Excel</button></li>
-            </ul>
-          </div>
         </div>
       </div>
     </div>
 
-    <div class="mt-4">
+  <div class="mt-4">
       <label class="input input-bordered flex items-center gap-2 w-full">
         <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 opacity-70" viewBox="0 0 24 24" fill="currentColor"><path d="M10 2a8 8 0 105.293 14.293l4.207 4.207a1 1 0 001.414-1.414l-4.207-4.207A8 8 0 0010 2zm0 2a6 6 0 110 12A6 6 0 0110 4z"/></svg>
-        <input type="text" class="grow" placeholder="Buscar por RFID, nombre o lote..." />
+    <input id="search-atem" type="text" class="grow" placeholder="Buscar por RFID, nombre o lote..." />
       </label>
     </div>
 
     <div class="overflow-x-auto mt-4">
-      <table id="tabla-atem" class="table">
+      <table id="tabla-atem" class="table table-xs sm:table-sm">
         <thead>
           <tr>
             <th>RFID</th>
-            <th>NOMBRE</th>
-            <th>LOTE</th>
-            <th>ESTADO</th>
+            <th class="hidden md:table-cell">NOMBRE</th>
+            <th class="hidden lg:table-cell">LOTE</th>
+            <th class="hidden md:table-cell">ESTADO</th>
             <th>CRONÓMETRO</th>
           </tr>
         </thead>
@@ -130,7 +110,7 @@
 
 <!-- Modal de escaneo estilo "Registro masivo" -->
 <dialog id="dlg-scan" class="modal">
-  <div class="modal-box max-w-3xl">
+  <div class="modal-box max-w-sm sm:max-w-md md:max-w-3xl">
     <h3 class="font-bold text-lg">Escanear TICs</h3>
     <p class="text-sm opacity-70">Escanee o pegue RFIDs de 24 caracteres. Se validarán antes de confirmar.</p>
 
@@ -151,7 +131,7 @@
 
 <!-- Modal: iniciar cronómetro grupal -->
 <dialog id="dlg-gtimer" class="modal">
-  <div class="modal-box">
+  <div class="modal-box max-w-sm sm:max-w-md md:max-w-lg">
     <h3 class="font-bold text-lg">Iniciar cronómetro por lote</h3>
     <p class="text-sm opacity-70">Se aplicará a los TICs listados actualmente en <span id="gtimer-section-label"></span> (<span id="gtimer-count">0</span> TICs).</p>
     <div class="mt-4 grid gap-3">

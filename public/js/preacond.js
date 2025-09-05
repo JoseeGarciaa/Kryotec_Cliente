@@ -11,6 +11,8 @@
   const spinAtem = qs('#spin-atem');
   const timerCongEl = qs('#timer-cong');
   const timerAtemEl = qs('#timer-atem');
+  const searchCong = qs('#search-cong');
+  const searchAtem = qs('#search-atem');
 
   // Modal elements
   const dlg = qs('#dlg-scan');
@@ -27,6 +29,8 @@
   const gConfirm = qs('#gtimer-confirm');
   const gSectionLabel = qs('#gtimer-section-label');
   const gCount = qs('#gtimer-count');
+  // We'll reuse group timer modal for per-item start
+  let pendingItemStart = null; // { section, rfid }
 
   let currentSectionForModal = 'congelamiento';
   let target = 'congelamiento';
@@ -79,7 +83,7 @@
     }
     for(const r of rows){
       const tr = document.createElement('tr');
-      const started = r.started_at ? new Date(r.started_at).getTime() : null;
+  const started = r.started_at ? new Date(r.started_at).getTime() : null;
       const duration = Number(r.duration_sec)||0;
       const active = !!r.item_active && !!started && duration>0;
       const tableId = (tbody.closest('table') && tbody.closest('table').id) || 'x';
@@ -94,9 +98,9 @@
              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" class="w-4 h-4" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
            </button>`;
       const lotePill = r.item_lote || r.lote ? `<span class="badge badge-outline badge-sm">Lote: ${r.item_lote||r.lote}</span>` : '';
-      tr.innerHTML = `<td>${r.rfid}</td><td>${r.nombre_unidad||''}</td><td>${r.lote||r.item_lote||''}</td><td>${r.estado||''}</td>
+      tr.innerHTML = `<td>${r.rfid}</td><td class="hidden md:table-cell">${r.nombre_unidad||''}</td><td class="hidden lg:table-cell">${r.lote||r.item_lote||''}</td><td class="hidden md:table-cell">${r.estado||''}</td>
         <td class="flex items-center gap-2">
-          <span class="badge ${isCompleted?'badge-info':'badge-neutral'} badge-sm"><span id="${timerId}">${active? '00:00:00' : ''}</span></span>
+          <span class="badge ${isCompleted?'badge-info':'badge-neutral'} badge-sm" data-threshold="1"><span id="${timerId}">${active? '00:00:00' : ''}</span></span>
           ${lotePill}
           ${controls}
         </td>`;
@@ -129,7 +133,13 @@
               const badge = el.closest('.badge');
               if(badge){
                 badge.classList.toggle('badge-info', remaining===0);
-                badge.classList.toggle('badge-neutral', remaining!==0);
+                const warn = remaining>0 && remaining<=300; // <=5m
+                const danger = remaining>0 && remaining<=60; // <=1m
+                badge.classList.toggle('badge-warning', warn && !danger);
+                badge.classList.toggle('badge-error', danger);
+                // neutral when not info/warn/danger
+                const neutral = remaining>300;
+                badge.classList.toggle('badge-neutral', neutral);
               }
               if(remaining===0 && !tr.getAttribute('data-done')){
                 tr.setAttribute('data-done','1');
@@ -289,6 +299,15 @@
     const lote = (gLote?.value||'').trim();
     const minutes = Number(gMin?.value||'');
     if(!lote || !Number.isFinite(minutes) || minutes<=0){ if(gMsg) gMsg.textContent='Completa lote y minutos.'; return; }
+    if(pendingItemStart){
+      const { section, rfid } = pendingItemStart;
+      pendingItemStart = null;
+      gDlg?.close?.();
+      const durationSec = Math.round(minutes*60);
+      await fetch('/operacion/preacond/item-timer/start', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ section, rfid, durationSec, lote }) });
+      await loadData();
+      return;
+    }
     // Collect visible RFIDs in that section now
     const tbody = currentSectionForModal==='congelamiento' ? tableCongBody : tableAtemBody;
     const rfids = Array.from(tbody?.querySelectorAll('tr>td:first-child')||[]).map(td=>td.textContent?.trim()).filter(Boolean);
@@ -304,12 +323,15 @@
     if(startR){
       const rfid = startR.getAttribute('data-item-start');
       const section = startR.getAttribute('data-section');
-      const lote = prompt('Número de lote para este TIC:'); if(!lote) return;
-      const minutesStr = prompt('Duración (minutos):'); if(!minutesStr) return; const minutes = Number(minutesStr);
-      if(!Number.isFinite(minutes) || minutes<=0) return;
-      const durationSec = Math.round(minutes*60);
-      fetch('/operacion/preacond/item-timer/start', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ section, rfid, durationSec, lote }) })
-        .then(()=>loadData());
+      // Reuse modal for per-item
+      pendingItemStart = { section, rfid };
+      currentSectionForModal = section;
+      if(gSectionLabel) gSectionLabel.textContent = '1 TIC seleccionado';
+      if(gMsg) gMsg.textContent = '';
+      if(gLote) gLote.value = '';
+      if(gMin) gMin.value = '';
+      gDlg?.showModal?.();
+      setTimeout(()=>gLote?.focus?.(), 50);
     } else if(clearR){
       const rfid = clearR.getAttribute('data-item-clear');
       const section = clearR.getAttribute('data-section');
@@ -325,4 +347,32 @@
   qs('#btn-add-atem')?.addEventListener('click', ()=>openModal('atemperamiento'));
 
   loadData();
+
+  // Client-side filtering
+  function applyFilter(inputEl, tbody, countEl){
+    const q = (inputEl?.value||'').trim().toLowerCase();
+    const trs = Array.from(tbody?.querySelectorAll('tr')||[]);
+    let visible = 0, total = 0;
+    trs.forEach(tr=>{
+      const tds = tr.querySelectorAll('td');
+      if(!tds || tds.length===1){
+        // empty state row
+        tr.style.display = q? 'none' : '';
+        return;
+      }
+      total++;
+      const hay = Array.from(tds).slice(0,4).map(td=>td.textContent||'').join(' ').toLowerCase();
+      const show = !q || hay.includes(q);
+      tr.style.display = show? '' : 'none';
+      if(show) visible++;
+    });
+    if(countEl){
+      const text = countEl.textContent||'';
+      const m = text.match(/\((\d+) de (\d+)\)/);
+      const totalCount = m? Number(m[2]) : total;
+      countEl.textContent = `(${visible} de ${totalCount})`;
+    }
+  }
+  searchCong?.addEventListener('input', ()=>applyFilter(searchCong, tableCongBody, countCong));
+  searchAtem?.addEventListener('input', ()=>applyFilter(searchAtem, tableAtemBody, countAtem));
 })();
