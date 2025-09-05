@@ -47,7 +47,7 @@ export const OperacionController = {
        JOIN modelos m ON m.modelo_id = ic.modelo_id
        LEFT JOIN preacond_item_timers pit
          ON pit.rfid = ic.rfid AND pit.section = 'congelamiento'
-       WHERE ic.estado = 'Pre Acondicionamiento' AND ic.sub_estado = 'Congelamiento'
+     WHERE ic.estado = 'Pre Acondicionamiento' AND ic.sub_estado IN ('Congelamiento','Congelado')
          AND (m.nombre_modelo ILIKE '%tic%')
        ORDER BY ic.id DESC
        LIMIT 500`));
@@ -58,7 +58,7 @@ export const OperacionController = {
        JOIN modelos m ON m.modelo_id = ic.modelo_id
        LEFT JOIN preacond_item_timers pit
          ON pit.rfid = ic.rfid AND pit.section = 'atemperamiento'
-       WHERE ic.estado = 'Pre Acondicionamiento' AND ic.sub_estado = 'Atemperamiento'
+     WHERE ic.estado = 'Pre Acondicionamiento' AND ic.sub_estado IN ('Atemperamiento','Atemperado')
          AND (m.nombre_modelo ILIKE '%tic%')
        ORDER BY ic.id DESC
        LIMIT 500`));
@@ -251,13 +251,30 @@ export const OperacionController = {
     const { section } = req.body as any;
     const s = typeof section === 'string' ? section.toLowerCase() : '';
     if(!['congelamiento','atemperamiento'].includes(s)) return res.status(400).json({ ok:false, error:'Entrada inválida' });
-    await withTenant(tenant, (c) => c.query(
-      `INSERT INTO preacond_timers(section, started_at, duration_sec, active, updated_at)
-         VALUES ($1, NULL, NULL, false, NOW())
-       ON CONFLICT (section) DO UPDATE
-         SET started_at = NULL, duration_sec = NULL, lote = NULL, active = false, updated_at = NOW()`,
-      [s]
-    ));
+    await withTenant(tenant, async (c) => {
+      await c.query(
+        `INSERT INTO preacond_timers(section, started_at, duration_sec, active, updated_at)
+           VALUES ($1, NULL, NULL, false, NOW())
+         ON CONFLICT (section) DO UPDATE
+           SET started_at = NULL, duration_sec = NULL, lote = NULL, active = false, updated_at = NOW()`,
+        [s]
+      );
+      await c.query(`CREATE TABLE IF NOT EXISTS preacond_item_timers (
+         rfid text NOT NULL,
+         section text NOT NULL,
+         started_at timestamptz,
+         duration_sec integer,
+         lote text,
+         active boolean NOT NULL DEFAULT false,
+         updated_at timestamptz NOT NULL DEFAULT NOW(),
+         PRIMARY KEY (rfid, section)
+      )`);
+      await c.query(
+        `UPDATE preacond_item_timers SET started_at = NULL, duration_sec = NULL, lote = NULL, active = false, updated_at = NOW()
+           WHERE section = $1 AND active = true`,
+        [s]
+      );
+    });
     res.json({ ok:true });
   },
 
@@ -330,6 +347,71 @@ export const OperacionController = {
                updated_at = NOW()`,
         [r, s]
       );
+    });
+    res.json({ ok:true });
+  },
+
+  // Complete (auto-finish) all timers for a section when duration ends
+  preacondTimerComplete: async (req: Request, res: Response) => {
+    const tenant = (req as any).user?.tenant;
+    const { section } = req.body as any;
+    const s = typeof section === 'string' ? section.toLowerCase() : '';
+    if(!['congelamiento','atemperamiento'].includes(s)) return res.status(400).json({ ok:false, error:'Entrada inválida' });
+    await withTenant(tenant, async (c) => {
+      // Only if the timer is actually expired or active
+      await c.query('BEGIN');
+      try {
+        // Mark items with active item timers in this section as completed state
+        await c.query(
+          `UPDATE inventario_credocubes ic
+              SET sub_estado = CASE WHEN $1='congelamiento' THEN 'Congelado' ELSE 'Atemperado' END
+            WHERE ic.rfid IN (
+                    SELECT pit.rfid FROM preacond_item_timers pit
+                     WHERE pit.section = $1 AND pit.active = true
+                  )`, [s]
+        );
+        // Deactivate item timers
+        await c.query(
+          `UPDATE preacond_item_timers
+              SET started_at = NULL, duration_sec = NULL, lote = lote, active = false, updated_at = NOW()
+            WHERE section = $1 AND active = true`, [s]
+        );
+        // Deactivate group timer
+        await c.query(
+          `UPDATE preacond_timers SET active = false, updated_at = NOW() WHERE section = $1`, [s]
+        );
+        await c.query('COMMIT');
+      } catch (e) {
+        await c.query('ROLLBACK');
+        throw e;
+      }
+    });
+    res.json({ ok:true });
+  },
+
+  // Complete a single item timer
+  preacondItemTimerComplete: async (req: Request, res: Response) => {
+    const tenant = (req as any).user?.tenant;
+    const { section, rfid } = req.body as any;
+    const s = typeof section === 'string' ? section.toLowerCase() : '';
+    const r = typeof rfid === 'string' ? rfid.trim() : '';
+    if(!['congelamiento','atemperamiento'].includes(s) || !r) return res.status(400).json({ ok:false, error:'Entrada inválida' });
+    await withTenant(tenant, async (c) => {
+      await c.query('BEGIN');
+      try {
+        await c.query(
+          `UPDATE inventario_credocubes SET sub_estado = CASE WHEN $1='congelamiento' THEN 'Congelado' ELSE 'Atemperado' END WHERE rfid = $2`,
+          [s, r]
+        );
+        await c.query(
+          `UPDATE preacond_item_timers SET started_at = NULL, duration_sec = NULL, active = false, updated_at = NOW() WHERE section = $1 AND rfid = $2`,
+          [s, r]
+        );
+        await c.query('COMMIT');
+      } catch (e) {
+        await c.query('ROLLBACK');
+        throw e;
+      }
     });
     res.json({ ok:true });
   },

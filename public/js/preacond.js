@@ -84,6 +84,8 @@
       const active = !!r.item_active && !!started && duration>0;
       const tableId = (tbody.closest('table') && tbody.closest('table').id) || 'x';
       const timerId = `tm-${tableId}-${r.rfid}`;
+      const isCompleted = /Congelado|Atemperado/i.test(r.sub_estado||'');
+      if(isCompleted){ tr.classList.add('bg-info/10'); }
       const controls = active
         ? `<button class="btn btn-ghost btn-xs text-error" title="Detener" data-item-clear="${r.rfid}" data-section="${section}">
              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" class="w-4 h-4" fill="currentColor"><path d="M6 6h12v12H6z"/></svg>
@@ -94,7 +96,7 @@
       const lotePill = r.item_lote || r.lote ? `<span class="badge badge-outline badge-sm">Lote: ${r.item_lote||r.lote}</span>` : '';
       tr.innerHTML = `<td>${r.rfid}</td><td>${r.nombre_unidad||''}</td><td>${r.lote||r.item_lote||''}</td><td>${r.estado||''}</td>
         <td class="flex items-center gap-2">
-          <span class="badge badge-neutral badge-sm"><span id="${timerId}">${active? '00:00:00' : ''}</span></span>
+          <span class="badge ${isCompleted?'badge-info':'badge-neutral'} badge-sm"><span id="${timerId}">${active? '00:00:00' : ''}</span></span>
           ${lotePill}
           ${controls}
         </td>`;
@@ -124,6 +126,21 @@
             if(duration>0){
               const remaining = Math.max(0, duration - Math.floor((now - started)/1000));
               el.textContent = fmt(remaining*1000);
+              const badge = el.closest('.badge');
+              if(badge){
+                badge.classList.toggle('badge-info', remaining===0);
+                badge.classList.toggle('badge-neutral', remaining!==0);
+              }
+              if(remaining===0 && !tr.getAttribute('data-done')){
+                tr.setAttribute('data-done','1');
+                const rfid = tr.querySelector('td')?.textContent?.trim();
+                const tableId = tr.closest('table')?.id || '';
+                const section = tableId==='tabla-cong' ? 'congelamiento' : 'atemperamiento';
+                if(rfid){
+                  fetch('/operacion/preacond/item-timer/complete', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ section, rfid }) })
+                    .then(()=>loadData());
+                }
+              }
             } else {
               el.textContent = fmt(now - started);
             }
@@ -160,7 +177,13 @@
     const mm = String(Math.floor((remaining%3600)/60)).padStart(2,'0');
     const ss = String(remaining%60).padStart(2,'0');
     el.textContent = `⏱️ ${hh}:${mm}:${ss}${t.lote?` • Lote: ${t.lote}`:''}`;
-    if(remaining===0){ t.active=false; }
+    if(remaining===0){
+      if(t.active){
+        t.active=false;
+        fetch('/operacion/preacond/timer/complete', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ section }) })
+          .then(()=>loadData());
+      }
+    }
   }
 
   async function startSectionTimer(section, lote, minutes, rfids){
