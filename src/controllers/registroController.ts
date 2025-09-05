@@ -32,7 +32,7 @@ export const RegistroController = {
 
   create: async (req: Request, res: Response) => {
     const tenant = (req as any).user?.tenant;
-    const { modelo_id, rfids, lote } = req.body as any;
+  const { modelo_id, rfids } = req.body as any;
     const modeloIdNum = Number(modelo_id);
     // rfids may come as array or object (rfids[0], rfids[1], ...)
     const rawList: string[] = Array.isArray(rfids)
@@ -52,7 +52,7 @@ export const RegistroController = {
         const key = normTipo(m.tipo);
         (byTipo[key] = byTipo[key] || []).push({ id: m.modelo_id, name: m.nombre_modelo });
       }
-      return res.status(200).render('registro/index', { title: 'Registro de Items', error: 'Complete tipo, litraje y escanee al menos un RFID', modelosByTipo: byTipo, rfids: rfidsArr, selectedModelo: modeloIdNum });
+  return res.status(200).render('registro/index', { title: 'Registro de Items', error: 'Complete tipo, litraje y escanee al menos un RFID', modelosByTipo: byTipo, rfids: rfidsArr, selectedModelo: modeloIdNum });
     }
 
     try {
@@ -92,8 +92,8 @@ export const RegistroController = {
           await c.query(
             `INSERT INTO inventario_credocubes 
                (modelo_id, nombre_unidad, rfid, lote, estado, sub_estado, categoria, fecha_ingreso, fecha_vencimiento)
-             VALUES ($1, $2, $3, $4, '', '', $5, NOW(), NOW() + INTERVAL '5 years')`,
-            [modeloIdNum, nombre, rfid, lote || null, categoria]
+             VALUES ($1, $2, $3, NULL, 'En Bodega', NULL, $4, NOW(), NOW() + INTERVAL '5 years')`,
+            [modeloIdNum, nombre, rfid, categoria]
           );
         }
       });

@@ -40,7 +40,7 @@
           <li><a class="<%= currentPath.startsWith('/registro') ? 'active' : '' %>" href="/registro">Registro</a></li>
           <li><a class="<%= currentPath.startsWith('/inventario') ? 'active' : '' %>" href="/inventario">Inventario</a></li>
           <li>
-            <details class="<%= currentPath.startsWith('/operacion') ? 'open' : '' %>">
+            <details <%= currentPath.startsWith('/operacion') ? 'open' : '' %>>
               <summary>Operación</summary>
               <ul>
                 <li><a class="<%= currentPath === '/operacion/todas' ? 'active' : '' %>" href="/operacion/todas">Todas las fases</a></li>

@@ -1,8 +1,142 @@
-<% title = title || 'Operación · Registrar pre-acondicionamiento' %>
-<%- include('./_submenu') %>
-<div class="card bg-base-200">
-  <div class="card-body">
-    <div class="text-lg font-semibold">Registrar pre-acondicionamiento</div>
-    <div class="opacity-70 text-sm">Pendiente de definir.</div>
+<% title = 'Registrar Pre Acondicionamiento' %>
+
+<div class="mb-6">
+  <h1 class="text-3xl font-bold">Registrar Pre Acondicionamiento</h1>
+  <div class="mt-1 text-success text-sm flex items-center gap-2">
+    <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" viewBox="0 0 24 24" fill="currentColor">
+      <path d="M12 18.5a2.5 2.5 0 1 0 0 5 2.5 2.5 0 0 0 0-5Zm-7.07-5.57a.75.75 0 0 0-1.06 1.06 12.03 12.03 0 0 1 17.18 0 .75.75 0 0 0 1.06-1.06 13.53 13.53 0 0 0-17.18 0Zm3.54-3.54a.75.75 0 1 0-1.06 1.06 8.49 8.49 0 0 1 12.02 0 .75.75 0 0 0 1.06-1.06 9.99 9.99 0 0 0-12.02 0ZM12 2.5c-3.03 0-5.92 1.18-8.09 3.34a.75.75 0 1 0 1.06 1.06A10.47 10.47 0 0 1 12 4c2.8 0 5.43 1.09 7.41 2.9a.75.75 0 1 0 1.02-1.1A12 12 0 0 0 12 2.5Z"/>
+    </svg>
+    <span>Sincronizado</span>
   </div>
-</div>
+  </div>
+
+<!-- Bloque: TICs para Congelamiento -->
+<div class="card bg-primary/10 mb-8 border border-primary/20">
+  <div class="card-body">
+    <div class="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+      <div>
+  <div class="text-xl font-semibold">TICs para Congelamiento</div>
+  <div id="count-cong" class="text-sm opacity-70">(0 de 0)</div>
+      </div>
+      <div class="flex items-center gap-3">
+        <span class="loading loading-spinner loading-xs hidden" id="spin-cong"></span>
+        <div class="flex items-center gap-2">
+          <button id="btn-add-cong" class="btn btn-primary gap-2">
+            <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" viewBox="0 0 24 24" fill="currentColor"><path d="M11 11V5a1 1 0 1 1 2 0v6h6a1 1 0 1 1 0 2h-6v6a1 1 0 1 1-2 0v-6H5a1 1 0 1 1 0-2h6Z"/></svg>
+            Agregar TICs
+          </button>
+          <div class="dropdown dropdown-end">
+            <label tabindex="0" class="btn btn-primary px-2">
+              <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" viewBox="0 0 24 24" fill="currentColor"><path d="M7 10l5 5 5-5H7z"/></svg>
+            </label>
+            <ul tabindex="0" class="dropdown-content menu p-2 shadow bg-base-100 rounded-box w-56">
+              <li><button type="button" class="justify-start" data-open-scan="congelamiento">Escanear RFIDs</button></li>
+              <li><button type="button" class="justify-start" disabled>Buscar en inventario</button></li>
+              <li><button type="button" class="justify-start" disabled>Pegar desde Excel</button></li>
+            </ul>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="mt-4">
+  <label class="input input-bordered flex items-center gap-2 w-full">
+        <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 opacity-70" viewBox="0 0 24 24" fill="currentColor"><path d="M10 2a8 8 0 105.293 14.293l4.207 4.207a1 1 0 001.414-1.414l-4.207-4.207A8 8 0 0010 2zm0 2a6 6 0 110 12A6 6 0 0110 4z"/></svg>
+        <input type="text" class="grow" placeholder="Buscar por RFID, nombre o lote..." />
+      </label>
+    </div>
+
+    <div class="overflow-x-auto mt-4">
+      <table id="tabla-cong" class="table">
+        <thead>
+          <tr>
+            <th>RFID</th>
+            <th>NOMBRE</th>
+            <th>LOTE</th>
+            <th>ESTADO</th>
+            <th>CRONÓMETRO</th>
+          </tr>
+        </thead>
+  <tbody></tbody>
+      </table>
+    </div>
+  </div>
+  </div>
+
+<!-- Bloque: TICs para Atemperamiento -->
+<div class="card bg-warning/10 border border-warning/20">
+  <div class="card-body">
+    <div class="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+      <div>
+  <div class="text-xl font-semibold">TICs para Atemperamiento</div>
+  <div id="count-atem" class="text-sm opacity-70">(0 de 0)</div>
+      </div>
+      <div class="flex items-center gap-3">
+        <span class="loading loading-spinner loading-xs hidden" id="spin-atem"></span>
+        <div class="flex items-center gap-2">
+          <button id="btn-add-atem" class="btn btn-warning gap-2">
+            <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" viewBox="0 0 24 24" fill="currentColor"><path d="M11 11V5a1 1 0 1 1 2 0v6h6a1 1 0 1 1 0 2h-6v6a1 1 0 1 1-2 0v-6H5a1 1 0 1 1 0-2h6Z"/></svg>
+            Agregar TICs
+          </button>
+          <div class="dropdown dropdown-end">
+            <label tabindex="0" class="btn btn-warning px-2">
+              <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" viewBox="0 0 24 24" fill="currentColor"><path d="M7 10l5 5 5-5H7z"/></svg>
+            </label>
+            <ul tabindex="0" class="dropdown-content menu p-2 shadow bg-base-100 rounded-box w-56">
+              <li><button type="button" class="justify-start" data-open-scan="atemperamiento">Escanear RFIDs</button></li>
+              <li><button type="button" class="justify-start" disabled>Buscar en inventario</button></li>
+              <li><button type="button" class="justify-start" disabled>Pegar desde Excel</button></li>
+            </ul>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="mt-4">
+      <label class="input input-bordered flex items-center gap-2 w-full">
+        <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 opacity-70" viewBox="0 0 24 24" fill="currentColor"><path d="M10 2a8 8 0 105.293 14.293l4.207 4.207a1 1 0 001.414-1.414l-4.207-4.207A8 8 0 0010 2zm0 2a6 6 0 110 12A6 6 0 0110 4z"/></svg>
+        <input type="text" class="grow" placeholder="Buscar por RFID, nombre o lote..." />
+      </label>
+    </div>
+
+    <div class="overflow-x-auto mt-4">
+      <table id="tabla-atem" class="table">
+        <thead>
+          <tr>
+            <th>RFID</th>
+            <th>NOMBRE</th>
+            <th>LOTE</th>
+            <th>ESTADO</th>
+            <th>CRONÓMETRO</th>
+          </tr>
+        </thead>
+  <tbody></tbody>
+      </table>
+    </div>
+  </div>
+  </div>
+
+<!-- Modal de escaneo estilo "Registro masivo" -->
+<dialog id="dlg-scan" class="modal">
+  <div class="modal-box max-w-3xl">
+    <h3 class="font-bold text-lg">Escanear TICs</h3>
+    <p class="text-sm opacity-70">Escanee o pegue RFIDs de 24 caracteres. Se validarán antes de confirmar.</p>
+
+    <div class="mt-4 grid gap-3">
+      <input id="scan-input" type="text" class="input input-bordered" placeholder="Listo para escanear..." />
+      <div id="chips" class="flex flex-wrap gap-2"></div>
+      <div id="scan-msg" class="text-sm text-error"></div>
+    </div>
+
+    <div class="modal-action">
+      <form method="dialog" class="flex gap-2">
+        <button class="btn btn-ghost">Cancelar</button>
+      </form>
+      <button id="btn-confirm" class="btn btn-primary" disabled>Confirmar</button>
+    </div>
+  </div>
+</dialog>
+
+<script src="/static/js/preacond.js" defer></script>
+        </tbody>
+

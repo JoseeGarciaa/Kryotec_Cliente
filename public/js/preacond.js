@@ -1,0 +1,130 @@
+// Pre Acondicionamiento UX (tipo "registro masivo")
+(function(){
+  const qs = (sel)=>document.querySelector(sel);
+  const tableCongBody = qs('#tabla-cong tbody');
+  const tableAtemBody = qs('#tabla-atem tbody');
+  const countCong = qs('#count-cong');
+  const countAtem = qs('#count-atem');
+  const spinCong = qs('#spin-cong');
+  const spinAtem = qs('#spin-atem');
+
+  // Modal elements
+  const dlg = qs('#dlg-scan');
+  const scanInput = qs('#scan-input');
+  const chipsBox = qs('#chips');
+  const msg = qs('#scan-msg');
+  const btnConfirm = qs('#btn-confirm');
+  let target = 'congelamiento';
+  let rfids = [];
+  let invalid = [];
+  let valid = [];
+
+  function setSpin(which, on){
+    const el = which === 'cong' ? spinCong : spinAtem;
+    if(!el) return;
+    el.classList.toggle('hidden', !on);
+  }
+
+  async function loadData(){
+    try{
+      setSpin('cong', true); setSpin('atem', true);
+      const r = await fetch('/operacion/preacond/data', { headers: { 'Accept':'application/json' } });
+      const j = await r.json();
+      render(tableCongBody, j.congelamiento, 'No hay TICs en congelamiento');
+      render(tableAtemBody, j.atemperamiento, 'No hay TICs en atemperamiento');
+      countCong.textContent = `(${j.congelamiento.length} de ${j.congelamiento.length})`;
+      countAtem.textContent = `(${j.atemperamiento.length} de ${j.atemperamiento.length})`;
+    }catch(e){ console.error(e); }
+    finally{ setSpin('cong', false); setSpin('atem', false); }
+  }
+
+  function render(tbody, rows, emptyText){
+    tbody.innerHTML = '';
+    if(!rows || !rows.length){
+      const tr = document.createElement('tr'); const td = document.createElement('td');
+      td.colSpan = 5; td.className = 'text-center py-10 opacity-70'; td.textContent = emptyText;
+      tr.appendChild(td); tbody.appendChild(tr); return;
+    }
+    for(const r of rows){
+      const tr = document.createElement('tr');
+      tr.innerHTML = `<td>${r.rfid}</td><td>${r.nombre_unidad||''}</td><td>${r.lote||''}</td><td>${r.estado||''}</td><td></td>`;
+      tbody.appendChild(tr);
+    }
+  }
+
+  function openModal(toTarget){
+    target = toTarget;
+    rfids = []; invalid = []; valid = [];
+    chipsBox.innerHTML=''; msg.textContent='';
+    btnConfirm.disabled = true;
+    dlg?.showModal?.();
+    setTimeout(()=>scanInput?.focus?.(), 50);
+  }
+
+  function renderChips(){
+    const items = rfids.map(code=>{
+      const isInvalid = invalid.some(x=>x.rfid===code);
+      const isOk = valid.includes(code);
+      const cls = isInvalid ? 'badge badge-error gap-2' : (isOk ? 'badge badge-success gap-2' : 'badge badge-outline gap-2');
+      const status = isInvalid ? '<div class="text-[10px] text-error">inválido</div>' : (isOk ? '<div class="text-[10px] text-success">ok</div>' : '');
+      return `<div class="inline-flex flex-col items-center">
+                <span class="${cls}">${code}<button type="button" class="btn btn-ghost btn-xs" data-remove="${code}">✕</button></span>
+                ${status}
+              </div>`;
+    }).join('');
+    chipsBox.innerHTML = items || '<div class="opacity-60 text-sm">Sin RFIDs</div>';
+    btnConfirm.disabled = valid.length === 0;
+  }
+
+  function addCode(chunk){
+    if(chunk && chunk.length===24 && !rfids.includes(chunk)) rfids.push(chunk);
+  }
+
+  function processBuffer(raw){
+    let v = (raw||'').replace(/\s+/g,'');
+    while(v.length>=24){ const c=v.slice(0,24); addCode(c); v=v.slice(24); }
+    return v;
+  }
+
+  async function validate(){
+    if(!rfids.length){ invalid=[]; valid=[]; renderChips(); return; }
+    try{
+      const r = await fetch('/operacion/preacond/validate', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ target, rfids }) });
+      const j = await r.json();
+      invalid = Array.isArray(j.invalid)? j.invalid : [];
+      valid = Array.isArray(j.valid)? j.valid : [];
+      renderChips();
+      msg.textContent = invalid.length ? 'Elimine o corrija los RFIDs inválidos.' : '';
+    }catch{ /* keep state */ }
+  }
+
+  // Input handlers
+  scanInput?.addEventListener('input', ()=>{ scanInput.value = processBuffer(scanInput.value); validate(); });
+  scanInput?.addEventListener('paste', (e)=>{ const t=e.clipboardData?.getData('text')||''; if(t){ e.preventDefault(); scanInput.value = processBuffer(t); validate(); } });
+
+  chipsBox?.addEventListener('click', (e)=>{
+    const t = e.target; if(!(t instanceof Element)) return;
+    const code = t.getAttribute('data-remove');
+    if(code){ rfids = rfids.filter(x=>x!==code); valid = valid.filter(x=>x!==code); invalid = invalid.filter(x=>x.rfid!==code); renderChips(); validate(); }
+  });
+
+  btnConfirm?.addEventListener('click', async ()=>{
+    if(!valid.length) return;
+    const r = await fetch('/operacion/preacond/scan', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ target, rfids: valid }) });
+    const j = await r.json().catch(()=>({ok:false}));
+    if(!j.ok){ msg.textContent = 'Error al confirmar'; return; }
+    dlg?.close?.();
+    await loadData();
+  });
+
+  // Openers from dropdowns
+  document.querySelectorAll('[data-open-scan]')?.forEach((el)=>{
+    el.addEventListener('click', ()=>{ const to=(el).getAttribute('data-open-scan'); openModal(to==='atemperamiento'?'atemperamiento':'congelamiento'); });
+  });
+
+  // Also primary buttons
+  qs('#btn-add-cong')?.addEventListener('click', ()=>openModal('congelamiento'));
+  qs('#btn-add-atem')?.addEventListener('click', ()=>openModal('atemperamiento'));
+
+  loadData();
+})();
