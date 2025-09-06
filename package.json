@@ -9,7 +9,7 @@
   "dev": "ts-node-dev --respawn --transpile-only src/server.ts",
   "build:css": "tailwindcss -c tailwind.config.cjs -i ./src/styles/tailwind.css -o ./public/css/app.css --minify",
   "build": "npm run build:css && tsc -p .",
-    "start": "node dist/server.js",
+  "start": "npm run build && node dist/server.js",
     "lint": "eslint ."
   },
   "dependencies": {
