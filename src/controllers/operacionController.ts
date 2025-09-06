@@ -551,6 +551,13 @@ export const OperacionController = {
          rol text NOT NULL CHECK (rol IN ('cube','vip','tic')),
          PRIMARY KEY (caja_id, rfid)
        )`);
+       await c.query(`CREATE TABLE IF NOT EXISTS acond_caja_timers (
+          caja_id int PRIMARY KEY REFERENCES acond_cajas(caja_id) ON DELETE CASCADE,
+          started_at timestamptz,
+          duration_sec integer,
+          active boolean NOT NULL DEFAULT false,
+          updated_at timestamptz NOT NULL DEFAULT NOW()
+        )`);
     });
     // Available TICs: Atemperadas (finished pre-acond) and not already in any caja
     const tics = await withTenant(tenant, (c) => c.query(
@@ -585,21 +592,34 @@ export const OperacionController = {
         ORDER BY ic.id DESC
         LIMIT 200`));
         // Existing cajas with litraje + items (litraje may not exist yet → fallback)
-        let cajasRows:any[] = []; let cajaItemsRows:any[] = [];
+  let cajasRows:any[] = []; let cajaItemsRows:any[] = [];
+  const nowRes = await withTenant(tenant, (c)=> c.query<{ now:string }>(`SELECT NOW()::timestamptz AS now`));
         try {
           const cajasQ = await withTenant(tenant, (c) => c.query(
-            `SELECT c.caja_id, c.lote, c.created_at,
+            `WITH cajas_validas AS (
+               SELECT c.caja_id, c.lote, c.created_at
+               FROM acond_cajas c
+               JOIN acond_caja_items aci ON aci.caja_id = c.caja_id
+               JOIN inventario_credocubes ic ON ic.rfid = aci.rfid
+               GROUP BY c.caja_id, c.lote, c.created_at
+               HAVING bool_and(ic.estado='Acondicionamiento' AND ic.sub_estado='Ensamblaje')
+             )
+             SELECT c.caja_id, c.lote, c.created_at,
                     MAX(m.litraje) AS litraje,
                     COUNT(*) FILTER (WHERE aci.rol='tic') AS tics,
                     COUNT(*) FILTER (WHERE aci.rol='cube') AS cubes,
-                    COUNT(*) FILTER (WHERE aci.rol='vip') AS vips
-               FROM acond_cajas c
-               LEFT JOIN acond_caja_items aci ON aci.caja_id = c.caja_id
-               LEFT JOIN inventario_credocubes ic ON ic.rfid = aci.rfid
-               LEFT JOIN modelos m ON m.modelo_id = ic.modelo_id
-              GROUP BY c.caja_id, c.lote, c.created_at
-              ORDER BY c.caja_id DESC
-              LIMIT 200`));
+                    COUNT(*) FILTER (WHERE aci.rol='vip') AS vips,
+                    act.started_at AS timer_started_at,
+                    act.duration_sec AS timer_duration_sec,
+                    act.active AS timer_active
+             FROM cajas_validas c
+             JOIN acond_caja_items aci ON aci.caja_id = c.caja_id
+             JOIN inventario_credocubes ic ON ic.rfid = aci.rfid
+             LEFT JOIN modelos m ON m.modelo_id = ic.modelo_id
+             LEFT JOIN acond_caja_timers act ON act.caja_id = c.caja_id
+             GROUP BY c.caja_id, c.lote, c.created_at, act.started_at, act.duration_sec, act.active
+             ORDER BY c.caja_id DESC
+             LIMIT 200`));
           cajasRows = cajasQ.rows;
           const itemsQ = await withTenant(tenant, (c) => c.query(
             `SELECT c.caja_id, aci.rol, ic.rfid, m.litraje
@@ -607,18 +627,28 @@ export const OperacionController = {
                JOIN acond_cajas c ON c.caja_id = aci.caja_id
                JOIN inventario_credocubes ic ON ic.rfid = aci.rfid
                JOIN modelos m ON m.modelo_id = ic.modelo_id
-              ORDER BY c.caja_id DESC, CASE aci.rol WHEN 'vip' THEN 0 WHEN 'tic' THEN 1 ELSE 2 END, ic.rfid`));
+               WHERE c.caja_id = ANY($1::int[])
+               ORDER BY c.caja_id DESC, CASE aci.rol WHEN 'vip' THEN 0 WHEN 'tic' THEN 1 ELSE 2 END, ic.rfid`, [cajasRows.map(r=>r.caja_id)]));
           cajaItemsRows = itemsQ.rows;
         } catch (e:any) {
           // Fallback without litraje column
           if(e?.code === '42703') {
             const cajasQ = await withTenant(tenant, (c) => c.query(
-              `SELECT c.caja_id, c.lote, c.created_at,
+              `WITH cajas_validas AS (
+                 SELECT c.caja_id, c.lote, c.created_at
+                 FROM acond_cajas c
+                 JOIN acond_caja_items aci ON aci.caja_id = c.caja_id
+                 JOIN inventario_credocubes ic ON ic.rfid = aci.rfid
+                 GROUP BY c.caja_id, c.lote, c.created_at
+                 HAVING bool_and(ic.estado='Acondicionamiento' AND ic.sub_estado='Ensamblaje')
+               )
+               SELECT c.caja_id, c.lote, c.created_at,
                       COUNT(*) FILTER (WHERE aci.rol='tic') AS tics,
                       COUNT(*) FILTER (WHERE aci.rol='cube') AS cubes,
                       COUNT(*) FILTER (WHERE aci.rol='vip') AS vips
-                 FROM acond_cajas c
-                 LEFT JOIN acond_caja_items aci ON aci.caja_id = c.caja_id
+                 FROM cajas_validas c
+                 JOIN acond_caja_items aci ON aci.caja_id = c.caja_id
+                 JOIN inventario_credocubes ic ON ic.rfid = aci.rfid
                 GROUP BY c.caja_id, c.lote, c.created_at
                 ORDER BY c.caja_id DESC
                 LIMIT 200`));
@@ -627,13 +657,14 @@ export const OperacionController = {
               `SELECT c.caja_id, aci.rol, aci.rfid
                  FROM acond_caja_items aci
                  JOIN acond_cajas c ON c.caja_id = aci.caja_id
-                ORDER BY c.caja_id DESC, CASE aci.rol WHEN 'vip' THEN 0 WHEN 'tic' THEN 1 ELSE 2 END, aci.rfid`));
+                 WHERE c.caja_id = ANY($1::int[])
+                ORDER BY c.caja_id DESC, CASE aci.rol WHEN 'vip' THEN 0 WHEN 'tic' THEN 1 ELSE 2 END, aci.rfid`, [cajasRows.map(r=>r.caja_id)]));
             cajaItemsRows = itemsQ.rows;
           } else {
             throw e;
           }
         }
-        res.json({ ok:true, disponibles: { tics: tics.rows, cubes: cubes.rows, vips: vips.rows }, cajas: cajasRows, cajaItems: cajaItemsRows });
+  res.json({ ok:true, now: nowRes.rows[0]?.now, disponibles: { tics: tics.rows, cubes: cubes.rows, vips: vips.rows }, cajas: cajasRows, cajaItems: cajaItemsRows });
   },
 
   // Validate RFIDs for assembling a single caja
@@ -643,12 +674,31 @@ export const OperacionController = {
     const input = Array.isArray(rfids) ? rfids : (rfids ? [rfids] : []);
     const codes = [...new Set(input.filter((x:any)=>typeof x==='string').map((s:string)=>s.trim()).filter(Boolean))];
     if(!codes.length) return res.status(400).json({ ok:false, error:'Sin RFIDs' });
+    // Limpieza rápida de asignaciones obsoletas (items que ya no están en Ensamblaje)
+    await withTenant(tenant, async (c)=>{
+      await c.query(`DELETE FROM acond_caja_items aci
+                       WHERE NOT EXISTS (
+                         SELECT 1 FROM inventario_credocubes ic
+                          WHERE ic.rfid = aci.rfid
+                            AND ic.estado='Acondicionamiento'
+                            AND ic.sub_estado='Ensamblaje'
+                       )`);
+      await c.query(`DELETE FROM acond_cajas c WHERE NOT EXISTS (SELECT 1 FROM acond_caja_items aci WHERE aci.caja_id=c.caja_id)`);
+    });
     const rows = await withTenant(tenant, (c) => c.query(
-      `SELECT ic.rfid, ic.estado, ic.sub_estado, ic.lote, m.nombre_modelo,
+      `WITH cajas_validas AS (
+         SELECT c.caja_id
+           FROM acond_cajas c
+           JOIN acond_caja_items aci ON aci.caja_id = c.caja_id
+           JOIN inventario_credocubes ic2 ON ic2.rfid = aci.rfid
+          GROUP BY c.caja_id
+         HAVING bool_and(ic2.estado='Acondicionamiento' AND ic2.sub_estado='Ensamblaje')
+       )
+       SELECT ic.rfid, ic.estado, ic.sub_estado, ic.lote, m.nombre_modelo,
               CASE WHEN aci.rfid IS NOT NULL THEN true ELSE false END AS ya_en_caja
          FROM inventario_credocubes ic
          JOIN modelos m ON m.modelo_id = ic.modelo_id
-    LEFT JOIN acond_caja_items aci ON aci.rfid = ic.rfid
+    LEFT JOIN acond_caja_items aci ON aci.rfid = ic.rfid AND aci.caja_id IN (SELECT caja_id FROM cajas_validas)
         WHERE ic.rfid = ANY($1::text[])`, [codes]));
     const valid: { rfid:string; rol:string }[] = [];
     const invalid: { rfid:string; reason:string }[] = [];
@@ -688,12 +738,30 @@ export const OperacionController = {
     const codes = [...new Set(input.filter((x:any)=>typeof x==='string').map((s:string)=>s.trim()).filter(Boolean))];
     if(codes.length !== 8) return res.status(400).json({ ok:false, error:'Se requieren exactamente 8 RFIDs (1 cube, 1 vip, 6 tics)' });
     // Re-validate using same logic
+    await withTenant(tenant, async (c)=>{
+      await c.query(`DELETE FROM acond_caja_items aci
+                       WHERE NOT EXISTS (
+                         SELECT 1 FROM inventario_credocubes ic
+                          WHERE ic.rfid = aci.rfid
+                            AND ic.estado='Acondicionamiento'
+                            AND ic.sub_estado='Ensamblaje'
+                       )`);
+      await c.query(`DELETE FROM acond_cajas c WHERE NOT EXISTS (SELECT 1 FROM acond_caja_items aci WHERE aci.caja_id=c.caja_id)`);
+    });
     const rows = await withTenant(tenant, (c) => c.query(
-      `SELECT ic.rfid, ic.estado, ic.sub_estado, ic.lote, m.nombre_modelo,
+      `WITH cajas_validas AS (
+         SELECT c.caja_id
+           FROM acond_cajas c
+           JOIN acond_caja_items aci ON aci.caja_id = c.caja_id
+           JOIN inventario_credocubes ic2 ON ic2.rfid = aci.rfid
+          GROUP BY c.caja_id
+         HAVING bool_and(ic2.estado='Acondicionamiento' AND ic2.sub_estado='Ensamblaje')
+       )
+       SELECT ic.rfid, ic.estado, ic.sub_estado, ic.lote, m.nombre_modelo,
               CASE WHEN aci.rfid IS NOT NULL THEN true ELSE false END AS ya_en_caja
          FROM inventario_credocubes ic
          JOIN modelos m ON m.modelo_id = ic.modelo_id
-    LEFT JOIN acond_caja_items aci ON aci.rfid = ic.rfid
+    LEFT JOIN acond_caja_items aci ON aci.rfid = ic.rfid AND aci.caja_id IN (SELECT caja_id FROM cajas_validas)
         WHERE ic.rfid = ANY($1::text[])`, [codes]));
   let haveCube=false, haveVip=false, ticCount=0; const litrajes = new Set<string>();
   const roles: { rfid:string; rol:'cube'|'vip'|'tic'; litraje?: any }[] = [];
@@ -732,6 +800,13 @@ export const OperacionController = {
            rol text NOT NULL CHECK (rol IN ('cube','vip','tic')),
            PRIMARY KEY (caja_id, rfid)
         )`);
+      await c.query(`CREATE TABLE IF NOT EXISTS acond_caja_timers (
+        caja_id int PRIMARY KEY REFERENCES acond_cajas(caja_id) ON DELETE CASCADE,
+        started_at timestamptz,
+        duration_sec integer,
+        active boolean NOT NULL DEFAULT false,
+        updated_at timestamptz NOT NULL DEFAULT NOW()
+      )`);
         const rCaja = await c.query(`INSERT INTO acond_cajas(lote) VALUES ($1) RETURNING caja_id`, [loteNuevo]);
         const cajaId = rCaja.rows[0].caja_id;
         // Clear lote for TICs first (as per requirement) then set estado/sub_estado + assign lote to all
@@ -752,5 +827,52 @@ export const OperacionController = {
         res.status(500).json({ ok:false, error: e.message||'Error creando caja' });
       }
     });
+  },
+  // ============================= ACONDICIONAMIENTO · CAJA TIMERS =============================
+  acondCajaTimerStart: async (req: Request, res: Response) => {
+    const tenant = (req as any).user?.tenant;
+    const { caja_id, durationSec } = req.body as any;
+    const cajaId = Number(caja_id);
+    const dur = Number(durationSec);
+    if(!Number.isFinite(cajaId) || cajaId<=0) return res.status(400).json({ ok:false, error:'caja_id inválido' });
+    if(!Number.isFinite(dur) || dur<=0) return res.status(400).json({ ok:false, error:'Duración inválida' });
+    await withTenant(tenant, async (c)=>{
+      await c.query(`CREATE TABLE IF NOT EXISTS acond_caja_timers (
+          caja_id int PRIMARY KEY REFERENCES acond_cajas(caja_id) ON DELETE CASCADE,
+          started_at timestamptz,
+          duration_sec integer,
+          active boolean NOT NULL DEFAULT false,
+          updated_at timestamptz NOT NULL DEFAULT NOW()
+      )`);
+      const ex = await c.query(`SELECT 1 FROM acond_cajas WHERE caja_id=$1`, [cajaId]);
+      if(!ex.rowCount) return res.status(404).json({ ok:false, error:'Caja no existe' });
+      await c.query(`INSERT INTO acond_caja_timers(caja_id, started_at, duration_sec, active, updated_at)
+          VALUES($1, NOW(), $2, true, NOW())
+          ON CONFLICT (caja_id) DO UPDATE SET started_at=NOW(), duration_sec=EXCLUDED.duration_sec, active=true, updated_at=NOW()`,
+        [cajaId, dur]);
+    });
+    res.json({ ok:true });
+  },
+  acondCajaTimerClear: async (req: Request, res: Response) => {
+    const tenant = (req as any).user?.tenant;
+    const { caja_id } = req.body as any;
+    const cajaId = Number(caja_id);
+    if(!Number.isFinite(cajaId) || cajaId<=0) return res.status(400).json({ ok:false, error:'caja_id inválido' });
+    await withTenant(tenant, async (c)=>{
+      await c.query(`UPDATE acond_caja_timers SET active=false, started_at=NULL, duration_sec=NULL, updated_at=NOW() WHERE caja_id=$1`, [cajaId]);
+    });
+    res.json({ ok:true });
+  },
+  acondCajaTimerComplete: async (req: Request, res: Response) => {
+    const tenant = (req as any).user?.tenant;
+    const { caja_id } = req.body as any;
+    const cajaId = Number(caja_id);
+    if(!Number.isFinite(cajaId) || cajaId<=0) return res.status(400).json({ ok:false, error:'caja_id inválido' });
+    await withTenant(tenant, async (c)=>{
+      await c.query(`UPDATE acond_caja_timers SET active=false, updated_at=NOW() WHERE caja_id=$1`, [cajaId]);
+      // Opcional: mover items a nuevo sub_estado (comentado hasta definir regla)
+      // await c.query(`UPDATE inventario_credocubes ic SET sub_estado='Listo' WHERE ic.rfid IN (SELECT rfid FROM acond_caja_items WHERE caja_id=$1)`, [cajaId]);
+    });
+    res.json({ ok:true });
   }
 };

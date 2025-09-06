@@ -72,8 +72,31 @@
     return `${hh}:${mm}:${ss}`;
   }
 
+  let firstLoad = true;
+  function renderInitialLoading(){
+    if(tableCongBody){
+      tableCongBody.innerHTML='';
+      const tr=document.createElement('tr'); const td=document.createElement('td'); td.colSpan=5; td.className='py-10 text-center opacity-60';
+      td.innerHTML=`<div class='flex flex-col items-center gap-3'>
+        <span class="loading loading-spinner loading-md"></span>
+        <span class='text-sm'>Cargando TICs en congelamiento...</span>
+      </div>`; tr.appendChild(td); tableCongBody.appendChild(tr);
+    }
+    if(tableAtemBody){
+      tableAtemBody.innerHTML='';
+      const tr=document.createElement('tr'); const td=document.createElement('td'); td.colSpan=5; td.className='py-10 text-center opacity-60';
+      td.innerHTML=`<div class='flex flex-col items-center gap-3'>
+        <span class="loading loading-spinner loading-md"></span>
+        <span class='text-sm'>Cargando TICs en atemperamiento...</span>
+      </div>`; tr.appendChild(td); tableAtemBody.appendChild(tr);
+    }
+    if(lotesCong){ lotesCong.innerHTML = `<div class='flex items-center gap-2 py-6 justify-center opacity-70'><span class="loading loading-spinner loading-sm"></span><span class='text-xs'>Cargando lotes...</span></div>`; }
+    if(lotesAtem){ lotesAtem.innerHTML = `<div class='flex items-center gap-2 py-6 justify-center opacity-70'><span class="loading loading-spinner loading-sm"></span><span class='text-xs'>Cargando lotes...</span></div>`; }
+  }
+
   async function loadData(){
     try{
+      if(firstLoad){ renderInitialLoading(); }
       setSpin('cong', true); setSpin('atem', true);
       const r = await fetch('/operacion/preacond/data', { headers: { 'Accept':'application/json' } });
       const j = await r.json();
@@ -94,8 +117,8 @@
   setupSectionTimer('atemperamiento', j.timers?.atemperamiento || null);
   if(timerCongEl) timerCongEl.textContent = '';
   if(timerAtemEl) timerAtemEl.textContent = '';
-    }catch(e){ console.error(e); }
-    finally{ setSpin('cong', false); setSpin('atem', false); }
+  }catch(e){ console.error(e); }
+  finally{ setSpin('cong', false); setSpin('atem', false); firstLoad=false; }
   }
 
   function renderLotes(container, rows, section){
@@ -629,6 +652,7 @@
   try{ const s = localStorage.getItem('preacondViewMode'); if(s==='grid'||s==='list') initialMode=s; }catch{}
   setView(initialMode);
 
+  renderInitialLoading();
   loadData();
 
   // Client-side filtering

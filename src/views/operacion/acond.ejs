@@ -9,7 +9,7 @@
   <div class="card-body p-0">
     <div class="flex items-center justify-between px-5 pt-4 pb-3 flex-wrap gap-3">
       <div>
-        <div class="font-semibold text-lg">Items en Ensamblaje</div>
+  <div class="font-semibold text-lg flex items-center gap-2">Items en Ensamblaje <span id="spin-acond" class="loading loading-spinner loading-xs hidden"></span></div>
         <div id="count-ensam" class="text-sm opacity-70">(0 de 0)</div>
       </div>
       <div class="flex gap-2 items-center">
@@ -59,7 +59,7 @@
   <div class="card-body p-0">
     <div class="flex items-center justify-between px-5 pt-4 pb-3 flex-wrap gap-3">
       <div>
-        <div class="font-semibold text-lg">Items Lista para Despacho</div>
+  <div class="font-semibold text-lg flex items-center gap-2">Items Lista para Despacho <span id="spin-listo" class="loading loading-spinner loading-xs hidden"></span></div>
         <div id="count-listo" class="text-sm opacity-70">(0 de 0)</div>
       </div>
       <button id="btn-add-listo" class="btn btn-accent btn-sm md:btn-md gap-2" type="button">
@@ -92,6 +92,29 @@
 </div>
 
 <script src="/static/js/acond.js?v=<%= assetVersion %>" defer></script>
+
+<!-- Modal Selección Cronómetro -->
+<dialog id="modal-timer" class="modal">
+  <div class="modal-box w-full max-w-xs">
+    <form method="dialog">
+      <button class="btn btn-sm btn-circle btn-ghost absolute right-2 top-2">✕</button>
+    </form>
+    <h3 class="font-semibold mb-3">Iniciar cronómetro</h3>
+    <div class="grid grid-cols-3 gap-2 mb-4" id="timer-presets">
+      <button data-min="5" class="btn btn-sm btn-outline">5m</button>
+      <button data-min="10" class="btn btn-sm btn-outline">10m</button>
+      <button data-min="15" class="btn btn-sm btn-outline">15m</button>
+      <button data-min="20" class="btn btn-sm btn-outline">20m</button>
+      <button data-min="30" class="btn btn-sm btn-outline">30m</button>
+      <button data-min="45" class="btn btn-sm btn-outline">45m</button>
+    </div>
+    <form id="timer-custom" class="flex gap-2 items-center mb-2">
+      <input id="timer-mins" type="number" min="1" placeholder="Minutos" class="input input-sm input-bordered w-full" />
+      <button class="btn btn-primary btn-sm" type="submit">OK</button>
+    </form>
+    <p id="timer-msg" class="text-xs opacity-70"></p>
+  </div>
+</dialog>
 
 <!-- Modal Ensamblaje -->
 <dialog id="modal-ensam" class="modal">
@@ -150,6 +173,7 @@
         <div><span class="opacity-60">Creada:</span> <span id="detalle-caja-fecha"></span></div>
       </div>
       <div id="detalle-caja-items" class="grid sm:grid-cols-2 md:grid-cols-3 gap-4 mb-2"></div>
+  <div id="detalle-caja-timer-box" class="mb-4"></div>
       <div class="flex justify-end pt-2">
         <button class="btn btn-sm" data-close="detalle">Cerrar</button>
       </div>
