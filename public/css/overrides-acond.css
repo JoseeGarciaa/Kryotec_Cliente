@@ -1,0 +1,33 @@
+/* Overrides & responsive helpers for Acondicionamiento and small screens */
+
+/* Custom thin scrollbar for horizontally scrollable grids and modal lists */
+.custom-scroll {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(100,116,139,.4) transparent; /* slate-500/40 */
+}
+.custom-scroll::-webkit-scrollbar { height: 6px; width: 6px; }
+.custom-scroll::-webkit-scrollbar-track { background: transparent; }
+.custom-scroll::-webkit-scrollbar-thumb {
+  background: rgba(100,116,139,.35);
+  border-radius: 9999px;
+}
+.custom-scroll::-webkit-scrollbar-thumb:hover { background: rgba(100,116,139,.55); }
+
+/* Caja card sizing safety on very narrow devices */
+.caja-card { min-width: 150px; }
+
+/* Ultra-small screens < 430px (our custom xs breakpoint target) */
+@media (max-width: 429px) {
+  .acond-header-actions { gap: .5rem; }
+  .acond-header-actions .btn { padding-left:.5rem; padding-right:.5rem; height:2.5rem; min-height:2.5rem; }
+  .caja-card .badge { font-size:10px; }
+}
+
+/* Extreme narrow < 360px: tighten further */
+@media (max-width: 359px) {
+  .acond-header-actions .btn span { display:none; } /* hide text keep icon */
+  .acond-grid-wrap { padding-left:.25rem; padding-right:.25rem; }
+}
+
+/* Smooth horizontal scroll momentum (iOS) */
+.acond-grid-wrap { -webkit-overflow-scrolling: touch; }

@@ -7,6 +7,9 @@ module.exports = {
   darkMode: 'class',
   theme: {
     extend: {
+      screens: {
+        xs: '430px', // custom extra-small breakpoint for narrow devices
+      },
       keyframes: {
         'fade-in': { '0%': { opacity: 0 }, '100%': { opacity: 1 } },
         'fade-out': { '0%': { opacity: 1 }, '100%': { opacity: 0 } },
