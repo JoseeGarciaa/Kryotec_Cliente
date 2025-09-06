@@ -16,6 +16,7 @@ router.post('/preacond/item-timer/start', requireAuth, OperacionController.preac
 router.post('/preacond/item-timer/clear', requireAuth, OperacionController.preacondItemTimerClear);
 router.post('/preacond/timer/complete', requireAuth, OperacionController.preacondTimerComplete);
 router.post('/preacond/item-timer/complete', requireAuth, OperacionController.preacondItemTimerComplete);
+router.post('/preacond/return-to-bodega', requireAuth, OperacionController.preacondReturnToBodega);
 router.get('/acond', requireAuth, OperacionController.acond);
 router.get('/operacion', requireAuth, OperacionController.operacion);
 router.get('/devolucion', requireAuth, OperacionController.devolucion);

@@ -81,8 +81,11 @@
   countAtem.textContent = `(${nAtem} de ${nAtem})`;
   if(qtyCongEl) qtyCongEl.textContent = String(nCong);
   if(qtyAtemEl) qtyAtemEl.textContent = String(nAtem);
-      setupSectionTimer('congelamiento', j.timers?.congelamiento || null);
-      setupSectionTimer('atemperamiento', j.timers?.atemperamiento || null);
+  // We keep server timers for compatibility but don't show/control them here
+  setupSectionTimer('congelamiento', j.timers?.congelamiento || null);
+  setupSectionTimer('atemperamiento', j.timers?.atemperamiento || null);
+  if(timerCongEl) timerCongEl.textContent = '';
+  if(timerAtemEl) timerAtemEl.textContent = '';
     }catch(e){ console.error(e); }
     finally{ setSpin('cong', false); setSpin('atem', false); }
   }
@@ -91,7 +94,8 @@
     if(!container) return;
     const groups = new Map();
     for(const r of rows||[]){
-      const lote = (r.item_lote || r.lote || '').trim();
+  // Normalize lote to string so numeric DB values (e.g., 6) don't break .trim()
+  const lote = String(r.lote ?? '').trim();
       const key = lote || '(sin lote)';
       if(!groups.has(key)) groups.set(key, []);
       groups.get(key).push(r);
@@ -118,15 +122,32 @@
         const active = !!it.item_active && !!started && duration>0;
         const tableId = section==='congelamiento'?'tabla-cong':'tabla-atem';
         const timerId = `tm-card-${tableId}-${it.rfid}`;
-        const timeBadge = active ? `<span class="badge ${isCompleted?'badge-info':'badge-neutral'} badge-xs"><span id="${timerId}">00:00:00</span></span>` : '';
         const displayName = (it.nombre_unidad||'').trim() || 'TIC';
+        let right = '';
+        if(active){
+          // show ticking badge + stop
+          right = `<span class="flex items-center gap-2">
+                     <span class="badge badge-neutral badge-xs"><span id="${timerId}">00:00:00</span></span>
+                     <button class="btn btn-ghost btn-xs text-error" data-item-clear="${it.rfid}" data-section="${section}">
+                       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" class="w-4 h-4" fill="currentColor"><path d="M6 6h12v12H6z"/></svg>
+                     </button>
+                   </span>`;
+        } else if(!isCompleted){
+          // show start
+          right = `<span class="flex items-center gap-2">
+                     <button class="btn btn-ghost btn-xs text-success" data-item-start="${it.rfid}" data-section="${section}">
+                       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" class="w-4 h-4" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
+                     </button>
+                   </span>`;
+        } else {
+          // completed -> only 'Devolver a bodega'
+          right = `<span class="flex items-center gap-2">
+                     <button class="btn btn-ghost btn-xs text-warning" data-item-bodega="${it.rfid}" data-section="${section}">Devolver a bodega</button>
+                   </span>`;
+        }
         return `<li class="flex items-center justify-between py-1">
                   <span class="truncate text-sm">${displayName}</span>
-                  <span class="flex items-center gap-2">${timeBadge}
-                    <button class="btn btn-ghost btn-xs ${active?'text-error':'text-success'}" ${active?`data-item-clear="${it.rfid}"`:`data-item-start="${it.rfid}"`} data-section="${section}">
-                      ${active?'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" class="w-4 h-4" fill="currentColor"><path d="M6 6h12v12H6z"/></svg>':'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" class="w-4 h-4" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>'}
-                    </button>
-                  </span>
+                  ${right}
                 </li>`;
       }).join('');
     cards.push(`<div class="card shadow-lg border border-base-300/60 bg-base-200 rounded-2xl">
@@ -147,29 +168,42 @@
       tr.appendChild(td); tbody.appendChild(tr); return;
     }
     for(const r of rows){
-      const tr = document.createElement('tr');
+  const tr = document.createElement('tr');
   const started = r.started_at ? new Date(r.started_at).getTime() : null;
       const duration = Number(r.duration_sec)||0;
       const active = !!r.item_active && !!started && duration>0;
       const tableId = (tbody.closest('table') && tbody.closest('table').id) || 'x';
       const timerId = `tm-${tableId}-${r.rfid}`;
-      const isCompleted = /Congelado|Atemperado/i.test(r.sub_estado||'');
-      if(isCompleted){ tr.classList.add('bg-info/10'); }
-      const controls = active
-        ? `<button class="btn btn-ghost btn-xs text-error" title="Detener" data-item-clear="${r.rfid}" data-section="${section}">
+      const sub = (r.sub_estado||'').toLowerCase();
+      const isCompleted = /congelado|atemperado/.test(sub);
+      if(isCompleted){
+        tr.classList.add(section==='atemperamiento' ? 'bg-warning/10' : 'bg-info/10');
+        tr.setAttribute('data-completed','1');
+      } else { tr.removeAttribute('data-completed'); }
+      let controls = '';
+      if(active){
+        controls = `<button class="btn btn-ghost btn-xs text-error" title="Detener" data-item-clear="${r.rfid}" data-section="${section}">
              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" class="w-4 h-4" fill="currentColor"><path d="M6 6h12v12H6z"/></svg>
-           </button>`
-        : `<button class="btn btn-ghost btn-xs text-success" title="Iniciar" data-item-start="${r.rfid}" data-section="${section}">
+           </button>`;
+      } else if(!isCompleted) {
+        // Not active and not completed -> show standard start
+        controls = `<button class="btn btn-ghost btn-xs text-success" title="Iniciar" data-item-start="${r.rfid}" data-section="${section}">
              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" class="w-4 h-4" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
            </button>`;
-      const loteVal = r.item_lote || r.lote || '';
+      } else {
+        // Completed -> allow returning to warehouse (clear lote + set 'En bodega')
+        controls = `<button class="btn btn-ghost btn-xs text-warning" title="Devolver a bodega" data-item-bodega="${r.rfid}" data-section="${section}">Devolver a bodega</button>`;
+      }
+  const loteVal = r.lote || '';
       const lotePill = loteVal ? `<span class="badge badge-ghost badge-xs sm:badge-sm whitespace-nowrap">L: ${loteVal}</span>` : '';
-      tr.innerHTML = `<td>${r.rfid}</td><td class="hidden md:table-cell">${r.nombre_unidad||''}</td><td class="hidden lg:table-cell">${r.lote||r.item_lote||''}</td><td class="hidden md:table-cell">${r.estado||''}</td>
+      const badgeClass = isCompleted ? (section==='atemperamiento' ? 'badge-warning' : 'badge-info') : 'badge-neutral';
+  tr.innerHTML = `<td>${r.rfid}</td><td class="hidden md:table-cell">${r.nombre_unidad||''}</td><td class="hidden lg:table-cell">${r.lote||''}</td><td class="hidden md:table-cell">${r.estado||''}</td>
         <td class="flex flex-wrap items-center gap-1 sm:gap-2">
-          <span class="badge ${isCompleted?'badge-info':'badge-neutral'} badge-sm" data-threshold="1"><span id="${timerId}">${active? '00:00:00' : ''}</span></span>
+          <span class="badge ${badgeClass} badge-sm" data-threshold="1"><span id="${timerId}">${active? '00:00:00' : ''}</span></span>
           ${lotePill}
           ${controls}
         </td>`;
+  tr.setAttribute('data-has-lote', (r.lote && String(r.lote).trim()) ? '1' : '0');
       if(active){
         tr.setAttribute('data-item-duration', String(duration));
         tr.setAttribute('data-timer-started', String(started));
@@ -240,9 +274,7 @@
           }
         }
       });
-      // Update section timers
-      updateSectionTimer(now, 'congelamiento');
-      updateSectionTimer(now, 'atemperamiento');
+  // No global section timer countdown or auto-complete
       rafId = requestAnimationFrame(step);
     };
     step();
@@ -262,21 +294,8 @@
   }
   function sectionEl(section){ return section==='congelamiento' ? timerCongEl : timerAtemEl; }
   function updateSectionTimer(now, section){
-    const t = sectionTimers[section]; const el = sectionEl(section); if(!el) return;
-    if(!t.active || !t.startedAt || !t.durationSec){ el.textContent=''; return; }
-    const elapsed = Math.floor((now - t.startedAt)/1000);
-    const remaining = Math.max(0, t.durationSec - elapsed);
-    const hh = String(Math.floor(remaining/3600)).padStart(2,'0');
-    const mm = String(Math.floor((remaining%3600)/60)).padStart(2,'0');
-    const ss = String(remaining%60).padStart(2,'0');
-    el.textContent = `⏱️ ${hh}:${mm}:${ss}${t.lote?` • Lote: ${t.lote}`:''}`;
-    if(remaining===0){
-      if(t.active){
-        t.active=false;
-        fetch('/operacion/preacond/timer/complete', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ section }) })
-          .then(()=>loadData());
-      }
-    }
+  const el = sectionEl(section); if(!el) return; // hide header timer
+  el.textContent = '';
   }
 
   async function startSectionTimer(section, lote, minutes, rfids){
@@ -338,6 +357,14 @@
   // Input handlers
   scanInput?.addEventListener('input', ()=>{ scanInput.value = processBuffer(scanInput.value); validate(); });
   scanInput?.addEventListener('paste', (e)=>{ const t=e.clipboardData?.getData('text')||''; if(t){ e.preventDefault(); scanInput.value = processBuffer(t); validate(); } });
+  // Prevent Enter from auto-confirming; require tapping the Confirm button
+  scanInput?.addEventListener('keydown', (e)=>{
+    if(e.key === 'Enter'){
+      e.preventDefault();
+      e.stopPropagation();
+      return false;
+    }
+  });
 
   chipsBox?.addEventListener('click', (e)=>{
     const t = e.target; if(!(t instanceof Element)) return;
@@ -360,7 +387,7 @@
   });
   // Old dropdown timer actions removed
 
-  // New Start All / Clear All buttons
+  // New Start All / Clear All buttons (clear-all now only cancels item timers visually)
   qs('#btn-startall-cong')?.addEventListener('click', ()=>openGroupTimer('congelamiento'));
   qs('#btn-clearall-cong')?.addEventListener('click', ()=>clearSectionTimer('congelamiento'));
   qs('#btn-startall-atem')?.addEventListener('click', ()=>openGroupTimer('atemperamiento'));
@@ -386,8 +413,6 @@
     const totalMinutes = (isFinite(hours)?Math.max(0,hours):0)*60 + (isFinite(minutes)?Math.max(0,minutes):0);
     if(!lote || !Number.isFinite(totalMinutes) || totalMinutes<=0){ if(gMsg) gMsg.textContent='Completa lote y duración (> 0).'; return; }
     if(pendingItemStart){
-      const { section, rfid } = pendingItemStart;
-      pendingItemStart = null;
       gDlg?.close?.();
       const durationSec = Math.round(totalMinutes*60);
       await fetch('/operacion/preacond/item-timer/start', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ section, rfid, durationSec, lote }) });
@@ -401,8 +426,9 @@
       if(!tds || tds.length===1) return null;
       const rfid = tds[0].textContent?.trim();
       const hasActive = tr.hasAttribute('data-timer-started');
-      const hasLote = !!tr.querySelector('.badge-ghost');
-      return (!hasActive && !hasLote) ? rfid : null;
+      const hasLote = tr.getAttribute('data-has-lote') === '1';
+      const completed = tr.getAttribute('data-completed') === '1';
+      return (!hasActive && !hasLote && !completed) ? rfid : null;
     }).filter(Boolean);
     gDlg?.close?.();
     await startSectionTimer(currentSectionForModal, lote, totalMinutes, rfids);
@@ -413,6 +439,8 @@
     const t = e.target; if(!(t instanceof Element)) return;
     const startR = t.closest('[data-item-start]');
     const clearR = t.closest('[data-item-clear]');
+  const restartR = t.closest('[data-item-restart]');
+  const bodegaR = t.closest('[data-item-bodega]');
     if(startR){
       const rfid = startR.getAttribute('data-item-start');
       const section = startR.getAttribute('data-section');
@@ -430,6 +458,26 @@
       const rfid = clearR.getAttribute('data-item-clear');
       const section = clearR.getAttribute('data-section');
       fetch('/operacion/preacond/item-timer/clear', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ section, rfid }) })
+        .then(()=>loadData());
+    } else if(restartR){
+      // Clear lote and timer state, then open modal to start again
+      const rfid = restartR.getAttribute('data-item-restart');
+      const section = restartR.getAttribute('data-section');
+      fetch('/operacion/preacond/item-timer/clear', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ section, rfid }) })
+        .then(()=>{
+          pendingItemStart = { section, rfid };
+          currentSectionForModal = section;
+          if(gSectionLabel) gSectionLabel.textContent = '1 TIC seleccionado';
+          if(gMsg) gMsg.textContent = '';
+          if(gLote) gLote.value = '';
+          if(gHr) gHr.value = '';
+          if(gMin) gMin.value = '';
+          gDlg?.showModal?.();
+          setTimeout(()=>gLote?.focus?.(), 50);
+        });
+    } else if(bodegaR){
+      const rfid = bodegaR.getAttribute('data-item-bodega');
+      fetch('/operacion/preacond/return-to-bodega', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ rfid }) })
         .then(()=>loadData());
     }
   }

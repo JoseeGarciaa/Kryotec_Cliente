@@ -101,14 +101,20 @@ export const OperacionController = {
       }
       const cur = (found.rows as any[]).find(r => r.rfid === code);
       if (t === 'atemperamiento') {
-        if (cur?.estado === 'Pre Acondicionamiento' && cur?.sub_estado === 'Congelamiento') {
+        if (cur?.estado === 'Pre Acondicionamiento' && cur?.sub_estado === 'Congelado') {
           accept.push(code);
+        } else if (cur?.estado === 'Pre Acondicionamiento' && (cur?.sub_estado === 'Atemperamiento' || cur?.sub_estado === 'Atemperado')) {
+          rejects.push({ rfid: code, reason: 'Ya está en Atemperamiento' });
         } else {
-          rejects.push({ rfid: code, reason: 'Debe estar en Congelamiento' });
+          rejects.push({ rfid: code, reason: 'Debe estar Congelado' });
         }
       } else {
-        // Congelamiento: aceptar cualquier TIC
-        accept.push(code);
+        // Congelamiento: no aceptar si ya está en Congelamiento o Congelado
+        if (cur?.estado === 'Pre Acondicionamiento' && (cur?.sub_estado === 'Congelamiento' || cur?.sub_estado === 'Congelado')) {
+          rejects.push({ rfid: code, reason: 'Ya está en Congelamiento' });
+        } else {
+          accept.push(code);
+        }
       }
     }
 
@@ -124,24 +130,15 @@ export const OperacionController = {
       } else {
         await withTenant(tenant, (c) => c.query(
           `UPDATE inventario_credocubes ic
-        SET estado = 'Pre Acondicionamiento', sub_estado = 'Atemperamiento'
+        SET estado = 'Pre Acondicionamiento', sub_estado = 'Atemperamiento', lote = NULL
             FROM modelos m
            WHERE ic.modelo_id = m.modelo_id
              AND ic.rfid = ANY($1::text[])
              AND (m.nombre_modelo ILIKE '%tic%')
-             AND ic.estado = 'Pre Acondicionamiento' AND ic.sub_estado = 'Congelamiento'`, [accept]));
+             AND ic.estado = 'Pre Acondicionamiento' AND ic.sub_estado = 'Congelado'`, [accept]));
       }
 
-      // If there is an active group timer with a lote set for the target section, apply that lote to these RFIDs
-      const timer = await withTenant(tenant, (c) => c.query(
-        `SELECT lote FROM preacond_timers WHERE section = $1 AND active = true AND lote IS NOT NULL`, [t]
-      ));
-      const lote = timer.rows?.[0]?.lote as string | undefined;
-      if (lote) {
-        await withTenant(tenant, (c) => c.query(
-          `UPDATE inventario_credocubes SET lote = $1 WHERE rfid = ANY($2::text[]) AND (lote IS NULL OR lote = '')`, [lote, accept]
-        ));
-      }
+  // Do NOT auto-assign lote on scan; keep items without lote until a timer starts
     }
 
     res.json({ ok: true, moved: accept, rejected: rejects, target: t });
@@ -173,11 +170,20 @@ export const OperacionController = {
       if(!r){ invalid.push({ rfid: code, reason: 'No existe' }); continue; }
       if(!/tic/i.test(r.nombre_modelo || '')){ invalid.push({ rfid: code, reason: 'No es TIC' }); continue; }
       if(t === 'atemperamiento'){
-        if(r.estado === 'Pre Acondicionamiento' && r.sub_estado === 'Congelamiento') ok.push(code);
-        else invalid.push({ rfid: code, reason: 'Debe estar en Congelamiento' });
+        if(r.estado === 'Pre Acondicionamiento' && r.sub_estado === 'Congelado') {
+          ok.push(code);
+        } else if (r.estado === 'Pre Acondicionamiento' && (r.sub_estado === 'Atemperamiento' || r.sub_estado === 'Atemperado')) {
+          invalid.push({ rfid: code, reason: 'Ya está en Atemperamiento' });
+        } else {
+          invalid.push({ rfid: code, reason: 'Debe estar Congelado' });
+        }
       } else {
-        // Congelamiento acepta cualquier TIC
-        ok.push(code);
+        // Congelamiento: bloquear si ya está en Congelamiento/Congelado
+        if(r.estado === 'Pre Acondicionamiento' && (r.sub_estado === 'Congelamiento' || r.sub_estado === 'Congelado')){
+          invalid.push({ rfid: code, reason: 'Ya está en Congelamiento' });
+        } else {
+          ok.push(code);
+        }
       }
     }
 
@@ -238,8 +244,7 @@ export const OperacionController = {
                  duration_sec = EXCLUDED.duration_sec,
                  lote = COALESCE(preacond_item_timers.lote, EXCLUDED.lote),
                  active = true,
-                 updated_at = NOW()
-           WHERE preacond_item_timers.active = false AND (preacond_item_timers.lote IS NULL OR preacond_item_timers.lote = '')`,
+                 updated_at = NOW()`,
           [s, dur, loteVal, list]
         );
       }
@@ -291,6 +296,14 @@ export const OperacionController = {
       return res.status(400).json({ ok:false, error: 'Entrada inválida' });
     }
     await withTenant(tenant, async (c) => {
+      // Do not allow starting if the item is already completed in this section
+      const done = await c.query(
+        `SELECT sub_estado FROM inventario_credocubes WHERE rfid = $1`, [r]
+      );
+      const sub = (done.rows?.[0]?.sub_estado || '').toString();
+      if ((s === 'congelamiento' && /Congelado/i.test(sub)) || (s === 'atemperamiento' && /Atemperado/i.test(sub))) {
+        throw Object.assign(new Error('Item ya completado'), { statusCode: 400 });
+      }
       await c.query(`CREATE TABLE IF NOT EXISTS preacond_item_timers (
          rfid text NOT NULL,
          section text NOT NULL,
@@ -312,8 +325,8 @@ export const OperacionController = {
                updated_at = NOW()`,
         [r, s, dur, loteVal]
       );
-      // Tag inventario lote only if empty
-      await c.query(`UPDATE inventario_credocubes SET lote = $1 WHERE rfid = $2 AND (lote IS NULL OR lote = '')`, [loteVal, r]);
+  // Tag inventario lote only if empty
+  await c.query(`UPDATE inventario_credocubes SET lote = $1 WHERE rfid = $2 AND (lote IS NULL OR lote = '')`, [loteVal, r]);
     });
     res.json({ ok:true });
   },
@@ -348,6 +361,8 @@ export const OperacionController = {
                updated_at = NOW()`,
         [r, s]
       );
+      // Also clear lote in inventario so it can be re-assigned on next timer start
+      await c.query(`UPDATE inventario_credocubes SET lote = NULL WHERE rfid = $1`, [r]);
     });
     res.json({ ok:true });
   },
@@ -407,6 +422,44 @@ export const OperacionController = {
         await c.query(
           `UPDATE preacond_item_timers SET started_at = NULL, duration_sec = NULL, active = false, updated_at = NOW() WHERE section = $1 AND rfid = $2`,
           [s, r]
+        );
+        await c.query('COMMIT');
+      } catch (e) {
+        await c.query('ROLLBACK');
+        throw e;
+      }
+    });
+    res.json({ ok:true });
+  },
+  
+  // Return a TIC to warehouse: clear timers (any section), remove lote, set estado 'En bodega'
+  preacondReturnToBodega: async (req: Request, res: Response) => {
+    const tenant = (req as any).user?.tenant;
+    const { rfid } = req.body as any;
+    const r = typeof rfid === 'string' ? rfid.trim() : '';
+    if(!r) return res.status(400).json({ ok:false, error:'Entrada inválida' });
+    await withTenant(tenant, async (c) => {
+      await c.query('BEGIN');
+      try {
+        await c.query(`CREATE TABLE IF NOT EXISTS preacond_item_timers (
+           rfid text NOT NULL,
+           section text NOT NULL,
+           started_at timestamptz,
+           duration_sec integer,
+           lote text,
+           active boolean NOT NULL DEFAULT false,
+           updated_at timestamptz NOT NULL DEFAULT NOW(),
+           PRIMARY KEY (rfid, section)
+        )`);
+        await c.query(
+          `UPDATE preacond_item_timers
+              SET started_at = NULL, duration_sec = NULL, lote = NULL, active = false, updated_at = NOW()
+            WHERE rfid = $1`, [r]
+        );
+        await c.query(
+          `UPDATE inventario_credocubes
+              SET estado = 'En bodega', sub_estado = NULL, lote = NULL
+            WHERE rfid = $1`, [r]
         );
         await c.query('COMMIT');
       } catch (e) {
