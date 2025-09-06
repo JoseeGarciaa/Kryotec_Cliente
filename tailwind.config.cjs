@@ -38,9 +38,9 @@ module.exports = {
           text: '#1E293B',
         },
         dark: {
-          bg: '#0F172A',
-          card: '#1E293B',
-          border: '#334155',
+          bg: '#0B1220', // darker than previous #0F172A
+          card: '#141D2A', // slightly darker card
+          border: '#253243', // adjusted border contrast
           text: '#F8FAFC',
         },
       },
@@ -60,9 +60,9 @@ module.exports = {
           primary: '#2743FF',
           secondary: '#93ACFF',
           accent: '#4F78FF',
-          'base-100': '#0F172A',
-          'base-200': '#1E293B',
-          'base-300': '#334155',
+          'base-100': '#0B1220', // main background darker
+          'base-200': '#141D2A', // card background
+          'base-300': '#253243', // borders / subtle surfaces
         },
       },
       {
