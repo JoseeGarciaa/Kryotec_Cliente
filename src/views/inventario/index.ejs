@@ -41,9 +41,9 @@
               <td><%= i.nombre_unidad %></td>
               <td><%= i.modelo_id %></td>
               <td><%= i.rfid %></td>
-              <td><%= i.lote || '' %></td>
-              <td><div class="badge badge-primary badge-outline hover:badge-secondary transition-colors"><%= i.estado %></div></td>
-              <td><%= i.sub_estado || '' %></td>
+              <td class="whitespace-nowrap"><%= i.lote || '' %></td>
+              <td class="whitespace-nowrap"><div class="badge badge-primary badge-outline hover:badge-secondary transition-colors whitespace-nowrap"><%= i.estado %></div></td>
+              <td class="whitespace-nowrap"><% if (i.sub_estado) { %><div class="badge badge-outline whitespace-nowrap"><%= i.sub_estado %></div><% } else { %><span class="opacity-60">—</span><% } %></td>
               <td><%= i.categoria %></td>
               <td><%= new Date(i.ultima_actualizacion).toLocaleString() %></td>
             </tr>

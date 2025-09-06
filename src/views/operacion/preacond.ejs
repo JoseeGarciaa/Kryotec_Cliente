@@ -1,136 +1,142 @@
 <% title = 'Registrar Pre Acondicionamiento' %>
 
 <div class="mb-6">
-  <h1 class="text-3xl font-bold">Registrar Pre Acondicionamiento</h1>
-  <div class="mt-1 text-success text-sm flex items-center gap-2">
-    <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" viewBox="0 0 24 24" fill="currentColor">
-      <path d="M12 18.5a2.5 2.5 0 1 0 0 5 2.5 2.5 0 0 0 0-5Zm-7.07-5.57a.75.75 0 0 0-1.06 1.06 12.03 12.03 0 0 1 17.18 0 .75.75 0 0 0 1.06-1.06 13.53 13.53 0 0 0-17.18 0Zm3.54-3.54a.75.75 0 1 0-1.06 1.06 8.49 8.49 0 0 1 12.02 0 .75.75 0 0 0 1.06-1.06 9.99 9.99 0 0 0-12.02 0ZM12 2.5c-3.03 0-5.92 1.18-8.09 3.34a.75.75 0 1 0 1.06 1.06A10.47 10.47 0 0 1 12 4c2.8 0 5.43 1.09 7.41 2.9a.75.75 0 1 0 1.02-1.1A12 12 0 0 0 12 2.5Z"/>
-    </svg>
-    <span>Sincronizado</span>
+  <div class="flex items-center justify-between flex-wrap gap-3">
+    <div>
+      <h1 class="text-3xl font-bold">Registrar Pre Acondicionamiento</h1>
+      <div class="mt-1 text-success text-sm flex items-center gap-2">
+        <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" viewBox="0 0 24 24" fill="currentColor">
+          <path d="M12 18.5a2.5 2.5 0 1 0 0 5 2.5 2.5 0 0 0 0-5Zm-7.07-5.57a.75.75 0 0 0-1.06 1.06 12.03 12.03 0 0 1 17.18 0 .75.75 0 0 0 1.06-1.06 13.53 13.53 0 0 0-17.18 0Zm3.54-3.54a.75.75 0 1 0-1.06 1.06 8.49 8.49 0 0 1 12.02 0 .75.75 0 0 0 1.06-1.06 9.99 9.99 0 0 0-12.02 0ZM12 2.5c-3.03 0-5.92 1.18-8.09 3.34a.75.75 0 1 0 1.06 1.06A10.47 10.47 0 0 1 12 4c2.8 0 5.43 1.09 7.41 2.9a.75.75 0 1 0 1.02-1.1A12 12 0 0 0 12 2.5Z"/>
+        </svg>
+        <span>Sincronizado</span>
+      </div>
+    </div>
+    <div class="flex items-center gap-2">
+      <div class="join bg-base-200/60 rounded-xl p-1">
+        <button id="btn-view-grid" class="btn btn-sm btn-ghost join-item" title="Vista de cubos">
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" class="w-5 h-5" fill="currentColor"><path d="M3 3h8v8H3V3zm10 0h8v8h-8V3zM3 13h8v8H3v-8zm10 0h8v8h-8v-8z"/></svg>
+        </button>
+        <button id="btn-view-list" class="btn btn-sm btn-ghost join-item" title="Vista de lista">
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" class="w-5 h-5" fill="currentColor"><path d="M4 6h16v2H4V6zm0 5h16v2H4v-2zm0 5h16v2H4v-2z"/></svg>
+        </button>
+      </div>
+    </div>
   </div>
   </div>
 
 <!-- Bloque: TICs para Congelamiento -->
 <div class="card bg-primary/10 mb-8 border border-primary/20">
   <div class="card-body">
-    <div class="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+  <div class="grid grid-cols-1 lg:grid-cols-[auto,1fr] items-start lg:items-center gap-3">
       <div>
   <div class="text-xl font-semibold">TICs para Congelamiento</div>
   <div id="count-cong" class="text-sm opacity-70">(0 de 0)</div>
       </div>
-      <div class="flex items-center gap-3">
-        <button id="btn-startall-cong" class="btn btn-success btn-sm md:btn-md gap-2" type="button">
+      <div class="flex flex-col sm:flex-row flex-wrap items-stretch sm:items-center gap-2 sm:gap-3 justify-start lg:justify-end w-full lg:w-auto">
+        <button id="btn-startall-cong" class="btn btn-success btn-sm md:btn-md gap-2 w-full sm:w-auto" type="button">
           <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" class="w-4 h-4" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
           Iniciar cronómetro por lote (<span id="qty-cong">0</span>)
         </button>
-        <button id="btn-clearall-cong" class="btn btn-error btn-sm md:btn-md" type="button">Limpiar todos</button>
+  <button id="btn-clearall-cong" class="btn btn-error btn-sm md:btn-md w-full sm:w-auto" type="button">Parar todos los cronómetros</button>
         <span class="loading loading-spinner loading-xs hidden" id="spin-cong"></span>
         <div id="timer-cong" class="text-sm opacity-80"></div>
-        <div class="flex items-center gap-2">
-          <button id="btn-add-cong" class="btn btn-primary gap-2">
+        <div class="shrink-0 w-full sm:w-auto">
+          <button id="btn-add-cong" class="btn btn-primary gap-2 w-full sm:w-auto">
             <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" viewBox="0 0 24 24" fill="currentColor"><path d="M11 11V5a1 1 0 1 1 2 0v6h6a1 1 0 1 1 0 2h-6v6a1 1 0 1 1-2 0v-6H5a1 1 0 1 1 0-2h6Z"/></svg>
             Agregar TICs
           </button>
-      <div class="dropdown dropdown-end">
-            <label tabindex="0" class="btn btn-primary px-2">
-              <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" viewBox="0 0 24 24" fill="currentColor"><path d="M7 10l5 5 5-5H7z"/></svg>
-            </label>
-            <ul tabindex="0" class="dropdown-content menu p-2 shadow bg-base-100 rounded-box w-56">
-              <li><button type="button" class="justify-start" data-open-scan="congelamiento">Escanear RFIDs</button></li>
-              <li><button type="button" class="justify-start" disabled>Buscar en inventario</button></li>
-              <li><button type="button" class="justify-start" disabled>Pegar desde Excel</button></li>
-            </ul>
-          </div>
         </div>
       </div>
     </div>
 
-    <div class="mt-4">
-  <label class="input input-bordered flex items-center gap-2 w-full">
-        <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 opacity-70" viewBox="0 0 24 24" fill="currentColor"><path d="M10 2a8 8 0 105.293 14.293l4.207 4.207a1 1 0 001.414-1.414l-4.207-4.207A8 8 0 0010 2zm0 2a6 6 0 110 12A6 6 0 0110 4z"/></svg>
-        <input type="text" class="grow" placeholder="Buscar por RFID, nombre o lote..." />
-      </label>
-    </div>
+  <!-- Search shared for both views (Congelamiento) -->
+  <div class="mt-4">
+    <label class="input input-bordered flex items-center gap-2 w-full">
+      <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 opacity-70" viewBox="0 0 24 24" fill="currentColor"><path d="M10 2a8 8 0 105.293 14.293l4.207 4.207a1 1 0 001.414-1.414l-4.207-4.207A8 8 0 0010 2zm0 2a6 6 0 110 12A6 6 0 0110 4z"/></svg>
+      <input id="search-cong" type="text" class="grow" placeholder="Buscar por RFID, nombre o lote..." />
+    </label>
+  </div>
 
+  <div id="wrap-grid-cong" class="mt-4">
+    <div id="lotes-cong" class="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3"></div>
+  </div>
+  <div id="wrap-list-cong" class="mt-4">
     <div class="overflow-x-auto mt-4">
-      <table id="tabla-cong" class="table">
+      <table id="tabla-cong" class="table table-xs sm:table-sm">
         <thead>
           <tr>
             <th>RFID</th>
-            <th>NOMBRE</th>
-            <th>LOTE</th>
-            <th>ESTADO</th>
+            <th class="hidden md:table-cell">NOMBRE</th>
+            <th class="hidden lg:table-cell">LOTE</th>
+            <th class="hidden md:table-cell">ESTADO</th>
             <th>CRONÓMETRO</th>
           </tr>
         </thead>
-  <tbody></tbody>
+        <tbody></tbody>
       </table>
     </div>
+  </div>
   </div>
   </div>
 
 <!-- Bloque: TICs para Atemperamiento -->
 <div class="card bg-warning/10 border border-warning/20">
   <div class="card-body">
-    <div class="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+  <div class="grid grid-cols-1 lg:grid-cols-[auto,1fr] items-start lg:items-center gap-3">
       <div>
   <div class="text-xl font-semibold">TICs para Atemperamiento</div>
   <div id="count-atem" class="text-sm opacity-70">(0 de 0)</div>
       </div>
-      <div class="flex items-center gap-3">
-        <button id="btn-startall-atem" class="btn btn-success btn-sm md:btn-md gap-2" type="button">
+      <div class="flex flex-col sm:flex-row flex-wrap items-stretch sm:items-center gap-2 sm:gap-3 justify-start lg:justify-end w-full lg:w-auto">
+        <button id="btn-startall-atem" class="btn btn-success btn-sm md:btn-md gap-2 w-full sm:w-auto" type="button">
           <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" class="w-4 h-4" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
           Iniciar cronómetro por lote (<span id="qty-atem">0</span>)
         </button>
-        <button id="btn-clearall-atem" class="btn btn-error btn-sm md:btn-md" type="button">Limpiar todos</button>
+  <button id="btn-clearall-atem" class="btn btn-error btn-sm md:btn-md w-full sm:w-auto" type="button">Parar todos los cronómetros</button>
         <span class="loading loading-spinner loading-xs hidden" id="spin-atem"></span>
         <div id="timer-atem" class="text-sm opacity-80"></div>
-        <div class="flex items-center gap-2">
-          <button id="btn-add-atem" class="btn btn-warning gap-2">
+        <div class="shrink-0 w-full sm:w-auto">
+          <button id="btn-add-atem" class="btn btn-warning gap-2 w-full sm:w-auto">
             <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" viewBox="0 0 24 24" fill="currentColor"><path d="M11 11V5a1 1 0 1 1 2 0v6h6a1 1 0 1 1 0 2h-6v6a1 1 0 1 1-2 0v-6H5a1 1 0 1 1 0-2h6Z"/></svg>
             Agregar TICs
           </button>
-          <div class="dropdown dropdown-end">
-            <label tabindex="0" class="btn btn-warning px-2">
-              <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" viewBox="0 0 24 24" fill="currentColor"><path d="M7 10l5 5 5-5H7z"/></svg>
-            </label>
-            <ul tabindex="0" class="dropdown-content menu p-2 shadow bg-base-100 rounded-box w-56">
-              <li><button type="button" class="justify-start" data-open-scan="atemperamiento">Escanear RFIDs</button></li>
-              <li><button type="button" class="justify-start" disabled>Buscar en inventario</button></li>
-              <li><button type="button" class="justify-start" disabled>Pegar desde Excel</button></li>
-            </ul>
-          </div>
         </div>
       </div>
     </div>
 
-    <div class="mt-4">
-      <label class="input input-bordered flex items-center gap-2 w-full">
-        <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 opacity-70" viewBox="0 0 24 24" fill="currentColor"><path d="M10 2a8 8 0 105.293 14.293l4.207 4.207a1 1 0 001.414-1.414l-4.207-4.207A8 8 0 0010 2zm0 2a6 6 0 110 12A6 6 0 0110 4z"/></svg>
-        <input type="text" class="grow" placeholder="Buscar por RFID, nombre o lote..." />
-      </label>
-    </div>
+  <!-- Search shared for both views (Atemperamiento) -->
+  <div class="mt-4">
+    <label class="input input-bordered flex items-center gap-2 w-full">
+      <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 opacity-70" viewBox="0 0 24 24" fill="currentColor"><path d="M10 2a8 8 0 105.293 14.293l4.207 4.207a1 1 0 001.414-1.414l-4.207-4.207A8 8 0 0010 2zm0 2a6 6 0 110 12A6 6 0 0110 4z"/></svg>
+      <input id="search-atem" type="text" class="grow" placeholder="Buscar por RFID, nombre o lote..." />
+    </label>
+  </div>
 
+  <div id="wrap-grid-atem" class="mt-4">
+    <div id="lotes-atem" class="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3"></div>
+  </div>
+  <div id="wrap-list-atem" class="mt-4">
     <div class="overflow-x-auto mt-4">
-      <table id="tabla-atem" class="table">
+      <table id="tabla-atem" class="table table-xs sm:table-sm">
         <thead>
           <tr>
             <th>RFID</th>
-            <th>NOMBRE</th>
-            <th>LOTE</th>
-            <th>ESTADO</th>
+            <th class="hidden md:table-cell">NOMBRE</th>
+            <th class="hidden lg:table-cell">LOTE</th>
+            <th class="hidden md:table-cell">ESTADO</th>
             <th>CRONÓMETRO</th>
           </tr>
         </thead>
-  <tbody></tbody>
+        <tbody></tbody>
       </table>
     </div>
+  </div>
   </div>
   </div>
 
 <!-- Modal de escaneo estilo "Registro masivo" -->
 <dialog id="dlg-scan" class="modal">
-  <div class="modal-box max-w-3xl">
+  <div class="modal-box max-w-sm sm:max-w-md md:max-w-3xl">
     <h3 class="font-bold text-lg">Escanear TICs</h3>
     <p class="text-sm opacity-70">Escanee o pegue RFIDs de 24 caracteres. Se validarán antes de confirmar.</p>
 
@@ -138,31 +144,73 @@
       <input id="scan-input" type="text" class="input input-bordered" placeholder="Listo para escanear..." />
       <div id="chips" class="flex flex-wrap gap-2"></div>
       <div id="scan-msg" class="text-sm text-error"></div>
+      <label id="keep-lote-row" class="flex items-center gap-2 hidden">
+        <input id="chk-keep-lote" type="checkbox" class="checkbox checkbox-sm" />
+        <span class="text-sm">Conservar lote al pasar a Atemperamiento</span>
+      </label>
     </div>
 
     <div class="modal-action">
-      <form method="dialog" class="flex gap-2">
+  <form method="dialog" class="flex gap-2">
         <button class="btn btn-ghost">Cancelar</button>
       </form>
-      <button id="btn-confirm" class="btn btn-primary" disabled>Confirmar</button>
+  <button id="btn-confirm" class="btn btn-primary" type="button" disabled>Confirmar</button>
     </div>
   </div>
 </dialog>
 
 <!-- Modal: iniciar cronómetro grupal -->
 <dialog id="dlg-gtimer" class="modal">
-  <div class="modal-box">
+  <div class="modal-box max-w-sm sm:max-w-md md:max-w-lg">
     <h3 class="font-bold text-lg">Iniciar cronómetro por lote</h3>
     <p class="text-sm opacity-70">Se aplicará a los TICs listados actualmente en <span id="gtimer-section-label"></span> (<span id="gtimer-count">0</span> TICs).</p>
     <div class="mt-4 grid gap-3">
       <label class="form-control">
-        <span class="label-text">Número de lote</span>
-        <input id="gtimer-lote" type="text" class="input input-bordered" placeholder="Ej. 20250905" />
+        <span class="label-text">Número de lote (auto)</span>
+        <input id="gtimer-lote" type="text" class="input input-bordered" placeholder="Se generará automáticamente" disabled readonly />
+        <span class="text-xs opacity-60 mt-1" id="gtimer-lote-hint">Ej. 05092025-001 (se asigna al confirmar si eliges 'Nuevo lote')</span>
       </label>
+      <!-- Modo de inicio (solo visible en Atemperamiento) -->
+      <div id="gtimer-modes" class="hidden border border-base-300/40 rounded-lg p-3 space-y-2 bg-base-200/30">
+        <div class="text-xs uppercase tracking-wide opacity-60">Modo</div>
+        <label class="flex items-center gap-2 cursor-pointer text-sm">
+          <input type="radio" name="gtimer-mode" value="nuevo" class="radio radio-xs" checked />
+          <span>Nuevo lote (solo TICs sin lote)</span>
+        </label>
+        <label class="flex items-center gap-2 cursor-pointer text-sm">
+          <input type="radio" name="gtimer-mode" value="existente" class="radio radio-xs" />
+          <span>Usar lote existente</span>
+        </label>
+        <label class="flex items-center gap-2 cursor-pointer text-sm">
+          <input type="radio" name="gtimer-mode" value="rfid" class="radio radio-xs" />
+          <span>Escanear RFID para usar su lote</span>
+        </label>
+        <div id="gtimer-existente-box" class="hidden pt-2">
+          <label class="form-control">
+            <span class="label-text">Selecciona lote existente</span>
+            <select id="gtimer-lote-exist" class="select select-bordered">
+              <option value="">-- Selecciona --</option>
+            </select>
+          </label>
+        </div>
+        <div id="gtimer-rfid-box" class="hidden pt-2">
+          <label class="form-control">
+            <span class="label-text">Escanear RFID (tomará su lote)</span>
+            <input id="gtimer-rfid-lote" type="text" class="input input-bordered" placeholder="Escanea RFID (24 chars)" />
+          </label>
+          <div class="text-xs opacity-70" id="gtimer-rfid-lote-status"></div>
+        </div>
+      </div>
+      <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+        <label class="form-control">
+          <span class="label-text">Duración (horas)</span>
+          <input id="gtimer-hr" type="number" min="0" step="1" class="input input-bordered" placeholder="Ej. 0" />
+        </label>
       <label class="form-control">
-        <span class="label-text">Duración (minutos)</span>
-        <input id="gtimer-min" type="number" min="1" step="1" class="input input-bordered" placeholder="Ej. 30" />
+          <span class="label-text">Duración (minutos)</span>
+          <input id="gtimer-min" type="number" min="0" step="1" class="input input-bordered" placeholder="Ej. 30" />
       </label>
+      </div>
       <div id="gtimer-msg" class="text-sm text-error"></div>
     </div>
     <div class="modal-action">

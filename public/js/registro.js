@@ -25,6 +25,8 @@
   const dupMsg = document.getElementById('dup-msg');
   const submitBtn = document.getElementById('submit-btn');
   const countEl = document.getElementById('count');
+  // Only allow submit when user taps the button explicitly
+  let allowExplicitSubmit = false;
 
   let rfids = Array.isArray(initialRfids) ? initialRfids : [];
 
@@ -83,7 +85,14 @@
   function fillLitrajePorTipo(tipo){
     litrajeEl.innerHTML = '<option value="" selected>Seleccione el litraje</option>';
     const list = (modelosByTipo && modelosByTipo[tipo]) || [];
-    for(const m of list){
+    // Sort by numeric liters if present in name (e.g., "Credo Cube 10L")
+    const parseLitros = (name)=>{
+      const m = (name||'').match(/(\d+(?:[\.,]\d+)?)\s*[lL]/);
+      if(!m) return Number.POSITIVE_INFINITY; // push unknowns to the end
+      return Number(String(m[1]).replace(',','.'));
+    };
+    const sorted = [...list].sort((a,b)=>parseLitros(a.name)-parseLitros(b.name));
+    for(const m of sorted){
       const opt = document.createElement('option');
       opt.value = String(m.id);
       opt.textContent = m.name;
@@ -174,14 +183,36 @@
     }
   });
 
-  // Submit guard
+  // Submit guard (requires explicit button click and passes validations)
   form.addEventListener('submit', (e)=>{
+    if(!allowExplicitSubmit){ e.preventDefault(); return; }
     const hasDups = rfids.some(r => dupRfids.includes(r));
     if(!(modeloIdEl.value && rfids.length > 0) || hasDups){
       e.preventDefault();
       if(dupMsg && hasDups){ dupMsg.textContent = 'Elimine los RFIDs marcados como repetidos para poder registrar.'; }
     }
+    // Reset flag immediately after handling to avoid unintended resubmits
+    allowExplicitSubmit = false;
   });
+
+  if(submitBtn){
+    submitBtn.addEventListener('click', ()=>{
+      // Allow exactly one submit triggered by this click
+      allowExplicitSubmit = true;
+      // Trigger programmatic submit; submit listener will validate and reset the flag
+      form.requestSubmit ? form.requestSubmit() : form.submit();
+    });
+  }
+
+  // Block Enter-based submission: require explicit tap on the button (mobile & desktop)
+  const preventEnter = (ev) => {
+    const k = ev.key || ev.code;
+    if(k === 'Enter' || k === 'NumpadEnter'){ ev.preventDefault(); ev.stopPropagation(); }
+  };
+  // Capture at form level to intercept before default submit
+  form.addEventListener('keydown', preventEnter, true);
+  // Extra safety on the scanner input (many scanners send CR/Enter)
+  if(scanEl){ scanEl.addEventListener('keydown', preventEnter); }
 
   // Autofocus to Tipo initially
   if(tipoEl){
