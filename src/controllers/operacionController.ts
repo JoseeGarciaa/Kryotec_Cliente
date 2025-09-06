@@ -242,7 +242,7 @@ export const OperacionController = {
          JOIN modelos m ON m.modelo_id = ic.modelo_id
         WHERE lote=$1
           AND ic.estado='Pre Acondicionamiento'
-          AND ic.sub_estado IN ('Congelado','Congelamiento')
+          AND ic.sub_estado = 'Congelado'
           AND (m.nombre_modelo ILIKE '%tic%')`, [loteVal]));
     const rfids = rows.rows.map(r=>r.rfid);
     if(!rfids.length) return res.status(400).json({ ok:false, error:'No hay TICs congeladas en ese lote' });

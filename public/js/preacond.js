@@ -431,8 +431,10 @@
       loteDetected = j.lote; loteItemsCache = j.items||[];
       // Resumen
       if(scanLoteSummary){
-        const rows = loteItemsCache.map(it=>`<tr><td class='font-mono'>${it.rfid}</td><td>${(it.nombre_unidad||'').slice(0,18)}</td><td>${it.sub_estado}</td></tr>`).join('');
-        scanLoteSummary.innerHTML = `<div class='font-semibold mb-2'>Lote ${loteDetected} – ${j.total} TIC${j.total!==1?'s':''} congelada${j.total!==1?'s':''}</div><div class='overflow-auto max-h-40'><table class='table table-xs'><thead><tr><th>RFID</th><th>Nombre</th><th>Estado</th></tr></thead><tbody>${rows}</tbody></table></div><div class='mt-2 text-xs opacity-70'>Verifique la cantidad. Si es correcto pulse Confirmar para traer TODAS al Atemperamiento.</div>`;
+  const totalCongelado = loteItemsCache.filter(it=>/Congelado/i.test(it.sub_estado||'')).length;
+  const totalCongelamiento = loteItemsCache.filter(it=>/Congelamiento/i.test(it.sub_estado||'')).length;
+  const rows = loteItemsCache.map(it=>`<tr><td class='font-mono'>${it.rfid}</td><td>${(it.nombre_unidad||'').slice(0,18)}</td><td>${it.sub_estado}</td></tr>`).join('');
+  scanLoteSummary.innerHTML = `<div class='font-semibold mb-2'>Lote ${loteDetected} – ${totalCongelado} TIC${totalCongelado!==1?'s':''} listas (Congelado)${totalCongelamiento?` / ${totalCongelamiento} en Congelamiento`:''}</div><div class='overflow-auto max-h-40'><table class='table table-xs'><thead><tr><th>RFID</th><th>Nombre</th><th>Estado</th></tr></thead><tbody>${rows}</tbody></table></div><div class='mt-2 text-xs opacity-70'>Solo se pasarán las TIC con sub estado <strong>Congelado</strong>. Las que aún estén en <strong>Congelamiento</strong> permanecerán allí.</div>`;
         scanLoteSummary.classList.remove('hidden');
       }
       // Marcar un solo RFID para habilitar botón
