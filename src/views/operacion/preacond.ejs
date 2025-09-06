@@ -141,13 +141,38 @@
     <p class="text-sm opacity-70">Escanee o pegue RFIDs de 24 caracteres. Se validarán antes de confirmar.</p>
 
     <div class="mt-4 grid gap-3">
+      <div class="border border-base-300/40 rounded-lg p-3 flex flex-col gap-2 bg-base-200/30">
+        <div class="text-xs uppercase tracking-wide opacity-60">Modo de selección</div>
+  <label class="flex items-center gap-2 text-sm"><input type="radio" name="scan-mode" value="individual" class="radio radio-xs" checked> <span>Individual (escaneo múltiple)</span></label>
+  <label class="flex items-center gap-2 text-sm"><input type="radio" name="scan-mode" value="lote" class="radio radio-xs"> <span>Traer todo el lote (escanea 1 TIC congelada)</span></label>
+      </div>
       <input id="scan-input" type="text" class="input input-bordered" placeholder="Listo para escanear..." />
       <div id="chips" class="flex flex-wrap gap-2"></div>
       <div id="scan-msg" class="text-sm text-error"></div>
+      <!-- Resumen lote -->
+      <div id="scan-lote-summary" class="hidden border border-base-300/40 rounded-lg p-3 bg-base-200/30 text-sm max-h-64 overflow-auto"></div>
       <label id="keep-lote-row" class="flex items-center gap-2 hidden">
         <input id="chk-keep-lote" type="checkbox" class="checkbox checkbox-sm" />
         <span class="text-sm">Conservar lote al pasar a Atemperamiento</span>
       </label>
+      <!-- Cronómetro inmediato al pasar a Atemperamiento -->
+      <div id="scan-timer-box" class="hidden border border-base-300/40 rounded-lg p-3 mt-2 bg-base-200/30">
+        <label class="flex items-center gap-2 text-sm">
+          <input id="scan-start-timer" type="checkbox" class="checkbox checkbox-sm" checked />
+          <span>Iniciar cronómetro automáticamente</span>
+        </label>
+        <div class="grid grid-cols-2 gap-3 mt-3">
+          <label class="form-control">
+            <span class="label-text text-xs">Horas</span>
+            <input id="scan-timer-hr" type="number" min="0" step="1" placeholder="Ej. 0" class="input input-bordered input-sm" />
+          </label>
+          <label class="form-control">
+            <span class="label-text text-xs">Minutos</span>
+            <input id="scan-timer-min" type="number" min="0" step="1" placeholder="Ej. 30" class="input input-bordered input-sm" />
+          </label>
+        </div>
+  <div class="text-xs opacity-60 mt-2" id="scan-timer-hint">Al confirmar: se conservarán los lotes existentes y se asignará un nuevo lote solo a TICs sin lote. Desmarca para no iniciar ahora.</div>
+      </div>
     </div>
 
     <div class="modal-action">

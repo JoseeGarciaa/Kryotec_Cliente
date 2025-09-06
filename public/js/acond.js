@@ -197,8 +197,32 @@
           if(!prev || prev.a!==c.timer_active || prev.s!==c.timer_started_at || prev.d!==c.timer_duration_sec){ changed=true; break; }
         }
       }
-      if(changed){ renderCajas(); }
-      startTick();
+  if(changed){ renderCajas(); }
+  // Actualizar modal abierto (si existe) para que aparezca el timer sin cerrar
+  if(detalleCajaId && !modalCaja.classList.contains('hidden')){
+    const caja = cajas.find(c=>c.caja_id===detalleCajaId);
+    const tBox = document.getElementById('detalle-caja-timer-box');
+    if(!caja){
+      closeCajaDetalle();
+    } else if(tBox){
+      if(caja.timer_active && caja.timer_started_at && caja.timer_duration_sec){
+        const startedMs = new Date(caja.timer_started_at).getTime();
+        let badge = tBox.querySelector('[data-caja-timer-started]');
+        if(!badge){
+          tBox.innerHTML = `<span class='badge badge-neutral badge-sm flex items-center gap-1' data-caja-timer-started='${startedMs}' data-caja-timer-duration='${caja.timer_duration_sec}' data-caja-id='${caja.caja_id}'>
+              <span id='tm-caja-${caja.caja_id}'>--:--</span>
+              <button class='btn btn-ghost btn-xs px-1 h-4 shrink-0 stop-caja-timer' data-caja='${caja.caja_id}' title='Cancelar'>✕</button>
+            </span>`;
+        } else {
+          badge.setAttribute('data-caja-timer-started', startedMs);
+          badge.setAttribute('data-caja-timer-duration', caja.timer_duration_sec);
+        }
+      } else {
+        tBox.innerHTML = `<button class='btn btn-outline btn-sm start-caja-timer' data-caja='${caja.caja_id}'>Iniciar cronómetro</button>`;
+      }
+    }
+  }
+  startCajaTick();
     } catch(e){ console.error('acond data', e); }
     finally { firstLoad=false; setSpin(false); }
   }
@@ -216,6 +240,17 @@
   if(!vistaTexto){
       // Modo tarjetas
       cajas.forEach(c=>{
+        // Timer badge (compartido para tarjeta y fila tabla)
+        let timerBadge='';
+        if(c.timer_active && c.timer_started_at && c.timer_duration_sec){
+          const startedMs = new Date(c.timer_started_at).getTime();
+          timerBadge = `<span class='badge badge-neutral badge-xs flex items-center gap-1' data-caja-timer-started='${startedMs}' data-caja-timer-duration='${c.timer_duration_sec}' data-caja-id='${c.caja_id}'>
+              <span id='tm-caja-${c.caja_id}'>--:--</span>
+              <button class='btn btn-ghost btn-xs px-1 h-4 shrink-0 stop-caja-timer' data-caja='${c.caja_id}' title='Cancelar'>✕</button>
+            </span>`;
+        } else {
+          timerBadge = `<button class='btn btn-outline btn-xs start-caja-timer' data-caja='${c.caja_id}'>Iniciar</button>`;
+        }
         const tr=document.createElement('tr');
         tr.className='hover';
         const categoria=`Caja (C:${c.cubes||0} V:${c.vips||0} T:${c.tics||0})`;
@@ -223,7 +258,7 @@
           <td>Caja</td>
           <td>Ensamblaje</td>
           <td>${c.lote||''}</td>
-          <td>-</td>
+          <td>${timerBadge}</td>
           <td>${c.litraje? (c.litraje+'L'):categoria}</td>`;
         tableEnsBody.appendChild(tr);
         if(grid){
@@ -234,13 +269,6 @@
           const div=document.createElement('div');
           div.className='caja-card rounded-lg border border-base-300/40 bg-base-200/10 p-3 flex flex-col gap-2 hover:border-primary/60 transition cursor-pointer';
           div.dataset.cajaId = c.caja_id;
-          const remaining = computeRemaining(c);
-          const timerBadge = remaining!==null ? `
-            <div class='caja-timer flex items-center gap-1 text-[11px] font-mono px-2 py-1 rounded-lg bg-base-300/30 border border-base-300/40'
-                 data-caja='${c.caja_id}' data-start='${c.timer_started_at||''}' data-dur='${c.timer_duration_sec||''}' data-active='${c.timer_active?1:0}'>
-              <span class='time'></span>
-              <button class='btn btn-ghost btn-xs px-1 h-5 shrink-0 stop-caja-timer' title='Cancelar' data-caja='${c.caja_id}'>✕</button>
-            </div>` : `<button class='btn btn-outline btn-xs start-caja-timer' data-caja='${c.caja_id}'>Iniciar</button>`;
           div.innerHTML=`<div class='flex items-center justify-between text-xs opacity-60'><span>Caja</span><span class='font-mono'>#${c.caja_id}</span></div>
             <div class='font-semibold text-sm truncate'>${c.lote||''}</div>
             <div class='flex flex-wrap gap-1 text-[9px]'>
@@ -295,9 +323,11 @@
 
   // =========== Modal Detalle Caja ===========
   const modalCaja = document.getElementById('modal-caja-detalle');
+  let detalleCajaId = null;
   function openCajaDetalle(cajaId){
     const caja = cajas.find(c=>c.caja_id===cajaId);
     if(!caja || !modalCaja) return;
+    detalleCajaId = cajaId;
     const items = cajaItems.filter(i=>i.caja_id===cajaId);
     items.sort((a,b)=>{
       const rank={vip:0,tic:1,cube:2}; return (rank[a.rol]??9)-(rank[b.rol]??9);
@@ -322,22 +352,19 @@
     // Timer box
     const tBox = document.getElementById('detalle-caja-timer-box');
     if(tBox){
-      const remaining = computeRemaining(caja);
-      if(remaining!==null){
-        tBox.innerHTML = `<div class='flex items-center gap-2'>
-           <div class="caja-timer flex items-center gap-1 text-[12px] font-mono px-3 py-1 rounded-lg bg-base-300/30 border border-base-300/40"
-             data-caja='${caja.caja_id}' data-start='${caja.timer_started_at||''}' data-dur='${caja.timer_duration_sec||''}' data-active='${caja.timer_active?1:0}'>
-             <span class='time'></span>
-             <button class='btn btn-ghost btn-xs px-1 h-5 shrink-0 stop-caja-timer' data-caja='${caja.caja_id}' title='Cancelar'>✕</button>
-           </div>
-         </div>`;
+      if(caja.timer_active && caja.timer_started_at && caja.timer_duration_sec){
+        const startedMs = new Date(caja.timer_started_at).getTime();
+        tBox.innerHTML = `<span class='badge badge-neutral badge-sm flex items-center gap-1' data-caja-timer-started='${startedMs}' data-caja-timer-duration='${caja.timer_duration_sec}' data-caja-id='${caja.caja_id}'>
+            <span id='tm-caja-${caja.caja_id}'>--:--</span>
+            <button class='btn btn-ghost btn-xs px-1 h-4 shrink-0 stop-caja-timer' data-caja='${caja.caja_id}' title='Cancelar'>✕</button>
+          </span>`;
       } else {
         tBox.innerHTML = `<button class='btn btn-outline btn-sm start-caja-timer' data-caja='${caja.caja_id}'>Iniciar cronómetro</button>`;
       }
     }
     modalCaja.classList.remove('hidden');
   }
-  function closeCajaDetalle(){ modalCaja?.classList.add('hidden'); }
+  function closeCajaDetalle(){ modalCaja?.classList.add('hidden'); detalleCajaId=null; }
   document.addEventListener('click', (e)=>{
     const card = e.target.closest('.caja-card');
     if(card && card.dataset.cajaId){ openCajaDetalle(Number(card.dataset.cajaId)); }
@@ -367,44 +394,42 @@
       thead.innerHTML = originalEnsHeadHTML;
     }
   }
-
-  function computeRemaining(c){
-    if(!c.timer_active || !c.timer_started_at || !c.timer_duration_sec) return null;
-    const started = new Date(c.timer_started_at).getTime();
-    const now = Date.now() - serverNowOffsetMs;
-    const elapsedSec = Math.floor((now - started)/1000);
-    const remaining = c.timer_duration_sec - elapsedSec;
-    return remaining;
+  // ===== Timers estilo preacond =====
+  function formatTimerCaja(rem){
+    const r = Math.max(0, rem);
+    const hh = Math.floor(r/3600);
+    const mm = Math.floor((r%3600)/60);
+    const ss = r%60;
+    if(hh>0) return `${String(hh).padStart(2,'0')}:${String(mm).padStart(2,'0')}`;
+    return `${String(mm).padStart(2,'0')}:${String(ss).padStart(2,'0')}`;
   }
-  let ticking=false, rafId=0;
-  function startTick(){
-    if(ticking) return; ticking=true;
+  let cajaTicking=false, cajaRaf=0;
+  function startCajaTick(){
+    if(cajaTicking) return; cajaTicking=true;
     const step=()=>{
       const now = Date.now() - serverNowOffsetMs;
-      document.querySelectorAll('.caja-timer').forEach(b=>{
-        const active = b.getAttribute('data-active')==='1';
-        if(!active){ return; }
-        const started = b.getAttribute('data-start');
-        const dur = Number(b.getAttribute('data-dur')||'0');
-        if(!started||!dur) return;
-        const st = new Date(started).getTime();
-        const rem = dur - Math.floor((now - st)/1000);
-        const abs = Math.max(0, rem);
-        const hh = Math.floor(abs/3600);
-        const mm = Math.floor((abs%3600)/60);
-        const ss = abs%60;
-        const display = hh>0 ? `${String(hh).padStart(2,'0')}:${String(mm).padStart(2,'0')}` : `${String(mm).padStart(2,'0')}:${String(ss).padStart(2,'0')}`;
-        const span = b.querySelector('.time'); if(span) span.textContent = display;
-        b.classList.toggle('timer-done', rem<=0);
-        b.classList.toggle('timer-warn', rem>0 && rem<=60);
-        b.classList.toggle('timer-ok', rem>60);
-        if(rem<=0 && !b.dataset.completed){
-          b.dataset.completed='1';
-            b.classList.add('animate-pulse');
-          fetch('/operacion/acond/caja/timer/complete',{method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ caja_id: b.getAttribute('data-caja') })}).then(()=>loadData());
+      document.querySelectorAll('[data-caja-timer-started]').forEach(el=>{
+        const started = Number(el.getAttribute('data-caja-timer-started'));
+        const dur = Number(el.getAttribute('data-caja-timer-duration')||'0');
+        const cajaId = el.getAttribute('data-caja-id');
+        if(!started || !dur) return;
+        const elapsed = Math.floor((now - started)/1000);
+        const remaining = dur - elapsed;
+        const span = el.querySelector('span[id^="tm-caja-"]');
+        if(span){ span.textContent = formatTimerCaja(remaining); }
+        el.classList.toggle('badge-info', remaining<=0);
+        const warn = remaining>0 && remaining<=60;
+        el.classList.toggle('badge-warning', warn && remaining>0);
+        el.classList.toggle('badge-neutral', remaining>60);
+        el.classList.toggle('badge-error', remaining<=0);
+        if(remaining<=0 && !el.getAttribute('data-complete')){
+          el.setAttribute('data-complete','1');
+          if(cajaId){
+            fetch('/operacion/acond/caja/timer/complete',{method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ caja_id: cajaId })}).then(()=>loadData(true));
+          }
         }
       });
-      rafId = requestAnimationFrame(step);
+      cajaRaf = requestAnimationFrame(step);
     };
     step();
   }
@@ -429,18 +454,19 @@
   fetch('/operacion/acond/caja/timer/clear',{method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ caja_id: id })}).then(()=>loadData(true));
     }}
   });
-  document.getElementById('timer-presets')?.addEventListener('click', (e)=>{
-    const btn = e.target.closest('button[data-min]');
-    if(!btn) return; e.preventDefault(); startTimerFor(btn.getAttribute('data-min'));
+  document.getElementById('timer-custom')?.addEventListener('submit', (e)=>{
+    e.preventDefault();
+    const hEl = document.getElementById('timer-hours');
+    const mEl = document.getElementById('timer-mins');
+    const hrs = Number(hEl?.value||'0');
+    const mins = Number(mEl?.value||'0');
+    const totalM = (isNaN(hrs)?0:hrs)*60 + (isNaN(mins)?0:mins);
+    if(totalM<=0){ alert('Ingrese un tiempo'); return; }
+    startTimerFor(totalM);
   });
-  document.getElementById('timer-custom')?.addEventListener('submit', (e)=>{ e.preventDefault(); const v=document.getElementById('timer-mins').value; startTimerFor(v); });
+  document.getElementById('timer-cancel')?.addEventListener('click', ()=>{ try{ modalTimer?.close(); }catch{} });
 
-  // Inject minimal CSS
-  (function addTimerStyles(){
-    if(document.getElementById('caja-timer-styles')) return;
-    const css=`.caja-timer.timer-ok{background:linear-gradient(135deg,rgba(56,189,248,.15),rgba(30,41,59,.2));border-color:rgba(56,189,248,.4);} .caja-timer.timer-warn{background:linear-gradient(135deg,rgba(251,191,36,.18),rgba(120,53,15,.25));border-color:rgba(251,191,36,.5);} .caja-timer.timer-done{background:linear-gradient(135deg,rgba(252,165,165,.25),rgba(127,29,29,.35));border-color:rgba(239,68,68,.6);} .caja-timer .stop-caja-timer{opacity:.4;transition:opacity .2s;} .caja-timer:hover .stop-caja-timer{opacity:1;} .caja-timer.timer-done .time{text-decoration:line-through;}`;
-    const style=document.createElement('style'); style.id='caja-timer-styles'; style.textContent=css; document.head.appendChild(style);
-  })();
+  // (Sin estilos custom: usamos badges DaisyUI estándar)
   // Inicialización (faltaba tras refactor timers)
   renderInitialLoading();
   loadData(true);

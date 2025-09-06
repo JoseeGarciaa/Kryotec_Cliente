@@ -32,6 +32,15 @@
   const btnConfirm = qs('#btn-confirm');
   const keepLoteRow = qs('#keep-lote-row');
   const chkKeepLote = qs('#chk-keep-lote');
+  // Nuevos controles de cronómetro dentro del modal de escaneo
+  const scanTimerBox = qs('#scan-timer-box');
+  const scanStartTimer = qs('#scan-start-timer');
+  const scanTimerHr = qs('#scan-timer-hr');
+  const scanTimerMin = qs('#scan-timer-min');
+  const scanLoteSummary = qs('#scan-lote-summary');
+  let scanMode = 'individual'; // individual | lote
+  let loteDetected = null; // string | null
+  let loteItemsCache = [];
 
   // Group timer modal elements
   const gDlg = qs('#dlg-gtimer');
@@ -50,6 +59,8 @@
   let gMode = 'nuevo'; // nuevo | existente | rfid
   // We'll reuse group timer modal for per-item start
   let pendingItemStart = null; // { section, rfid }
+  // Preselección de RFIDs (cuando se mueven a atemperamiento y se quiere iniciar cronómetro de inmediato)
+  let preselectedRfids = null; // string[] | null
 
   let currentSectionForModal = 'congelamiento';
   let target = 'congelamiento';
@@ -348,6 +359,10 @@
   // Show keep-lote checkbox only when moving to atemperamiento
   if(keepLoteRow){ keepLoteRow.classList.toggle('hidden', target!=='atemperamiento'); }
   if(chkKeepLote){ chkKeepLote.checked = false; }
+  // Mostrar caja de cronómetro si es atemperamiento
+  if(scanTimerBox){ scanTimerBox.classList.toggle('hidden', target!=='atemperamiento'); }
+  if(scanStartTimer){ scanStartTimer.checked = true; }
+  // No se deshabilita cronómetro al conservar lote
     dlg?.showModal?.();
     setTimeout(()=>scanInput?.focus?.(), 50);
   }
@@ -390,7 +405,50 @@
   }
 
   // Input handlers
-  scanInput?.addEventListener('input', ()=>{ scanInput.value = processBuffer(scanInput.value); validate(); });
+  scanInput?.addEventListener('input', ()=>{ if(scanMode==='individual'){ scanInput.value = processBuffer(scanInput.value); validate(); } });
+  // Modo selector
+  document.querySelectorAll('input[name="scan-mode"]').forEach(r=>{
+    r.addEventListener('change', (e)=>{
+      scanMode = (e.target).value;
+      rfids=[]; invalid=[]; valid=[]; loteDetected=null; loteItemsCache=[];
+      chipsBox.innerHTML=''; msg.textContent=''; btnConfirm.disabled=true;
+      if(scanLoteSummary){ scanLoteSummary.classList.add('hidden'); scanLoteSummary.innerHTML=''; }
+      scanInput.value='';
+      scanInput.placeholder = scanMode==='lote' ? 'Escanea una sola TIC congelada para identificar el lote...' : 'Listo para escanear...';
+      if(scanMode==='lote'){
+        msg.textContent = 'Escanee una TIC (24 caracteres). Identificaremos el lote completo.';
+      }
+    });
+  });
+
+  async function handleLoteScan(code){
+    if(!code || code.length!==24) return;
+  msg.textContent='Buscando lote y sus TICs...';
+    try{
+      const r = await fetch('/operacion/preacond/lote/lookup', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ rfid: code }) });
+      const j = await r.json();
+      if(!j.ok){ msg.textContent=j.error||'No se pudo obtener lote'; return; }
+      loteDetected = j.lote; loteItemsCache = j.items||[];
+      // Resumen
+      if(scanLoteSummary){
+        const rows = loteItemsCache.map(it=>`<tr><td class='font-mono'>${it.rfid}</td><td>${(it.nombre_unidad||'').slice(0,18)}</td><td>${it.sub_estado}</td></tr>`).join('');
+        scanLoteSummary.innerHTML = `<div class='font-semibold mb-2'>Lote ${loteDetected} – ${j.total} TIC${j.total!==1?'s':''} congelada${j.total!==1?'s':''}</div><div class='overflow-auto max-h-40'><table class='table table-xs'><thead><tr><th>RFID</th><th>Nombre</th><th>Estado</th></tr></thead><tbody>${rows}</tbody></table></div><div class='mt-2 text-xs opacity-70'>Verifique la cantidad. Si es correcto pulse Confirmar para traer TODAS al Atemperamiento.</div>`;
+        scanLoteSummary.classList.remove('hidden');
+      }
+      // Marcar un solo RFID para habilitar botón
+      rfids=[code]; valid=[code]; invalid=[]; renderChips(); msg.textContent='';
+    }catch{ msg.textContent='Error consultando lote'; }
+  }
+
+  // Listener específico para modo lote
+  scanInput?.addEventListener('input', ()=>{
+    if(scanMode==='lote'){
+  let v = scanInput.value.replace(/\s+/g,'');
+  if(v.length>24){ v = v.slice(0,24); }
+  scanInput.value = v; // limitar siempre a un solo código
+  if(v.length===24){ handleLoteScan(v); }
+    }
+  });
   scanInput?.addEventListener('paste', (e)=>{ const t=e.clipboardData?.getData('text')||''; if(t){ e.preventDefault(); scanInput.value = processBuffer(t); validate(); } });
   // Prevent Enter from auto-confirming; require tapping the Confirm button
   scanInput?.addEventListener('keydown', (e)=>{
@@ -407,14 +465,44 @@
     if(code){ rfids = rfids.filter(x=>x!==code); valid = valid.filter(x=>x!==code); invalid = invalid.filter(x=>x.rfid!==code); renderChips(); validate(); }
   });
 
+  // Cambiar mensaje cuando usuario marca conservar lote (no se puede crear lote nuevo)
+  // Ya no se necesita manejo de deshabilitado
+
   btnConfirm?.addEventListener('click', async ()=>{
-    if(!valid.length) return;
+    if(scanMode==='lote'){
+      if(target!=='atemperamiento'){ msg.textContent='El modo lote solo aplica al paso a Atemperamiento.'; return; }
+      if(!loteDetected){ msg.textContent='Escanee una TIC válida para identificar el lote.'; return; }
+    }
+    if(!valid.length){ msg.textContent = scanMode==='lote' ? 'Escanee la TIC congelada del lote.' : 'No hay RFIDs válidos.'; return; }
     const keepLote = chkKeepLote && !chkKeepLote.classList.contains('hidden') && chkKeepLote.checked && target==='atemperamiento';
-    const r = await fetch('/operacion/preacond/scan', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ target, rfids: valid, keepLote }) });
-    const j = await r.json().catch(()=>({ok:false}));
-    if(!j.ok){ msg.textContent = 'Error al confirmar'; return; }
+    let j;
+    if(scanMode==='lote' && target==='atemperamiento'){
+      const r = await fetch('/operacion/preacond/lote/move', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ lote: loteDetected, keepLote }) });
+      j = await r.json().catch(()=>({ok:false}));
+      if(j.ok){ j.moved = j.moved || (loteItemsCache.map(it=>it.rfid)); }
+    } else {
+      const r = await fetch('/operacion/preacond/scan', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ target, rfids: valid, keepLote }) });
+      j = await r.json().catch(()=>({ok:false}));
+    }
+    if(!j.ok){ msg.textContent = j.error || 'Error al confirmar'; return; }
     dlg?.close?.();
-    await loadData();
+    // Si es atemperamiento y usuario desea iniciar cronómetro aquí mismo
+    const wantTimer = target==='atemperamiento' && scanStartTimer && scanStartTimer.checked;
+    const movedRfids = Array.isArray(j.moved)? j.moved.slice():[];
+    if(wantTimer && movedRfids.length){
+      await loadData(); // refrescar antes de calcular sin lote
+      // Duración
+      const hours = Number(scanTimerHr?.value||'0');
+      const minutes = Number(scanTimerMin?.value||'0');
+      let totalMinutes = (isFinite(hours)?Math.max(0,hours):0)*60 + (isFinite(minutes)?Math.max(0,minutes):0);
+      if(totalMinutes<=0){ totalMinutes = 30; } // fallback
+      // Lógica: si NO conservar lote -> sólo iniciar para los recién movidos que no tengan lote asignado (se generará uno)
+      // si conservar lote -> simplemente iniciar timers item-level sobre esos RFIDs (manteniendo su lote) sin agrupar? Mejor: iniciar group timer igualmente y no sobreescribir lote existente.
+      // Para simplificar: usamos endpoint group start, pasándole la lista (no tocará lotes existentes por lógica backend: sólo asigna si vacío)
+      await startSectionTimer('atemperamiento', '', totalMinutes, movedRfids);
+    } else {
+      await loadData();
+    }
   });
 
   // Openers from dropdowns
@@ -429,7 +517,8 @@
   qs('#btn-startall-atem')?.addEventListener('click', ()=>openGroupTimer('atemperamiento'));
   qs('#btn-clearall-atem')?.addEventListener('click', ()=>clearSectionTimer('atemperamiento'));
 
-  function openGroupTimer(section){
+  function openGroupTimer(section, opts){
+    opts = opts || {};
     currentSectionForModal = section;
     if(gSectionLabel) gSectionLabel.textContent = section === 'congelamiento' ? 'Congelamiento' : 'Atemperamiento';
     const n = section==='congelamiento' ? (qtyCongEl?.textContent||'0') : (qtyAtemEl?.textContent||'0');
@@ -471,6 +560,11 @@
       // Hide dependent boxes initially
       qs('#gtimer-existente-box')?.classList.add('hidden');
       qs('#gtimer-rfid-box')?.classList.add('hidden');
+      // Si hay RFIDs preseleccionados (flujo automático), ocultar modos y forzar nuevo lote
+      if(preselectedRfids && section==='atemperamiento'){
+        gModesBox.classList.add('hidden');
+        gMode = 'nuevo';
+      }
       // Enable manual lote input by default
   if(gLote){ gLote.disabled = true; gLote.readOnly = true; }
     }
@@ -508,34 +602,49 @@
       await loadData();
       return;
     }
-    // Collect RFIDs based on mode
-    const tbody = currentSectionForModal==='congelamiento' ? tableCongBody : tableAtemBody;
+    // Collect RFIDs (considerar preseleccionados)
     let rfids = [];
-    const rows = Array.from(tbody?.querySelectorAll('tr')||[]);
-    if(gMode!=='nuevo'){
-      rows.forEach(tr=>{
+    if(preselectedRfids && currentSectionForModal==='atemperamiento'){
+      const set = new Set(preselectedRfids);
+      const tbody = currentSectionForModal==='congelamiento' ? tableCongBody : tableAtemBody;
+      Array.from(tbody?.querySelectorAll('tr')||[]).forEach(tr=>{
         const tds = tr.querySelectorAll('td');
         if(!tds || tds.length===1) return;
-        const rfid = tds[0].textContent?.trim();
-        const trLote = (tds[2].textContent||'').trim();
-        const hasActive = tr.hasAttribute('data-timer-started');
-        const completed = tr.getAttribute('data-completed') === '1';
-        if(rfid && trLote === lote && !hasActive && !completed) rfids.push(rfid);
+        const code = tds[0].textContent?.trim();
+        if(code && set.has(code)){
+          const hasActive = tr.hasAttribute('data-timer-started');
+          const completed = tr.getAttribute('data-completed') === '1';
+          if(!hasActive && !completed) rfids.push(code);
+        }
       });
     } else {
-      // nuevo (original behavior) -> only items without lote
-      rfids = rows.map(tr=>{
-        const tds = tr.querySelectorAll('td');
-        if(!tds || tds.length===1) return null;
-        const rfid = tds[0].textContent?.trim();
-        const hasActive = tr.hasAttribute('data-timer-started');
-        const hasLote = tr.getAttribute('data-has-lote') === '1';
-        const completed = tr.getAttribute('data-completed') === '1';
-        return (!hasActive && !hasLote && !completed) ? rfid : null;
-      }).filter(Boolean);
+      const tbody = currentSectionForModal==='congelamiento' ? tableCongBody : tableAtemBody;
+      const rows = Array.from(tbody?.querySelectorAll('tr')||[]);
+      if(gMode!=='nuevo'){
+        rows.forEach(tr=>{
+          const tds = tr.querySelectorAll('td');
+          if(!tds || tds.length===1) return;
+          const rfid = tds[0].textContent?.trim();
+          const trLote = (tds[2].textContent||'').trim();
+          const hasActive = tr.hasAttribute('data-timer-started');
+          const completed = tr.getAttribute('data-completed') === '1';
+          if(rfid && trLote === lote && !hasActive && !completed) rfids.push(rfid);
+        });
+      } else {
+        rfids = rows.map(tr=>{
+          const tds = tr.querySelectorAll('td');
+          if(!tds || tds.length===1) return null;
+          const rfid = tds[0].textContent?.trim();
+          const hasActive = tr.hasAttribute('data-timer-started');
+          const hasLote = tr.getAttribute('data-has-lote') === '1';
+          const completed = tr.getAttribute('data-completed') === '1';
+          return (!hasActive && !hasLote && !completed) ? rfid : null;
+        }).filter(Boolean);
+      }
     }
     gDlg?.close?.();
     await startSectionTimer(currentSectionForModal, lote, totalMinutes, rfids);
+    preselectedRfids = null; // limpiar después de iniciar
   });
 
   // Mode radio handling
@@ -633,6 +742,8 @@
   // Also primary buttons
   qs('#btn-add-cong')?.addEventListener('click', ()=>openModal('congelamiento'));
   qs('#btn-add-atem')?.addEventListener('click', ()=>openModal('atemperamiento'));
+  // Limpiar preselección si usuario cierra modal sin confirmar
+  gDlg?.addEventListener?.('close', ()=>{ preselectedRfids=null; gModesBox?.classList.remove('hidden'); });
 
   // Default: show grid view; allow switching to list and back
   function setView(mode){
