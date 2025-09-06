@@ -18,7 +18,7 @@
   let vistaTexto = false; // false=cards, true=texto (filas completas de cada componente)
   const btnViewCards = document.getElementById('btn-view-cards');
   const btnViewText = document.getElementById('btn-view-text');
-  let currentCat = null; // 'tic' | 'vip' | 'cube'
+  // Ya no se selecciona categoría manualmente; auto detección por backend
   const modal = document.getElementById('modal-ensam');
   const scanBox = document.getElementById('scan-box');
   const listTic = document.getElementById('list-tic');
@@ -30,9 +30,11 @@
   const btnCrear = document.getElementById('btn-crear-caja');
   const btnClear = document.getElementById('btn-clear-ensam');
   const msg = document.getElementById('msg-ensam');
-  const catButtons = document.querySelectorAll('.cat-btn');
   const scanHint = document.getElementById('scan-hint');
   const sel = { tic: new Set(), vip: new Set(), cube: new Set() };
+  // Nuevos inputs de duración en modal ensamblaje
+  const ensamHr = document.getElementById('ensam-hr');
+  const ensamMin = document.getElementById('ensam-min');
   let serverNowOffsetMs = 0; // Date.now() - serverNow
 
   function fmt(ms){
@@ -46,8 +48,17 @@
     if(ticCount) ticCount.textContent = `${sel.tic.size} / 6`;
     if(vipCount) vipCount.textContent = `${sel.vip.size} / 1`;
     if(cubeCount) cubeCount.textContent = `${sel.cube.size} / 1`;
-    const complete = sel.tic.size===6 && sel.vip.size===1 && sel.cube.size===1;
-    if(btnCrear) btnCrear.disabled = !complete;
+    const completeComp = sel.tic.size===6 && sel.vip.size===1 && sel.cube.size===1;
+    const durationValid = getDurationMinutes()>0;
+    if(btnCrear) btnCrear.disabled = !(completeComp && durationValid);
+    if(scanHint){
+      const faltTic = Math.max(0, 6 - sel.tic.size);
+      const faltVip = Math.max(0, 1 - sel.vip.size);
+      const faltCube = Math.max(0, 1 - sel.cube.size);
+      scanHint.textContent = faltTic+faltVip+faltCube===0
+        ? 'Composición completa. Ingrese duración y cree la caja.'
+        : `Faltan: ${faltTic} TIC · ${faltVip} VIP · ${faltCube} CUBE`;
+    }
   }
 
   function renderLists(){
@@ -59,17 +70,7 @@
     updateCounts();
   }
 
-  function setCategory(cat){
-    currentCat = cat;
-    catButtons.forEach(b=>{
-      if(b.getAttribute('data-cat')===cat){ b.classList.add('btn-active'); }
-      else { b.classList.remove('btn-active'); }
-    });
-  scanHint.textContent = `Escanee RFIDs para ${cat.toUpperCase()}${cat==='tic'?' (deben estar Atemperadas)':''}`;
-  scanBox.focus();
-  }
-
-  catButtons.forEach(b=> b.addEventListener('click', (e)=>{ e.preventDefault(); setCategory(b.getAttribute('data-cat')); }));
+  // Eliminado setCategory; auto detección
 
   function normalizeScan(raw){
     return raw.replace(/\s+/g,'').toUpperCase();
@@ -79,15 +80,14 @@
   function processScanBuffer(force){
     const raw = normalizeScan(scanBox.value||'');
     if(!raw){ return; }
-    if(!currentCat){ msg.textContent='Seleccione categoría primero'; return; }
     if(raw.length === 24 || (force && raw.length>0)){
-      addScanned(raw, currentCat);
+      addScanned(raw);
       scanBox.value='';
     } else if(raw.length>24){
       // En caso que la pistola pegue varios juntos, cortamos en bloques de 24
       let i=0; while(i+24<=raw.length){
         const chunk = raw.slice(i,i+24);
-        addScanned(chunk, currentCat);
+        addScanned(chunk);
         i+=24;
       }
       scanBox.value = raw.slice(i); // sobrante parcial
@@ -96,18 +96,14 @@
   scanBox?.addEventListener('input', ()=> processScanBuffer(false));
   scanBox?.addEventListener('keydown', (e)=>{ if(e.key==='Enter'){ e.preventDefault(); processScanBuffer(true); } });
 
-  function addScanned(rfid, cat){
+  function addScanned(rfid){
   if(rfid.length!==24){ msg.textContent='Debe tener 24 caracteres'; return; }
     // avoid duplicates across categories
     if(sel.tic.has(rfid)||sel.vip.has(rfid)||sel.cube.has(rfid)){ msg.textContent=`${rfid} ya agregado`; return; }
-    // quick local constraints
-    if(cat==='tic' && sel.tic.size>=6) return msg.textContent='Ya hay 6 TIC';
-    if(cat==='vip' && sel.vip.size>=1) return msg.textContent='Ya hay VIP';
-    if(cat==='cube' && sel.cube.size>=1) return msg.textContent='Ya hay CUBE';
-    validatePartial([...sel.tic, ...sel.vip, ...sel.cube, rfid], rfid, cat);
+    validatePartial([...sel.tic, ...sel.vip, ...sel.cube, rfid], rfid);
   }
 
-  async function validatePartial(all, last, cat){
+  async function validatePartial(all, last){
     try {
       const r = await fetch('/operacion/acond/ensamblaje/validate',{ method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ rfids: all }) });
       const j = await r.json();
@@ -125,8 +121,11 @@
 
   btnClear?.addEventListener('click', ()=>{ sel.tic.clear(); sel.vip.clear(); sel.cube.clear(); renderLists(); msg.textContent=''; scanBox.value=''; scanBox.focus(); });
   btnCrear?.addEventListener('click', async ()=>{
-    const rfids=[...sel.tic, ...sel.vip, ...sel.cube];
+  const rfids=[...sel.tic, ...sel.vip, ...sel.cube];
     if(rfids.length!==8){ return; }
+    // Validar duración
+  const totalM = getDurationMinutes();
+    if(totalM<=0){ msg.textContent='Ingrese duración para el cronómetro'; return; }
     btnCrear.disabled=true; msg.textContent='Creando caja...';
     try {
       const r = await fetch('/operacion/acond/ensamblaje/create',{ method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ rfids }) });
@@ -135,8 +134,12 @@
       msg.textContent=`Caja ${j.caja_id} creada Lote ${j.lote}`;
       // reset selection
       sel.tic.clear(); sel.vip.clear(); sel.cube.clear(); renderLists();
-      loadData();
-      setTimeout(()=>{ (modal).close(); }, 1200);
+      // Iniciar cronómetro inmediatamente para la caja recién creada
+      try {
+        await fetch('/operacion/acond/caja/timer/start',{ method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ caja_id: j.caja_id, durationSec: totalM*60 }) });
+      } catch(e){ console.error('auto timer caja', e); }
+      loadData(true);
+      setTimeout(()=>{ (modal).close(); ensamHr.value=''; ensamMin.value=''; }, 1200);
     } catch(e){ console.error(e); msg.textContent='Error creando'; btnCrear.disabled=false; }
   });
 
@@ -218,7 +221,7 @@
           badge.setAttribute('data-caja-timer-duration', caja.timer_duration_sec);
         }
       } else {
-        tBox.innerHTML = `<button class='btn btn-outline btn-sm start-caja-timer' data-caja='${caja.caja_id}'>Iniciar cronómetro</button>`;
+        tBox.innerHTML = `<span class='badge badge-outline badge-xs opacity-60'>Sin cronómetro</span>`;
       }
     }
   }
@@ -249,7 +252,7 @@
               <button class='btn btn-ghost btn-xs px-1 h-4 shrink-0 stop-caja-timer' data-caja='${c.caja_id}' title='Cancelar'>✕</button>
             </span>`;
         } else {
-          timerBadge = `<button class='btn btn-outline btn-xs start-caja-timer' data-caja='${c.caja_id}'>Iniciar</button>`;
+          timerBadge = `<span class='badge badge-outline badge-xs opacity-60'>Sin cronómetro</span>`;
         }
         const tr=document.createElement('tr');
         tr.className='hover';
@@ -359,7 +362,7 @@
             <button class='btn btn-ghost btn-xs px-1 h-4 shrink-0 stop-caja-timer' data-caja='${caja.caja_id}' title='Cancelar'>✕</button>
           </span>`;
       } else {
-        tBox.innerHTML = `<button class='btn btn-outline btn-sm start-caja-timer' data-caja='${caja.caja_id}'>Iniciar cronómetro</button>`;
+        tBox.innerHTML = `<span class='badge badge-outline badge-xs opacity-60'>Sin cronómetro</span>`;
       }
     }
     modalCaja.classList.remove('hidden');
@@ -434,37 +437,28 @@
     step();
   }
   // ===== Timer Modal Logic =====
-  const modalTimer = document.getElementById('modal-timer');
-  let cajaTimerTarget = null;
-  function openTimerModal(cajaId){ cajaTimerTarget = cajaId; if(modalTimer?.showModal) modalTimer.showModal(); }
-  function startTimerFor(mins){
-    if(!cajaTimerTarget) return;
-    const m = Number(mins);
-    if(!Number.isFinite(m) || m<=0) return;
-    fetch('/operacion/acond/caja/timer/start',{method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ caja_id: cajaTimerTarget, durationSec: m*60 })})
-      .then(r=>r.json())
-  .then(j=>{ if(!j.ok){ alert(j.error||'Error'); } cajaTimerTarget=null; modalTimer?.close(); loadData(true); })
-  .catch(()=>{ alert('Error iniciando cronómetro'); });
-  }
+  // Cancelar cronómetro (sin ofrecer reinicio)
   document.addEventListener('click', (e)=>{
-    const startBtn = e.target.closest('.start-caja-timer');
-    if(startBtn){ e.stopPropagation(); openTimerModal(startBtn.getAttribute('data-caja')); }
     const stopBtn = e.target.closest('.stop-caja-timer');
     if(stopBtn){ e.stopPropagation(); const id=stopBtn.getAttribute('data-caja'); if(confirm('Cancelar cronómetro?')){
-  fetch('/operacion/acond/caja/timer/clear',{method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ caja_id: id })}).then(()=>loadData(true));
+      fetch('/operacion/acond/caja/timer/clear',{method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ caja_id: id })}).then(()=>{
+        // Forzar actualización local sin esperar siguiente poll
+        loadData(true);
+      });
     }}
   });
-  document.getElementById('timer-custom')?.addEventListener('submit', (e)=>{
-    e.preventDefault();
-    const hEl = document.getElementById('timer-hours');
-    const mEl = document.getElementById('timer-mins');
-    const hrs = Number(hEl?.value||'0');
-    const mins = Number(mEl?.value||'0');
-    const totalM = (isNaN(hrs)?0:hrs)*60 + (isNaN(mins)?0:mins);
-    if(totalM<=0){ alert('Ingrese un tiempo'); return; }
-    startTimerFor(totalM);
-  });
-  document.getElementById('timer-cancel')?.addEventListener('click', ()=>{ try{ modalTimer?.close(); }catch{} });
+
+  function getDurationMinutes(){
+    const h = Number(ensamHr?.value||'0');
+    const m = Number(ensamMin?.value||'0');
+    const total = (isFinite(h)?Math.max(0,h):0)*60 + (isFinite(m)?Math.max(0,m):0);
+    return total;
+  }
+  function onDurationChange(){ updateCounts(); }
+  ensamHr?.addEventListener('input', onDurationChange);
+  ensamMin?.addEventListener('input', onDurationChange);
+  // Inicial validar duración al abrir
+  updateCounts();
 
   // (Sin estilos custom: usamos badges DaisyUI estándar)
   // Inicialización (faltaba tras refactor timers)

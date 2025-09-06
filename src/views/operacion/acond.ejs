@@ -93,33 +93,6 @@
 
 <script src="/static/js/acond.js?v=<%= assetVersion %>" defer></script>
 
-<!-- Modal Selección Cronómetro -->
-<dialog id="modal-timer" class="modal">
-  <div class="modal-box w-full max-w-md">
-    <form method="dialog">
-      <button class="btn btn-sm btn-circle btn-ghost absolute right-2 top-2">✕</button>
-    </form>
-    <h3 class="font-semibold text-lg mb-5">Iniciar cronómetro</h3>
-    <form id="timer-custom" class="space-y-6">
-      <div class="grid grid-cols-1 sm:grid-cols-2 gap-6">
-        <div>
-          <label class="block text-sm font-medium mb-2">Duración (horas)</label>
-          <input id="timer-hours" type="number" min="0" max="99" placeholder="Ej. 0" class="input input-bordered w-full" value="" />
-        </div>
-        <div>
-          <label class="block text-sm font-medium mb-2">Duración (minutos)</label>
-          <input id="timer-mins" type="number" min="0" max="59" placeholder="Ej. 30" class="input input-bordered w-full" value="" />
-        </div>
-      </div>
-      <div class="flex items-center justify-end gap-4 pt-2">
-        <button type="button" id="timer-cancel" class="btn btn-ghost btn-sm">Cancelar</button>
-        <button class="btn btn-primary btn-sm" type="submit">Iniciar</button>
-      </div>
-    </form>
-    <p id="timer-msg" class="text-xs opacity-70 mt-3"></p>
-  </div>
-</dialog>
-
 <!-- Modal Ensamblaje -->
 <dialog id="modal-ensam" class="modal">
   <div class="modal-box max-w-3xl">
@@ -127,17 +100,13 @@
       <button class="btn btn-sm btn-circle btn-ghost absolute right-2 top-2">✕</button>
     </form>
     <h3 class="font-bold text-lg mb-2">Armar caja (1 CUBE · 1 VIP · 6 TIC Atemperadas)</h3>
-    <div class="flex flex-wrap gap-3 mb-4">
-      <button data-cat="tic" class="btn btn-outline btn-sm cat-btn">TIC (Atemperada)</button>
-      <button data-cat="vip" class="btn btn-outline btn-sm cat-btn">VIP</button>
-      <button data-cat="cube" class="btn btn-outline btn-sm cat-btn">CUBE</button>
-    </div>
+  <div class="mb-4 text-xs opacity-70">Escanee RFIDs (auto‑detección de rol). Composición requerida: 6 TIC Atemperadas · 1 VIP · 1 CUBE.</div>
     <div id="scan-area" class="mb-4 w-full">
       <label class="input input-bordered flex items-center gap-2 w-full">
         <span class="opacity-60 text-xs">RFID</span>
         <input id="scan-box" type="text" class="grow" placeholder="Listo para escanear..." autocomplete="off" />
       </label>
-      <div id="scan-hint" class="text-xs opacity-70 mt-2">Seleccione una categoría y luego escanee (cada código de 24 caracteres se agregará automáticamente).</div>
+  <div id="scan-hint" class="text-xs opacity-70 mt-2">Listo para escanear (auto‑detección). Faltan: 6 TIC, 1 VIP, 1 CUBE.</div>
     </div>
     <div class="grid md:grid-cols-3 gap-4">
       <div class="border rounded p-3">
@@ -152,6 +121,20 @@
         <div class="font-semibold mb-1 flex items-center justify-between">CUBE <span id="cube-count" class="badge">0 / 1</span></div>
         <ul id="list-cube" class="text-xs space-y-1 max-h-40 overflow-auto"></ul>
       </div>
+    </div>
+    <div class="mt-6 border border-base-300/40 rounded-lg p-3 bg-base-200/30">
+      <div class="text-xs uppercase tracking-wide opacity-60 mb-2">Cronómetro de caja (requerido)</div>
+      <div class="grid grid-cols-2 gap-3">
+        <label class="form-control">
+          <span class="label-text text-xs">Horas</span>
+          <input id="ensam-hr" type="number" min="0" step="1" placeholder="Ej. 0" class="input input-bordered input-sm" />
+        </label>
+        <label class="form-control">
+          <span class="label-text text-xs">Minutos</span>
+          <input id="ensam-min" type="number" min="0" step="1" placeholder="Ej. 30" class="input input-bordered input-sm" />
+        </label>
+      </div>
+      <div class="text-xs opacity-60 mt-2" id="ensam-timer-hint">Debes indicar una duración &gt; 0. El cronómetro iniciará automáticamente al crear la caja.</div>
     </div>
     <div class="mt-4 flex flex-wrap gap-3 items-center">
       <button id="btn-clear-ensam" class="btn btn-ghost btn-sm" type="button">Limpiar</button>
