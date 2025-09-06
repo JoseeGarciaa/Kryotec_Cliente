@@ -139,7 +139,7 @@ export const OperacionController = {
       const lote = timer.rows?.[0]?.lote as string | undefined;
       if (lote) {
         await withTenant(tenant, (c) => c.query(
-          `UPDATE inventario_credocubes SET lote = $1 WHERE rfid = ANY($2::text[])`, [lote, accept]
+          `UPDATE inventario_credocubes SET lote = $1 WHERE rfid = ANY($2::text[]) AND (lote IS NULL OR lote = '')`, [lote, accept]
         ));
       }
     }
@@ -215,10 +215,10 @@ export const OperacionController = {
                updated_at = NOW()`,
         [s, dur, loteVal]
       );
-      // If a list of RFIDs is provided, tag those items with the lote now
+      // If a list of RFIDs is provided, tag those items with the lote now (only if they don't have one)
       const list = Array.isArray(rfids) ? rfids.filter((x:any)=>typeof x==='string' && x.trim()).map((x:string)=>x.trim()) : [];
       if(list.length){
-        await c.query(`UPDATE inventario_credocubes SET lote = $1 WHERE rfid = ANY($2::text[])`, [loteVal, list]);
+        await c.query(`UPDATE inventario_credocubes SET lote = $1 WHERE rfid = ANY($2::text[]) AND (lote IS NULL OR lote = '')`, [loteVal, list]);
         await c.query(`CREATE TABLE IF NOT EXISTS preacond_item_timers (
            rfid text NOT NULL,
            section text NOT NULL,
@@ -236,9 +236,10 @@ export const OperacionController = {
            ON CONFLICT (rfid, section) DO UPDATE
              SET started_at = EXCLUDED.started_at,
                  duration_sec = EXCLUDED.duration_sec,
-                 lote = EXCLUDED.lote,
+                 lote = COALESCE(preacond_item_timers.lote, EXCLUDED.lote),
                  active = true,
-                 updated_at = NOW()`,
+                 updated_at = NOW()
+           WHERE preacond_item_timers.active = false AND (preacond_item_timers.lote IS NULL OR preacond_item_timers.lote = '')`,
           [s, dur, loteVal, list]
         );
       }
@@ -306,13 +307,13 @@ export const OperacionController = {
          ON CONFLICT (rfid, section) DO UPDATE
            SET started_at = EXCLUDED.started_at,
                duration_sec = EXCLUDED.duration_sec,
-               lote = EXCLUDED.lote,
+               lote = COALESCE(preacond_item_timers.lote, EXCLUDED.lote),
                active = true,
                updated_at = NOW()`,
         [r, s, dur, loteVal]
       );
-      // Optionally tag the item's lote field too
-      await c.query(`UPDATE inventario_credocubes SET lote = $1 WHERE rfid = $2`, [loteVal, r]);
+      // Tag inventario lote only if empty
+      await c.query(`UPDATE inventario_credocubes SET lote = $1 WHERE rfid = $2 AND (lote IS NULL OR lote = '')`, [loteVal, r]);
     });
     res.json({ ok:true });
   },

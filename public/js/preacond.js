@@ -25,6 +25,7 @@
   const gDlg = qs('#dlg-gtimer');
   const gLote = qs('#gtimer-lote');
   const gMin = qs('#gtimer-min');
+  const gHr = qs('#gtimer-hr');
   const gMsg = qs('#gtimer-msg');
   const gConfirm = qs('#gtimer-confirm');
   const gSectionLabel = qs('#gtimer-section-label');
@@ -290,8 +291,9 @@
     const n = section==='congelamiento' ? (qtyCongEl?.textContent||'0') : (qtyAtemEl?.textContent||'0');
     if(gCount) gCount.textContent = n;
     if(gMsg) gMsg.textContent = '';
-    if(gLote) gLote.value = '';
-    if(gMin) gMin.value = '';
+  if(gLote) gLote.value = '';
+  if(gHr) gHr.value = '';
+  if(gMin) gMin.value = '';
     gDlg?.showModal?.();
     setTimeout(()=>gLote?.focus?.(), 50);
   }
