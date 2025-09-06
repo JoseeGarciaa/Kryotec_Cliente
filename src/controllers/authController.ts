@@ -68,8 +68,13 @@ export const AuthController = {
 
   await withTenant(tenantSchema!, (client) => UsersModel.touchUltimoIngreso(client, user.id));
 
-  const token = jwt.sign({ sub: user.id, tenant: tenantSchema, rol: user.rol }, config.jwtSecret, { expiresIn: '12h' });
-  res.cookie('token', token, { httpOnly: true, sameSite: 'lax', secure: process.env.NODE_ENV === 'production' });
+  const token = jwt.sign({ sub: user.id, tenant: tenantSchema, rol: user.rol }, config.jwtSecret, { expiresIn: '120m' });
+  res.cookie('token', token, {
+    httpOnly: true,
+    sameSite: 'lax',
+    secure: process.env.NODE_ENV === 'production',
+    maxAge: 120 * 60 * 1000, // 120 minutos
+  });
   res.redirect('/inventario');
     } catch (err: any) {
       console.error(err);
@@ -82,8 +87,13 @@ export const AuthController = {
             const tenant = matches[0].tenant;
             const user = matches[0].user;
             await withTenant(tenant, (client) => UsersModel.touchUltimoIngreso(client, user.id));
-            const token = jwt.sign({ sub: user.id, tenant, rol: user.rol }, config.jwtSecret, { expiresIn: '12h' });
-            res.cookie('token', token, { httpOnly: true, sameSite: 'lax', secure: process.env.NODE_ENV === 'production' });
+            const token = jwt.sign({ sub: user.id, tenant, rol: user.rol }, config.jwtSecret, { expiresIn: '120m' });
+            res.cookie('token', token, {
+              httpOnly: true,
+              sameSite: 'lax',
+              secure: process.env.NODE_ENV === 'production',
+              maxAge: 120 * 60 * 1000, // 120 minutos
+            });
             return res.redirect('/inventario');
           }
         } catch {}

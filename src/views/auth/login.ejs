@@ -1,29 +1,117 @@
 <% title = 'Acceso' %>
 
-<div class="card w-full max-w-md shadow-xl bg-base-200">
-  <div class="card-body">
-    <h2 class="card-title">Iniciar sesión</h2>
-    <% if (error) { %>
-      <div class="alert alert-error">
-        <span><%= error %></span>
+<!-- Contenedor a pantalla completa con dos columnas (sin bordes redondeados) -->
+<div class="w-full min-h-screen grid grid-cols-1 lg:grid-cols-2 gap-0">
+  <!-- Lado Izquierdo: Ilustración (solo en pantallas grandes) -->
+  <div class="relative hidden lg:flex items-center justify-center p-8 bg-primary-100 dark:bg-primary-950">
+    <img src="/static/images/Checking boxes-bro.svg" alt="Ilustración de inicio de sesión" class="w-full h-full object-contain max-w-3xl" />
+  </div>
+
+  <!-- Lado Derecho: Formulario -->
+  <div class="w-full flex items-center justify-center p-6 lg:p-10 bg-primary-50 dark:bg-dark-bg">
+    <div class="w-full max-w-lg">
+      <!-- Encabezado con logo y tema -->
+      <div class="flex items-center justify-between mb-8">
+        <div class="flex items-center gap-3">
+          <div class="w-10 h-10 rounded-xl bg-primary-600 flex items-center justify-center shadow-md">
+            <!-- Icono hoja -->
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="w-5 h-5 text-white">
+              <path d="M15 7c-4.418 0-8 3.582-8 8 0 1.657.5 3.19 1.356 4.457M15 7c1.657 0 3 1.343 3 3 0 4.418-3.582 8-8 8M15 7c0-1.657-1.343-3-3-3-4.418 0-8 3.582-8 8 0 1.657 1.343 3 3 3 4.418 0 8-3.582 8-8Z" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+          </div>
+          <span class="text-xl font-bold text-light-text dark:text-dark-text">KryotecSense</span>
+        </div>
+  <button type="button" id="toggle-theme-btn" class="w-9 h-9 grid place-items-center rounded-full border border-white/20 bg-white/10 hover:bg-white/15 backdrop-blur text-primary-600 dark:text-primary-300" aria-label="Cambiar tema">
+          <!-- Icono sol -->
+          <svg id="icon-sun" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="w-5 h-5 <%= theme === 'light' ? '' : 'hidden' %>">
+            <circle cx="12" cy="12" r="4"/>
+            <path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41" stroke-linecap="round"/>
+          </svg>
+          <!-- Icono luna -->
+          <svg id="icon-moon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="w-5 h-5 <%= theme === 'dark' ? '' : 'hidden' %>">
+            <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+        </button>
       </div>
-    <% } %>
-    <form method="post" action="/auth/login" class="space-y-3">
-      <div class="form-control">
-        <label class="label" for="correo">
-          <span class="label-text">Correo</span>
-        </label>
-        <input type="email" id="correo" name="correo" class="input input-bordered" required />
+
+      <!-- Mensaje de bienvenida -->
+      <div class="text-center mb-10">
+        <h1 class="text-4xl font-extrabold leading-tight text-light-text dark:text-dark-text">
+          Bienvenido de Vuelta,
+          <span class="block text-primary-600 dark:text-primary-400">Por favor inicia sesión</span>
+        </h1>
+        <p class="mt-2 text-light-text/70 dark:text-dark-text/70">en tu cuenta.</p>
       </div>
-      <div class="form-control">
-        <label class="label" for="password">
-          <span class="label-text">Contraseña</span>
-        </label>
-        <input type="password" id="password" name="password" class="input input-bordered" required />
-      </div>
-      <div class="card-actions justify-end mt-2">
-        <button type="submit" class="btn btn-primary w-full">Entrar</button>
-      </div>
-    </form>
+
+      <!-- Errores -->
+      <% if (error) { %>
+        <div class="alert alert-error mb-4">
+          <span><%= error %></span>
+        </div>
+      <% } %>
+
+      <!-- Formulario de login -->
+      <form id="login-form" method="post" action="/auth/login" class="space-y-5">
+        <div class="form-control">
+          <label class="label" for="correo">
+            <span class="label-text text-light-text dark:text-dark-text">Correo electrónico</span>
+          </label>
+          <input
+            type="email"
+            id="correo"
+            name="correo"
+            placeholder="usuario@ejemplo.com"
+            class="input input-bordered rounded-xl bg-white placeholder:text-slate-400 border-light-border focus:ring-2 focus:ring-primary-500 focus:border-transparent dark:bg-dark-card dark:border-dark-border dark:text-dark-text placeholder:dark:text-slate-400"
+            autocomplete="email"
+            required
+          />
+        </div>
+
+        <div class="form-control">
+          <label class="label" for="password">
+            <span class="label-text text-light-text dark:text-dark-text">Contraseña</span>
+          </label>
+          <div class="relative">
+            <input
+              type="password"
+              id="password"
+              name="password"
+              placeholder="Tu contraseña"
+              class="input input-bordered w-full pr-12 rounded-xl bg-white placeholder:text-slate-400 border-light-border focus:ring-2 focus:ring-primary-500 focus:border-transparent dark:bg-dark-card dark:border-dark-border dark:text-dark-text placeholder:dark:text-slate-400"
+              autocomplete="current-password"
+              required
+            />
+            <button
+              type="button"
+              id="toggle-password"
+              class="absolute inset-y-0 right-0 px-3 flex items-center text-base-content/70 hover:text-base-content z-10"
+              aria-label="Mostrar u ocultar contraseña"
+            >
+              <!-- eye icon -->
+              <svg id="icon-eye" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="w-5 h-5">
+                <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/>
+                <circle cx="12" cy="12" r="3"/>
+              </svg>
+              <!-- eye-off icon -->
+              <svg id="icon-eye-off" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="w-5 h-5 hidden">
+                <path d="M17.94 17.94A10.94 10.94 0 0 1 12 20c-7 0-11-8-11-8a21.77 21.77 0 0 1 5.06-6.08M9.9 4.24A10.94 10.94 0 0 1 12 4c7 0 11 8 11 8a21.83 21.83 0 0 1-5.17 6.18M1 1l22 22" stroke-linecap="round" stroke-linejoin="round"/>
+              </svg>
+            </button>
+          </div>
+        </div>
+
+        <div class="flex items-center justify-end text-sm">
+          <a href="#" class="link link-primary dark:text-primary-300">¿Olvidaste tu contraseña?</a>
+        </div>
+
+        <button id="submit-btn" type="submit" class="w-full py-3 rounded-xl text-white font-medium shadow-sm bg-gradient-to-r from-primary-500 to-primary-600 hover:from-primary-600 hover:to-primary-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500 flex items-center justify-center gap-2">
+          <span id="submit-text">Iniciar Sesión</span>
+          <span id="submit-spinner" class="loading loading-spinner loading-sm hidden"></span>
+        </button>
+      </form>
+    </div>
   </div>
 </div>
+
+<!-- JS externo para cumplir CSP -->
+<script src="/static/js/login.js?v=<%= assetVersion %>"></script>

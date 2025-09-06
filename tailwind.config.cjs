@@ -4,7 +4,7 @@ module.exports = {
     './src/views/**/*.ejs',
     './public/**/*.js'
   ],
-  darkMode: ['class', '[data-theme="dark"]'],
+  darkMode: 'class',
   theme: {
     extend: {
       keyframes: {
@@ -17,6 +17,38 @@ module.exports = {
         'fade-out': 'fade-out 160ms ease-in',
         'slide-up': 'slide-up 220ms ease-out',
       },
+      colors: {
+        primary: {
+          50: '#E7F1FF',
+          100: '#D3E5FF',
+          200: '#BCCFFF',
+          300: '#93ACFF',
+          400: '#4F78FF',
+          500: '#2743FF',
+          600: '#0135FF',
+          700: '#0018FF',
+          800: '#0012A4',
+          900: '#0A0B8B',
+          950: '#07083F',
+        },
+        light: {
+          bg: '#FFFFFF',
+          card: '#F8FAFC',
+          border: '#E2E8F0',
+          text: '#1E293B',
+        },
+        dark: {
+          bg: '#0F172A',
+          card: '#1E293B',
+          border: '#334155',
+          text: '#F8FAFC',
+        },
+      },
+      backgroundColor: {
+        'blue-light': '#E7F1FF',
+        'blue-medium': '#93ACFF',
+        'blue-dark': '#0135FF',
+      },
     },
   },
   plugins: [require('daisyui')],
@@ -25,23 +57,23 @@ module.exports = {
       {
         kryoDark: {
           ...require('daisyui/src/theming/themes')['dark'],
-          primary: '#6D4AFF',
-          secondary: '#A78BFA',
-          accent: '#60A5FA',
-          'base-100': '#0b1220',
-          'base-200': '#0f172a',
-          'base-300': '#1f2937',
+          primary: '#2743FF',
+          secondary: '#93ACFF',
+          accent: '#4F78FF',
+          'base-100': '#0F172A',
+          'base-200': '#1E293B',
+          'base-300': '#334155',
         },
       },
       {
         kryoLight: {
           ...require('daisyui/src/theming/themes')['light'],
-          primary: '#4F46E5',
-          secondary: '#8B5CF6',
-          accent: '#38BDF8',
-          'base-100': '#f8fafc',
-          'base-200': '#ffffff',
-          'base-300': '#e5e7eb',
+          primary: '#2743FF',
+          secondary: '#93ACFF',
+          accent: '#4F78FF',
+          'base-100': '#FFFFFF',
+          'base-200': '#F8FAFC',
+          'base-300': '#E2E8F0',
         },
       },
     ],

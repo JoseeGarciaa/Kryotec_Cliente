@@ -69,3 +69,11 @@ app.post('/ui/theme-toggle', (req, res) => {
 	const back = (postedBack && typeof postedBack === 'string') ? postedBack : ((req.headers.referer as string) || '/inventario');
 	res.redirect(back);
 });
+
+// Explicitly set theme to avoid client/server mismatch when saving user preference
+app.post('/ui/theme-set', (req, res) => {
+	const desired = (req.body as any)?.theme === 'light' ? 'light' : ((req.body as any)?.theme === 'dark' ? 'dark' : null);
+	if (!desired) return res.status(400).json({ ok: false, error: 'invalid theme' });
+	res.cookie('theme', desired, { httpOnly: false, sameSite: 'lax' });
+	return res.json({ ok: true, theme: desired });
+});

@@ -1,23 +1,30 @@
+// Toggle from header form (backward compatible)
 document.addEventListener('submit', async (e) => {
   const form = e.target instanceof HTMLFormElement ? e.target : null;
   if (!form || !form.classList.contains('theme-switch')) return;
   e.preventDefault();
   try {
-    // Optimistically toggle theme on the client
     const html = document.documentElement;
     const current = html.getAttribute('data-theme');
     const next = current === 'kryoDark' ? 'kryoLight' : 'kryoDark';
     html.setAttribute('data-theme', next);
-
-    // Persist on server via fetch without navigation
-    const formData = new FormData(form);
-    const res = await fetch('/ui/theme-toggle', {
+    localStorage.setItem('tema', next === 'kryoDark' ? 'oscuro' : 'claro');
+    await fetch('/ui/theme-set', {
       method: 'POST',
-      body: formData,
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ theme: next === 'kryoDark' ? 'dark' : 'light' }),
       credentials: 'same-origin'
     });
-    // The server redirects; ignore body to avoid reload
-  } catch {
-    // best-effort; ignore errors
-  }
+  } catch {}
 });
+
+// On load, apply saved preference if present
+(function(){
+  try {
+    const saved = localStorage.getItem('tema'); // 'claro' | 'oscuro'
+    if (!saved) return;
+    const html = document.documentElement;
+    const target = saved === 'oscuro' ? 'kryoDark' : 'kryoLight';
+    html.setAttribute('data-theme', target);
+  } catch {}
+})();
