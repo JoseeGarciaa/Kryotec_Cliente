@@ -18,6 +18,30 @@ document.addEventListener('submit', async (e) => {
   } catch {}
 });
 
+// Sidebar button toggle
+document.addEventListener('click', async (e) => {
+  const btn = e.target.closest('#btn-theme-toggle');
+  if (!btn) return;
+  e.preventDefault();
+  try {
+    const html = document.documentElement;
+    const current = html.getAttribute('data-theme');
+    const next = current === 'kryoDark' ? 'kryoLight' : 'kryoDark';
+    html.setAttribute('data-theme', next);
+    localStorage.setItem('tema', next === 'kryoDark' ? 'oscuro' : 'claro');
+    btn.classList.add('loading');
+    await fetch('/ui/theme-set', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ theme: next === 'kryoDark' ? 'dark' : 'light' }),
+      credentials: 'same-origin'
+    });
+  } catch {} finally {
+    const btn2 = document.getElementById('btn-theme-toggle');
+    if (btn2) btn2.classList.remove('loading');
+  }
+});
+
 // On load, apply saved preference if present
 (function(){
   try {
