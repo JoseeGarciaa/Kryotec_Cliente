@@ -1,6 +1,30 @@
 import { Request, Response } from 'express';
 import { withTenant } from '../db/pool';
 
+// Helper: generate next lote code for current day (ddMMyyyy-XXX)
+async function generateNextLote(tenant: string): Promise<string> {
+  const now = new Date();
+  const dd = String(now.getDate()).padStart(2,'0');
+  const mm = String(now.getMonth()+1).padStart(2,'0');
+  const yyyy = String(now.getFullYear());
+  const prefix = `${dd}${mm}${yyyy}`; // e.g. 05092025
+  let nextNum = 1;
+  await withTenant(tenant, async (c) => {
+    const r = await c.query<{ lote: string }>(`SELECT lote FROM inventario_credocubes WHERE lote LIKE $1`, [prefix+'-%']);
+    let max = 0;
+    for(const row of r.rows){
+      const lote = row.lote || '';
+      const parts = lote.split('-');
+      if(parts.length===2 && parts[0]===prefix){
+        const n = parseInt(parts[1], 10);
+        if(!isNaN(n) && n>max) max = n;
+      }
+    }
+    nextNum = max + 1;
+  });
+  const suffix = String(nextNum).padStart(3,'0');
+  return `${prefix}-${suffix}`;
+}
 export const OperacionController = {
   index: (_req: Request, res: Response) => res.redirect('/operacion/todas'),
   todas: (_req: Request, res: Response) => res.render('operacion/todas', { title: 'Operación · Todas las fases' }),
@@ -73,7 +97,7 @@ export const OperacionController = {
   // Scan/move TICs into Congelamiento or Atemperamiento
   preacondScan: async (req: Request, res: Response) => {
     const tenant = (req as any).user?.tenant;
-    const { target, rfids } = req.body as any;
+    const { target, rfids, keepLote } = req.body as any;
     const t = typeof target === 'string' ? target.toLowerCase() : '';
     const input = Array.isArray(rfids) ? rfids : (rfids ? [rfids] : []);
     const codes = [...new Set(input.filter((x: any) => typeof x === 'string').map((s: string) => s.trim()).filter(Boolean))];
@@ -128,14 +152,26 @@ export const OperacionController = {
              AND ic.rfid = ANY($1::text[])
              AND (m.nombre_modelo ILIKE '%tic%')`, [accept]));
       } else {
-        await withTenant(tenant, (c) => c.query(
-          `UPDATE inventario_credocubes ic
-        SET estado = 'Pre Acondicionamiento', sub_estado = 'Atemperamiento', lote = NULL
-            FROM modelos m
-           WHERE ic.modelo_id = m.modelo_id
-             AND ic.rfid = ANY($1::text[])
-             AND (m.nombre_modelo ILIKE '%tic%')
-             AND ic.estado = 'Pre Acondicionamiento' AND ic.sub_estado = 'Congelado'`, [accept]));
+        const preserve = !!keepLote; // if true, do not clear lote
+        if(preserve){
+          await withTenant(tenant, (c) => c.query(
+            `UPDATE inventario_credocubes ic
+          SET estado = 'Pre Acondicionamiento', sub_estado = 'Atemperamiento'
+              FROM modelos m
+             WHERE ic.modelo_id = m.modelo_id
+               AND ic.rfid = ANY($1::text[])
+               AND (m.nombre_modelo ILIKE '%tic%')
+               AND ic.estado = 'Pre Acondicionamiento' AND ic.sub_estado = 'Congelado'`, [accept]));
+        } else {
+          await withTenant(tenant, (c) => c.query(
+            `UPDATE inventario_credocubes ic
+          SET estado = 'Pre Acondicionamiento', sub_estado = 'Atemperamiento', lote = NULL
+              FROM modelos m
+             WHERE ic.modelo_id = m.modelo_id
+               AND ic.rfid = ANY($1::text[])
+               AND (m.nombre_modelo ILIKE '%tic%')
+               AND ic.estado = 'Pre Acondicionamiento' AND ic.sub_estado = 'Congelado'`, [accept]));
+        }
       }
 
   // Do NOT auto-assign lote on scan; keep items without lote until a timer starts
@@ -196,9 +232,12 @@ export const OperacionController = {
     const { section, durationSec, lote, rfids } = req.body as any;
     const s = typeof section === 'string' ? section.toLowerCase() : '';
     const dur = Number(durationSec);
-    const loteVal = typeof lote === 'string' ? lote.trim() : '';
-    if(!['congelamiento','atemperamiento'].includes(s) || !Number.isFinite(dur) || dur <= 0 || !loteVal){
+    let loteVal = typeof lote === 'string' ? lote.trim() : '';
+    if(!['congelamiento','atemperamiento'].includes(s) || !Number.isFinite(dur) || dur <= 0){
       return res.status(400).json({ ok:false, error:'Entrada inválida' });
+    }
+    if(!loteVal){
+      loteVal = await generateNextLote(tenant);
     }
     await withTenant(tenant, async (c) => {
       await c.query(`CREATE TABLE IF NOT EXISTS preacond_timers (
@@ -249,7 +288,7 @@ export const OperacionController = {
         );
       }
     });
-    res.json({ ok:true });
+  res.json({ ok:true, lote: loteVal });
   },
 
   preacondTimerClear: async (req: Request, res: Response) => {
@@ -291,9 +330,12 @@ export const OperacionController = {
     const s = typeof section === 'string' ? section.toLowerCase() : '';
     const r = typeof rfid === 'string' ? rfid.trim() : '';
     const dur = Number(durationSec);
-    const loteVal = typeof lote === 'string' ? lote.trim() : '';
-    if (!['congelamiento','atemperamiento'].includes(s) || !r || !Number.isFinite(dur) || dur <= 0 || !loteVal) {
+    let loteVal = typeof lote === 'string' ? lote.trim() : '';
+    if (!['congelamiento','atemperamiento'].includes(s) || !r || !Number.isFinite(dur) || dur <= 0) {
       return res.status(400).json({ ok:false, error: 'Entrada inválida' });
+    }
+    if(!loteVal){
+      loteVal = await generateNextLote(tenant);
     }
     await withTenant(tenant, async (c) => {
       // Do not allow starting if the item is already completed in this section
@@ -328,7 +370,7 @@ export const OperacionController = {
   // Tag inventario lote only if empty
   await c.query(`UPDATE inventario_credocubes SET lote = $1 WHERE rfid = $2 AND (lote IS NULL OR lote = '')`, [loteVal, r]);
     });
-    res.json({ ok:true });
+    res.json({ ok:true, lote: loteVal });
   },
 
   preacondItemTimerClear: async (req: Request, res: Response) => {
@@ -350,19 +392,17 @@ export const OperacionController = {
          updated_at timestamptz NOT NULL DEFAULT NOW(),
          PRIMARY KEY (rfid, section)
       )`);
+      // Keep lote (do not clear) when pausing; only stop timer fields
       await c.query(
         `INSERT INTO preacond_item_timers(rfid, section, started_at, duration_sec, lote, active, updated_at)
            VALUES ($1, $2, NULL, NULL, NULL, false, NOW())
          ON CONFLICT (rfid, section) DO UPDATE
            SET started_at = NULL,
                duration_sec = NULL,
-               lote = NULL,
                active = false,
                updated_at = NOW()`,
         [r, s]
       );
-      // Also clear lote in inventario so it can be re-assigned on next timer start
-      await c.query(`UPDATE inventario_credocubes SET lote = NULL WHERE rfid = $1`, [r]);
     });
     res.json({ ok:true });
   },

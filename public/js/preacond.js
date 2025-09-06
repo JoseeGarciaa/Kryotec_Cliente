@@ -30,6 +30,8 @@
   const chipsBox = qs('#chips');
   const msg = qs('#scan-msg');
   const btnConfirm = qs('#btn-confirm');
+  const keepLoteRow = qs('#keep-lote-row');
+  const chkKeepLote = qs('#chk-keep-lote');
 
   // Group timer modal elements
   const gDlg = qs('#dlg-gtimer');
@@ -40,6 +42,12 @@
   const gConfirm = qs('#gtimer-confirm');
   const gSectionLabel = qs('#gtimer-section-label');
   const gCount = qs('#gtimer-count');
+  // New mode controls (atemperamiento only)
+  const gModesBox = qs('#gtimer-modes');
+  const gLoteExist = qs('#gtimer-lote-exist');
+  const gRfidInput = qs('#gtimer-rfid-lote');
+  const gRfidStatus = qs('#gtimer-rfid-lote-status');
+  let gMode = 'nuevo'; // nuevo | existente | rfid
   // We'll reuse group timer modal for per-item start
   let pendingItemStart = null; // { section, rfid }
 
@@ -140,10 +148,9 @@
                      </button>
                    </span>`;
         } else {
-          // completed -> only 'Devolver a bodega'
-          right = `<span class="flex items-center gap-2">
-                     <button class="btn btn-ghost btn-xs text-warning" data-item-bodega="${it.rfid}" data-section="${section}">Devolver a bodega</button>
-                   </span>`;
+          // completed -> static status label
+          const label = section==='congelamiento' ? 'Congelado' : 'Atemperado';
+          right = `<span class="text-xs font-semibold ${section==='congelamiento'?'text-info':'text-warning'}">${label}</span>`;
         }
         return `<li class="flex items-center justify-between py-1">
                   <span class="truncate text-sm">${displayName}</span>
@@ -191,8 +198,9 @@
              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" class="w-4 h-4" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
            </button>`;
       } else {
-        // Completed -> allow returning to warehouse (clear lote + set 'En bodega')
-        controls = `<button class="btn btn-ghost btn-xs text-warning" title="Devolver a bodega" data-item-bodega="${r.rfid}" data-section="${section}">Devolver a bodega</button>`;
+  // Completed -> static status text instead of return option
+  const label = section==='congelamiento' ? 'Congelado' : 'Atemperado';
+  controls = `<span class="text-xs font-semibold ${section==='congelamiento'?'text-info':'text-warning'}">${label}</span>`;
       }
   const loteVal = r.lote || '';
       const lotePill = loteVal ? `<span class="badge badge-ghost badge-xs sm:badge-sm whitespace-nowrap">L: ${loteVal}</span>` : '';
@@ -300,8 +308,9 @@
 
   async function startSectionTimer(section, lote, minutes, rfids){
     const durationSec = Math.round(minutes*60);
-    await fetch('/operacion/preacond/timer/start', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ section, durationSec, lote, rfids }) });
-    await loadData();
+  const r = await fetch('/operacion/preacond/timer/start', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ section, durationSec, lote, rfids }) });
+  try { const j = await r.json(); if(j?.lote && !lote){ /* optionally notify */ console.log('Lote autogenerado', j.lote); } } catch {}
+  await loadData();
   }
   async function clearSectionTimer(section){
     await fetch('/operacion/preacond/timer/clear', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ section }) });
@@ -313,6 +322,9 @@
     rfids = []; invalid = []; valid = [];
     chipsBox.innerHTML=''; msg.textContent='';
     btnConfirm.disabled = true;
+  // Show keep-lote checkbox only when moving to atemperamiento
+  if(keepLoteRow){ keepLoteRow.classList.toggle('hidden', target!=='atemperamiento'); }
+  if(chkKeepLote){ chkKeepLote.checked = false; }
     dlg?.showModal?.();
     setTimeout(()=>scanInput?.focus?.(), 50);
   }
@@ -374,7 +386,8 @@
 
   btnConfirm?.addEventListener('click', async ()=>{
     if(!valid.length) return;
-    const r = await fetch('/operacion/preacond/scan', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ target, rfids: valid }) });
+    const keepLote = chkKeepLote && !chkKeepLote.classList.contains('hidden') && chkKeepLote.checked && target==='atemperamiento';
+    const r = await fetch('/operacion/preacond/scan', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ target, rfids: valid, keepLote }) });
     const j = await r.json().catch(()=>({ok:false}));
     if(!j.ok){ msg.textContent = 'Error al confirmar'; return; }
     dlg?.close?.();
@@ -402,36 +415,147 @@
   if(gLote) gLote.value = '';
   if(gHr) gHr.value = '';
   if(gMin) gMin.value = '';
+    if(gModesBox){
+      // Always visible for both sections now
+      gModesBox.classList.remove('hidden');
+      // Reset mode
+      gMode = 'nuevo';
+      const radios = gModesBox.querySelectorAll('input[name="gtimer-mode"]');
+      radios.forEach(r=>{ if(r.value==='nuevo') r.checked=true; else r.checked=false; });
+  if(gLoteExist){ gLoteExist.innerHTML = '<option value="">-- Selecciona --</option>'; }
+      if(gRfidInput){ gRfidInput.value=''; gRfidInput.removeAttribute('data-derived-lote'); }
+      if(gRfidStatus){ gRfidStatus.textContent=''; }
+      // Populate existing lotes from current list (section aware)
+      if(gLoteExist){
+        try {
+          const lotesMap = new Map(); // lote -> { hasIncomplete:boolean }
+          const tableSel = section==='congelamiento' ? '#tabla-cong tbody tr' : '#tabla-atem tbody tr';
+          document.querySelectorAll(tableSel).forEach(tr=>{
+            const td = tr.querySelectorAll('td');
+            if(td.length>=3){
+              const lote = td[2].textContent.trim();
+              if(!lote) return;
+              const completed = tr.getAttribute('data-completed')==='1';
+              if(!lotesMap.has(lote)) lotesMap.set(lote, { hasIncomplete: false });
+              if(!completed){ const o = lotesMap.get(lote); o.hasIncomplete = true; lotesMap.set(lote, o); }
+            }
+          });
+          [...lotesMap.entries()].filter(([,v])=>v.hasIncomplete).map(([k])=>k).sort().forEach(l=>{
+            const opt=document.createElement('option'); opt.value=l; opt.textContent=l; gLoteExist.appendChild(opt);
+          });
+        }catch{}
+      }
+      // Hide dependent boxes initially
+      qs('#gtimer-existente-box')?.classList.add('hidden');
+      qs('#gtimer-rfid-box')?.classList.add('hidden');
+      // Enable manual lote input by default
+  if(gLote){ gLote.disabled = true; gLote.readOnly = true; }
+    }
     gDlg?.showModal?.();
     setTimeout(()=>gLote?.focus?.(), 50);
   }
 
   gConfirm?.addEventListener('click', async ()=>{
-    const lote = (gLote?.value||'').trim();
+    // Determine lote based on mode
+    let loteInput = (gLote?.value||'').trim();
+    if(gModesBox && !gModesBox.classList.contains('hidden')){
+      if(gMode==='existente'){
+        loteInput = (gLoteExist?.value||'').trim();
+      } else if(gMode==='rfid'){
+        const dLote = gRfidInput?.getAttribute('data-derived-lote') || '';
+        loteInput = dLote.trim();
+      } else if(gMode==='nuevo') {
+        // Force empty to trigger autogeneración backend
+        loteInput = '';
+      }
+    }
+    const lote = loteInput;
     const hours = Number(gHr?.value||'0');
     const minutes = Number(gMin?.value||'0');
     const totalMinutes = (isFinite(hours)?Math.max(0,hours):0)*60 + (isFinite(minutes)?Math.max(0,minutes):0);
-    if(!lote || !Number.isFinite(totalMinutes) || totalMinutes<=0){ if(gMsg) gMsg.textContent='Completa lote y duración (> 0).'; return; }
+  if(!Number.isFinite(totalMinutes) || totalMinutes<=0){ if(gMsg) gMsg.textContent='Duración debe ser > 0.'; return; }
+  // lote puede ir vacío en modo nuevo para autogenerarse en backend
     if(pendingItemStart){
       gDlg?.close?.();
       const durationSec = Math.round(totalMinutes*60);
-      await fetch('/operacion/preacond/item-timer/start', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ section, rfid, durationSec, lote }) });
+      const { section, rfid } = pendingItemStart; // bugfix: use stored
+      await fetch('/operacion/preacond/item-timer/start', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ section, rfid, durationSec, lote }) })
+        .then(r=>r.json().catch(()=>null))
+        .then(j=>{ if(j && j.lote && !lote){ console.log('Lote autogenerado', j.lote); } });
       await loadData();
       return;
     }
-    // Collect RFIDs in that section now, only those without active timer and sin lote
+    // Collect RFIDs based on mode
     const tbody = currentSectionForModal==='congelamiento' ? tableCongBody : tableAtemBody;
-    const rfids = Array.from(tbody?.querySelectorAll('tr')||[]).map(tr=>{
-      const tds = tr.querySelectorAll('td');
-      if(!tds || tds.length===1) return null;
-      const rfid = tds[0].textContent?.trim();
-      const hasActive = tr.hasAttribute('data-timer-started');
-      const hasLote = tr.getAttribute('data-has-lote') === '1';
-      const completed = tr.getAttribute('data-completed') === '1';
-      return (!hasActive && !hasLote && !completed) ? rfid : null;
-    }).filter(Boolean);
+    let rfids = [];
+    const rows = Array.from(tbody?.querySelectorAll('tr')||[]);
+    if(gMode!=='nuevo'){
+      rows.forEach(tr=>{
+        const tds = tr.querySelectorAll('td');
+        if(!tds || tds.length===1) return;
+        const rfid = tds[0].textContent?.trim();
+        const trLote = (tds[2].textContent||'').trim();
+        const hasActive = tr.hasAttribute('data-timer-started');
+        const completed = tr.getAttribute('data-completed') === '1';
+        if(rfid && trLote === lote && !hasActive && !completed) rfids.push(rfid);
+      });
+    } else {
+      // nuevo (original behavior) -> only items without lote
+      rfids = rows.map(tr=>{
+        const tds = tr.querySelectorAll('td');
+        if(!tds || tds.length===1) return null;
+        const rfid = tds[0].textContent?.trim();
+        const hasActive = tr.hasAttribute('data-timer-started');
+        const hasLote = tr.getAttribute('data-has-lote') === '1';
+        const completed = tr.getAttribute('data-completed') === '1';
+        return (!hasActive && !hasLote && !completed) ? rfid : null;
+      }).filter(Boolean);
+    }
     gDlg?.close?.();
     await startSectionTimer(currentSectionForModal, lote, totalMinutes, rfids);
+  });
+
+  // Mode radio handling
+  if(gModesBox){
+    gModesBox.addEventListener('change', (e)=>{
+      const t = e.target; if(!(t instanceof HTMLInputElement)) return;
+      if(t.name==='gtimer-mode'){
+        gMode = t.value;
+  qs('#gtimer-existente-box')?.classList.toggle('hidden', gMode!=='existente');
+  qs('#gtimer-rfid-box')?.classList.toggle('hidden', gMode!=='rfid');
+  if(gLote){ gLote.disabled = true; }
+      }
+    });
+  }
+
+  // RFID derive lote (works for both sections; searches active modal section table)
+  gRfidInput?.addEventListener('input', ()=>{
+    // Enforce max 24 chars, strip whitespace
+    let val = (gRfidInput.value||'').replace(/\s+/g,'');
+    if(val.length>24){ val = val.slice(0,24); }
+    gRfidInput.value = val;
+    if(val.length===24){
+      // Look up its lote in current atemperamiento table/grid
+      let loteFound = '';
+      const tableSel = currentSectionForModal==='congelamiento' ? '#tabla-cong tbody tr' : '#tabla-atem tbody tr';
+      document.querySelectorAll(tableSel).forEach(tr=>{
+        const tds = tr.querySelectorAll('td');
+        if(tds.length>=3){
+          const rfid = tds[0].textContent.trim();
+          if(rfid===val){ loteFound = tds[2].textContent.trim(); }
+        }
+      });
+      if(loteFound){
+        gRfidInput.setAttribute('data-derived-lote', loteFound);
+        if(gRfidStatus) gRfidStatus.textContent = 'Lote detectado: '+loteFound;
+      } else {
+        gRfidInput.removeAttribute('data-derived-lote');
+        if(gRfidStatus) gRfidStatus.textContent = 'RFID no encontrada o sin lote.';
+      }
+    } else {
+      gRfidInput.removeAttribute('data-derived-lote');
+      if(gRfidStatus) gRfidStatus.textContent = '';
+    }
   });
 
   // Item timer actions (event delegation on both tables)
@@ -440,7 +564,7 @@
     const startR = t.closest('[data-item-start]');
     const clearR = t.closest('[data-item-clear]');
   const restartR = t.closest('[data-item-restart]');
-  const bodegaR = t.closest('[data-item-bodega]');
+  // const bodegaR = t.closest('[data-item-bodega]');
     if(startR){
       const rfid = startR.getAttribute('data-item-start');
       const section = startR.getAttribute('data-section');
@@ -475,10 +599,6 @@
           gDlg?.showModal?.();
           setTimeout(()=>gLote?.focus?.(), 50);
         });
-    } else if(bodegaR){
-      const rfid = bodegaR.getAttribute('data-item-bodega');
-      fetch('/operacion/preacond/return-to-bodega', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ rfid }) })
-        .then(()=>loadData());
     }
   }
   tableCongBody?.addEventListener('click', onTableClick);

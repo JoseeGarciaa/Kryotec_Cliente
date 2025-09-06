@@ -144,6 +144,10 @@
       <input id="scan-input" type="text" class="input input-bordered" placeholder="Listo para escanear..." />
       <div id="chips" class="flex flex-wrap gap-2"></div>
       <div id="scan-msg" class="text-sm text-error"></div>
+      <label id="keep-lote-row" class="flex items-center gap-2 hidden">
+        <input id="chk-keep-lote" type="checkbox" class="checkbox checkbox-sm" />
+        <span class="text-sm">Conservar lote al pasar a Atemperamiento</span>
+      </label>
     </div>
 
     <div class="modal-action">
@@ -162,9 +166,41 @@
     <p class="text-sm opacity-70">Se aplicará a los TICs listados actualmente en <span id="gtimer-section-label"></span> (<span id="gtimer-count">0</span> TICs).</p>
     <div class="mt-4 grid gap-3">
       <label class="form-control">
-        <span class="label-text">Número de lote</span>
-        <input id="gtimer-lote" type="text" class="input input-bordered" placeholder="Ej. 20250905" />
+        <span class="label-text">Número de lote (auto)</span>
+        <input id="gtimer-lote" type="text" class="input input-bordered" placeholder="Se generará automáticamente" disabled readonly />
+        <span class="text-xs opacity-60 mt-1" id="gtimer-lote-hint">Ej. 05092025-001 (se asigna al confirmar si eliges 'Nuevo lote')</span>
       </label>
+      <!-- Modo de inicio (solo visible en Atemperamiento) -->
+      <div id="gtimer-modes" class="hidden border border-base-300/40 rounded-lg p-3 space-y-2 bg-base-200/30">
+        <div class="text-xs uppercase tracking-wide opacity-60">Modo</div>
+        <label class="flex items-center gap-2 cursor-pointer text-sm">
+          <input type="radio" name="gtimer-mode" value="nuevo" class="radio radio-xs" checked />
+          <span>Nuevo lote (solo TICs sin lote)</span>
+        </label>
+        <label class="flex items-center gap-2 cursor-pointer text-sm">
+          <input type="radio" name="gtimer-mode" value="existente" class="radio radio-xs" />
+          <span>Usar lote existente</span>
+        </label>
+        <label class="flex items-center gap-2 cursor-pointer text-sm">
+          <input type="radio" name="gtimer-mode" value="rfid" class="radio radio-xs" />
+          <span>Escanear RFID para usar su lote</span>
+        </label>
+        <div id="gtimer-existente-box" class="hidden pt-2">
+          <label class="form-control">
+            <span class="label-text">Selecciona lote existente</span>
+            <select id="gtimer-lote-exist" class="select select-bordered">
+              <option value="">-- Selecciona --</option>
+            </select>
+          </label>
+        </div>
+        <div id="gtimer-rfid-box" class="hidden pt-2">
+          <label class="form-control">
+            <span class="label-text">Escanear RFID (tomará su lote)</span>
+            <input id="gtimer-rfid-lote" type="text" class="input input-bordered" placeholder="Escanea RFID (24 chars)" />
+          </label>
+          <div class="text-xs opacity-70" id="gtimer-rfid-lote-status"></div>
+        </div>
+      </div>
       <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
         <label class="form-control">
           <span class="label-text">Duración (horas)</span>
