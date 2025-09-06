@@ -185,10 +185,10 @@
           const tics = items.filter(i=>i.rol==='tic');
           const cube = items.filter(i=>i.rol==='cube');
           const div=document.createElement('div');
-          div.className='rounded-lg border border-base-300/40 bg-base-200/10 p-3 flex flex-col gap-2 hover:border-primary/60 transition cursor-pointer';
+          div.className='caja-card rounded-lg border border-base-300/40 bg-base-200/10 p-3 flex flex-col gap-2 hover:border-primary/60 transition cursor-pointer';
+          div.dataset.cajaId = c.caja_id;
           div.innerHTML=`<div class='flex items-center justify-between text-xs opacity-60'><span>Caja</span><span class='font-mono'>#${c.caja_id}</span></div>
             <div class='font-semibold text-sm truncate'>${c.lote||''}</div>
-            <div class='text-[10px] opacity-70'>Litraje: ${c.litraje||'-'}</div>
             <div class='flex flex-wrap gap-1 text-[9px]'>
               ${vipFirst.map(v=>`<span class='badge badge-info badge-xs'>VIP</span>`).join('')}
               ${tics.map(t=>`<span class='badge badge-warning badge-xs'>TIC</span>`).join('')}
@@ -237,6 +237,44 @@
   }
   btnViewCards?.addEventListener('click', ()=>{ vistaTexto=false; renderCajas(); updateViewButtons(); });
   btnViewText?.addEventListener('click', ()=>{ vistaTexto=true; renderCajas(); updateViewButtons(); });
+
+  // =========== Modal Detalle Caja ===========
+  const modalCaja = document.getElementById('modal-caja-detalle');
+  function openCajaDetalle(cajaId){
+    const caja = cajas.find(c=>c.caja_id===cajaId);
+    if(!caja || !modalCaja) return;
+    const items = cajaItems.filter(i=>i.caja_id===cajaId);
+    items.sort((a,b)=>{
+      const rank={vip:0,tic:1,cube:2}; return (rank[a.rol]??9)-(rank[b.rol]??9);
+    });
+    const setText=(id,val)=>{ const el=document.getElementById(id); if(el) el.textContent=val; };
+    setText('detalle-caja-lote', caja.lote||'');
+    setText('detalle-caja-id', '#'+caja.caja_id);
+    setText('detalle-caja-comp', `VIP:${caja.vips||0} · TIC:${caja.tics||0} · CUBE:${caja.cubes||0}`);
+    setText('detalle-caja-fecha', formatFecha(caja.created_at));
+    const cont = document.getElementById('detalle-caja-items');
+    if(cont){
+      cont.innerHTML='';
+      items.forEach(it=>{
+        const div=document.createElement('div');
+        div.className='detalle-item border rounded-lg p-3 text-[11px] space-y-1 '+it.rol;
+        const colorCls = it.rol==='vip'?'badge-info': it.rol==='tic'?'badge-warning':'badge-accent';
+  div.innerHTML=`<div><span class='badge ${colorCls} badge-xs mr-1'>${it.rol.toUpperCase()}</span></div>
+          <code class='block bg-base-300/40 rounded px-1 py-0.5 text-[10px] font-mono overflow-x-auto'>${it.rfid}</code>`;
+        cont.appendChild(div);
+      });
+    }
+    modalCaja.classList.remove('hidden');
+  }
+  function closeCajaDetalle(){ modalCaja?.classList.add('hidden'); }
+  document.addEventListener('click', (e)=>{
+    const card = e.target.closest('.caja-card');
+    if(card && card.dataset.cajaId){ openCajaDetalle(Number(card.dataset.cajaId)); }
+    if(e.target.matches('[data-close="detalle"]')){ closeCajaDetalle(); }
+    if(e.target===modalCaja?.querySelector('[data-close="detalle"]')){ closeCajaDetalle(); }
+    if(e.target===modalCaja){ closeCajaDetalle(); }
+  });
+  function formatFecha(str){ if(!str) return '-'; const d=new Date(str); if(isNaN(d.getTime())) return '-'; return d.toLocaleString(); }
 
   let originalEnsHeadHTML = null;
   function ajustarHeadersEns(){

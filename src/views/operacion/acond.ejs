@@ -134,3 +134,25 @@
   <!-- hidden input removed; usamos scan-box visible -->
   </div>
 </dialog>
+
+<!-- Modal Detalle Caja -->
+<div id="modal-caja-detalle" class="hidden">
+  <div class="fixed inset-0 bg-black/60 z-40 flex items-start justify-center overflow-auto py-10" data-close="detalle">
+    <div class="bg-base-200 border border-base-300/50 rounded-xl shadow-xl w-full max-w-3xl p-5 relative z-50" role="dialog" aria-modal="true">
+      <div class="flex items-start justify-between mb-3">
+        <h3 id="detalle-caja-titulo" class="text-lg font-semibold">Caja</h3>
+        <button class="btn btn-xs btn-ghost" data-close="detalle">✕</button>
+      </div>
+      <div class="grid sm:grid-cols-2 md:grid-cols-3 gap-3 text-xs mb-4" id="detalle-meta">
+        <div><span class="opacity-60">Nombre caja:</span> <span id="detalle-caja-lote" class="font-mono"></span></div>
+        <div><span class="opacity-60">ID interno:</span> <span id="detalle-caja-id" class="font-mono"></span></div>
+        <div><span class="opacity-60">Composición:</span> <span id="detalle-caja-comp"></span></div>
+        <div><span class="opacity-60">Creada:</span> <span id="detalle-caja-fecha"></span></div>
+      </div>
+      <div id="detalle-caja-items" class="grid sm:grid-cols-2 md:grid-cols-3 gap-4 mb-2"></div>
+      <div class="flex justify-end pt-2">
+        <button class="btn btn-sm" data-close="detalle">Cerrar</button>
+      </div>
+    </div>
+  </div>
+</div>
