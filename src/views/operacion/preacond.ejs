@@ -1,12 +1,26 @@
 <% title = 'Registrar Pre Acondicionamiento' %>
 
 <div class="mb-6">
-  <h1 class="text-3xl font-bold">Registrar Pre Acondicionamiento</h1>
-  <div class="mt-1 text-success text-sm flex items-center gap-2">
-    <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" viewBox="0 0 24 24" fill="currentColor">
-      <path d="M12 18.5a2.5 2.5 0 1 0 0 5 2.5 2.5 0 0 0 0-5Zm-7.07-5.57a.75.75 0 0 0-1.06 1.06 12.03 12.03 0 0 1 17.18 0 .75.75 0 0 0 1.06-1.06 13.53 13.53 0 0 0-17.18 0Zm3.54-3.54a.75.75 0 1 0-1.06 1.06 8.49 8.49 0 0 1 12.02 0 .75.75 0 0 0 1.06-1.06 9.99 9.99 0 0 0-12.02 0ZM12 2.5c-3.03 0-5.92 1.18-8.09 3.34a.75.75 0 1 0 1.06 1.06A10.47 10.47 0 0 1 12 4c2.8 0 5.43 1.09 7.41 2.9a.75.75 0 1 0 1.02-1.1A12 12 0 0 0 12 2.5Z"/>
-    </svg>
-    <span>Sincronizado</span>
+  <div class="flex items-center justify-between flex-wrap gap-3">
+    <div>
+      <h1 class="text-3xl font-bold">Registrar Pre Acondicionamiento</h1>
+      <div class="mt-1 text-success text-sm flex items-center gap-2">
+        <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" viewBox="0 0 24 24" fill="currentColor">
+          <path d="M12 18.5a2.5 2.5 0 1 0 0 5 2.5 2.5 0 0 0 0-5Zm-7.07-5.57a.75.75 0 0 0-1.06 1.06 12.03 12.03 0 0 1 17.18 0 .75.75 0 0 0 1.06-1.06 13.53 13.53 0 0 0-17.18 0Zm3.54-3.54a.75.75 0 1 0-1.06 1.06 8.49 8.49 0 0 1 12.02 0 .75.75 0 0 0 1.06-1.06 9.99 9.99 0 0 0-12.02 0ZM12 2.5c-3.03 0-5.92 1.18-8.09 3.34a.75.75 0 1 0 1.06 1.06A10.47 10.47 0 0 1 12 4c2.8 0 5.43 1.09 7.41 2.9a.75.75 0 1 0 1.02-1.1A12 12 0 0 0 12 2.5Z"/>
+        </svg>
+        <span>Sincronizado</span>
+      </div>
+    </div>
+    <div class="flex items-center gap-2">
+      <div class="join bg-base-200/60 rounded-xl p-1">
+        <button id="btn-view-grid" class="btn btn-sm btn-ghost join-item" title="Vista de cubos">
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" class="w-5 h-5" fill="currentColor"><path d="M3 3h8v8H3V3zm10 0h8v8h-8V3zM3 13h8v8H3v-8zm10 0h8v8h-8v-8z"/></svg>
+        </button>
+        <button id="btn-view-list" class="btn btn-sm btn-ghost join-item" title="Vista de lista">
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" class="w-5 h-5" fill="currentColor"><path d="M4 6h16v2H4V6zm0 5h16v2H4v-2zm0 5h16v2H4v-2z"/></svg>
+        </button>
+      </div>
+    </div>
   </div>
   </div>
 
@@ -35,13 +49,18 @@
       </div>
     </div>
 
-    <div class="mt-4">
-  <label class="input input-bordered flex items-center gap-2 w-full">
-        <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 opacity-70" viewBox="0 0 24 24" fill="currentColor"><path d="M10 2a8 8 0 105.293 14.293l4.207 4.207a1 1 0 001.414-1.414l-4.207-4.207A8 8 0 0010 2zm0 2a6 6 0 110 12A6 6 0 0110 4z"/></svg>
-        <input id="search-cong" type="text" class="grow" placeholder="Buscar por RFID, nombre o lote..." />
-      </label>
-    </div>
+  <!-- Search shared for both views (Congelamiento) -->
+  <div class="mt-4">
+    <label class="input input-bordered flex items-center gap-2 w-full">
+      <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 opacity-70" viewBox="0 0 24 24" fill="currentColor"><path d="M10 2a8 8 0 105.293 14.293l4.207 4.207a1 1 0 001.414-1.414l-4.207-4.207A8 8 0 0010 2zm0 2a6 6 0 110 12A6 6 0 0110 4z"/></svg>
+      <input id="search-cong" type="text" class="grow" placeholder="Buscar por RFID, nombre o lote..." />
+    </label>
+  </div>
 
+  <div id="wrap-grid-cong" class="mt-4">
+    <div id="lotes-cong" class="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3"></div>
+  </div>
+  <div id="wrap-list-cong" class="mt-4">
     <div class="overflow-x-auto mt-4">
       <table id="tabla-cong" class="table table-xs sm:table-sm">
         <thead>
@@ -53,9 +72,10 @@
             <th>CRONÓMETRO</th>
           </tr>
         </thead>
-  <tbody></tbody>
+        <tbody></tbody>
       </table>
     </div>
+  </div>
   </div>
   </div>
 
@@ -84,13 +104,18 @@
       </div>
     </div>
 
+  <!-- Search shared for both views (Atemperamiento) -->
   <div class="mt-4">
-      <label class="input input-bordered flex items-center gap-2 w-full">
-        <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 opacity-70" viewBox="0 0 24 24" fill="currentColor"><path d="M10 2a8 8 0 105.293 14.293l4.207 4.207a1 1 0 001.414-1.414l-4.207-4.207A8 8 0 0010 2zm0 2a6 6 0 110 12A6 6 0 0110 4z"/></svg>
-    <input id="search-atem" type="text" class="grow" placeholder="Buscar por RFID, nombre o lote..." />
-      </label>
-    </div>
+    <label class="input input-bordered flex items-center gap-2 w-full">
+      <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 opacity-70" viewBox="0 0 24 24" fill="currentColor"><path d="M10 2a8 8 0 105.293 14.293l4.207 4.207a1 1 0 001.414-1.414l-4.207-4.207A8 8 0 0010 2zm0 2a6 6 0 110 12A6 6 0 0110 4z"/></svg>
+      <input id="search-atem" type="text" class="grow" placeholder="Buscar por RFID, nombre o lote..." />
+    </label>
+  </div>
 
+  <div id="wrap-grid-atem" class="mt-4">
+    <div id="lotes-atem" class="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3"></div>
+  </div>
+  <div id="wrap-list-atem" class="mt-4">
     <div class="overflow-x-auto mt-4">
       <table id="tabla-atem" class="table table-xs sm:table-sm">
         <thead>
@@ -102,9 +127,10 @@
             <th>CRONÓMETRO</th>
           </tr>
         </thead>
-  <tbody></tbody>
+        <tbody></tbody>
       </table>
     </div>
+  </div>
   </div>
   </div>
 

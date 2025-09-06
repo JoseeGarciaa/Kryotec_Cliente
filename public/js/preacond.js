@@ -3,6 +3,8 @@
   const qs = (sel)=>document.querySelector(sel);
   const tableCongBody = qs('#tabla-cong tbody');
   const tableAtemBody = qs('#tabla-atem tbody');
+  const lotesCong = qs('#lotes-cong');
+  const lotesAtem = qs('#lotes-atem');
   const countCong = qs('#count-cong');
   const countAtem = qs('#count-atem');
   const qtyCongEl = qs('#qty-cong');
@@ -13,6 +15,14 @@
   const timerAtemEl = qs('#timer-atem');
   const searchCong = qs('#search-cong');
   const searchAtem = qs('#search-atem');
+  // search bars are now outside wrappers and should remain visible in any view
+  // View toggle controls
+  const btnViewGrid = qs('#btn-view-grid');
+  const btnViewList = qs('#btn-view-list');
+  const wrapGridCong = qs('#wrap-grid-cong');
+  const wrapListCong = qs('#wrap-list-cong');
+  const wrapGridAtem = qs('#wrap-grid-atem');
+  const wrapListAtem = qs('#wrap-list-atem');
 
   // Modal elements
   const dlg = qs('#dlg-scan');
@@ -63,6 +73,8 @@
       serverNowOffsetMs = Date.now() - serverNow;
   render(tableCongBody, j.congelamiento, 'No hay TICs en congelamiento', 'congelamiento');
   render(tableAtemBody, j.atemperamiento, 'No hay TICs en atemperamiento', 'atemperamiento');
+  renderLotes(lotesCong, j.congelamiento, 'congelamiento');
+  renderLotes(lotesAtem, j.atemperamiento, 'atemperamiento');
   const nCong = j.congelamiento.length;
   const nAtem = j.atemperamiento.length;
   countCong.textContent = `(${nCong} de ${nCong})`;
@@ -73,6 +85,58 @@
       setupSectionTimer('atemperamiento', j.timers?.atemperamiento || null);
     }catch(e){ console.error(e); }
     finally{ setSpin('cong', false); setSpin('atem', false); }
+  }
+
+  function renderLotes(container, rows, section){
+    if(!container) return;
+    const groups = new Map();
+    for(const r of rows||[]){
+      const lote = (r.item_lote || r.lote || '').trim();
+      const key = lote || '(sin lote)';
+      if(!groups.has(key)) groups.set(key, []);
+      groups.get(key).push(r);
+    }
+    const cards = [];
+    groups.forEach((items, key)=>{
+      const count = items.length;
+      const header = `
+        <div class="rounded-xl p-3 bg-gradient-to-r ${section==='congelamiento'?'from-sky-500 to-indigo-500':'from-amber-500 to-rose-500'} text-white flex items-center justify-between">
+          <div>
+            <div class="text-base font-semibold">${key === '(sin lote)' ? 'Sin lote' : 'Lote ' + key}</div>
+            <div class="badge badge-outline badge-sm border-white/40 text-white/90 bg-white/10">${count} TIC${count!==1?'s':''}</div>
+          </div>
+          <div class="opacity-90">
+            ${section==='congelamiento'
+              ? '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" class="w-6 h-6" fill="currentColor"><path d="M11 2h2v20h-2zM3.8 6.2l1.4-1.4 14 14-1.4 1.4-14-14zM18.8 4.8l1.4 1.4-14 14-1.4-1.4 14-14z"/></svg>'
+              : '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" class="w-6 h-6" fill="currentColor"><path d="M13 5.08V4a1 1 0 10-2 0v1.08A7.002 7.002 0 005 12a7 7 0 1014 0 7.002 7.002 0 00-6-6.92zM12 20a5 5 0 01-5-5c0-2.5 1.824-4.582 4.2-4.93V4h1.6v6.07C15.176 10.418 17 12.5 17 15a5 5 0 01-5 5z"/></svg>'}
+          </div>
+        </div>`;
+      const list = items.map(it=>{
+        const isCompleted = /Congelado|Atemperado/i.test(it.sub_estado||'');
+        const started = it.started_at ? new Date(it.started_at).getTime() : null;
+        const duration = Number(it.duration_sec)||0;
+        const active = !!it.item_active && !!started && duration>0;
+        const tableId = section==='congelamiento'?'tabla-cong':'tabla-atem';
+        const timerId = `tm-card-${tableId}-${it.rfid}`;
+        const timeBadge = active ? `<span class="badge ${isCompleted?'badge-info':'badge-neutral'} badge-xs"><span id="${timerId}">00:00:00</span></span>` : '';
+        const displayName = (it.nombre_unidad||'').trim() || 'TIC';
+        return `<li class="flex items-center justify-between py-1">
+                  <span class="truncate text-sm">${displayName}</span>
+                  <span class="flex items-center gap-2">${timeBadge}
+                    <button class="btn btn-ghost btn-xs ${active?'text-error':'text-success'}" ${active?`data-item-clear="${it.rfid}"`:`data-item-start="${it.rfid}"`} data-section="${section}">
+                      ${active?'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" class="w-4 h-4" fill="currentColor"><path d="M6 6h12v12H6z"/></svg>':'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" class="w-4 h-4" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>'}
+                    </button>
+                  </span>
+                </li>`;
+      }).join('');
+    cards.push(`<div class="card shadow-lg border border-base-300/60 bg-base-200 rounded-2xl">
+        <div class="card-body">
+          ${header}
+      <ul class="mt-3 divide-y divide-base-300/60 max-h-56 overflow-auto pr-1 rounded-md">${list}</ul>
+        </div>
+      </div>`);
+    });
+    container.innerHTML = cards.join('');
   }
 
   function render(tbody, rows, emptyText, section){
@@ -132,6 +196,10 @@
             if(duration>0){
               const remaining = Math.max(0, duration - Math.floor((now - started)/1000));
               el.textContent = fmt(remaining*1000);
+              // Mirror ticking into lot-card timer if present
+              const cardId = 'tm-card-' + id.substring(3);
+              const cardEl = document.getElementById(cardId);
+              if(cardEl){ cardEl.textContent = el.textContent; }
               const badge = el.closest('.badge');
               if(badge){
                 badge.classList.toggle('badge-info', remaining===0);
@@ -142,6 +210,19 @@
                 // neutral when not info/warn/danger
                 const neutral = remaining>300;
                 badge.classList.toggle('badge-neutral', neutral);
+              }
+              // Mirror badge state to card badge if present
+              if(cardEl){
+                const cBadge = cardEl.closest('.badge');
+                if(cBadge){
+                  cBadge.classList.toggle('badge-info', remaining===0);
+                  const warn = remaining>0 && remaining<=300;
+                  const danger = remaining>0 && remaining<=60;
+                  cBadge.classList.toggle('badge-warning', warn && !danger);
+                  cBadge.classList.toggle('badge-error', danger);
+                  const neutral = remaining>300;
+                  cBadge.classList.toggle('badge-neutral', neutral);
+                }
               }
               if(remaining===0 && !tr.getAttribute('data-done')){
                 tr.setAttribute('data-done','1');
@@ -300,22 +381,31 @@
 
   gConfirm?.addEventListener('click', async ()=>{
     const lote = (gLote?.value||'').trim();
-    const minutes = Number(gMin?.value||'');
-    if(!lote || !Number.isFinite(minutes) || minutes<=0){ if(gMsg) gMsg.textContent='Completa lote y minutos.'; return; }
+    const hours = Number(gHr?.value||'0');
+    const minutes = Number(gMin?.value||'0');
+    const totalMinutes = (isFinite(hours)?Math.max(0,hours):0)*60 + (isFinite(minutes)?Math.max(0,minutes):0);
+    if(!lote || !Number.isFinite(totalMinutes) || totalMinutes<=0){ if(gMsg) gMsg.textContent='Completa lote y duración (> 0).'; return; }
     if(pendingItemStart){
       const { section, rfid } = pendingItemStart;
       pendingItemStart = null;
       gDlg?.close?.();
-      const durationSec = Math.round(minutes*60);
+      const durationSec = Math.round(totalMinutes*60);
       await fetch('/operacion/preacond/item-timer/start', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ section, rfid, durationSec, lote }) });
       await loadData();
       return;
     }
-    // Collect visible RFIDs in that section now
+    // Collect RFIDs in that section now, only those without active timer and sin lote
     const tbody = currentSectionForModal==='congelamiento' ? tableCongBody : tableAtemBody;
-    const rfids = Array.from(tbody?.querySelectorAll('tr>td:first-child')||[]).map(td=>td.textContent?.trim()).filter(Boolean);
+    const rfids = Array.from(tbody?.querySelectorAll('tr')||[]).map(tr=>{
+      const tds = tr.querySelectorAll('td');
+      if(!tds || tds.length===1) return null;
+      const rfid = tds[0].textContent?.trim();
+      const hasActive = tr.hasAttribute('data-timer-started');
+      const hasLote = !!tr.querySelector('.badge-ghost');
+      return (!hasActive && !hasLote) ? rfid : null;
+    }).filter(Boolean);
     gDlg?.close?.();
-    await startSectionTimer(currentSectionForModal, lote, minutes, rfids);
+    await startSectionTimer(currentSectionForModal, lote, totalMinutes, rfids);
   });
 
   // Item timer actions (event delegation on both tables)
@@ -331,8 +421,9 @@
       currentSectionForModal = section;
       if(gSectionLabel) gSectionLabel.textContent = '1 TIC seleccionado';
       if(gMsg) gMsg.textContent = '';
-      if(gLote) gLote.value = '';
-      if(gMin) gMin.value = '';
+  if(gLote) gLote.value = '';
+  if(gHr) gHr.value = '';
+  if(gMin) gMin.value = '';
       gDlg?.showModal?.();
       setTimeout(()=>gLote?.focus?.(), 50);
     } else if(clearR){
@@ -344,10 +435,31 @@
   }
   tableCongBody?.addEventListener('click', onTableClick);
   tableAtemBody?.addEventListener('click', onTableClick);
+  // Also attach to lot-card containers
+  lotesCong?.addEventListener('click', onTableClick);
+  lotesAtem?.addEventListener('click', onTableClick);
 
   // Also primary buttons
   qs('#btn-add-cong')?.addEventListener('click', ()=>openModal('congelamiento'));
   qs('#btn-add-atem')?.addEventListener('click', ()=>openModal('atemperamiento'));
+
+  // Default: show grid view; allow switching to list and back
+  function setView(mode){
+    const showGrid = mode==='grid';
+    wrapGridCong?.classList.toggle('hidden', !showGrid);
+    wrapGridAtem?.classList.toggle('hidden', !showGrid);
+    wrapListCong?.classList.toggle('hidden', showGrid);
+    wrapListAtem?.classList.toggle('hidden', showGrid);
+    btnViewGrid?.classList.toggle('btn-active', showGrid);
+    btnViewList?.classList.toggle('btn-active', !showGrid);
+    try{ localStorage.setItem('preacondViewMode', mode); }catch{}
+  }
+  btnViewGrid?.addEventListener('click', ()=>setView('grid'));
+  btnViewList?.addEventListener('click', ()=>setView('list'));
+  // Initialize view
+  let initialMode = 'grid';
+  try{ const s = localStorage.getItem('preacondViewMode'); if(s==='grid'||s==='list') initialMode=s; }catch{}
+  setView(initialMode);
 
   loadData();
 
