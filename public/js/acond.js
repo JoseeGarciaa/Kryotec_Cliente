@@ -272,14 +272,25 @@
           const div=document.createElement('div');
           div.className='caja-card rounded-lg border border-base-300/40 bg-base-200/10 p-3 flex flex-col gap-2 hover:border-primary/60 transition cursor-pointer';
           div.dataset.cajaId = c.caja_id;
-          div.innerHTML=`<div class='flex items-center justify-between text-xs opacity-60'><span>Caja</span><span class='font-mono'>#${c.caja_id}</span></div>
-            <div class='font-semibold text-sm truncate'>${c.lote||''}</div>
-            <div class='flex flex-wrap gap-1 text-[9px]'>
+          div.innerHTML=`
+            <div class='flex items-center justify-between text-[10px] tracking-wide uppercase opacity-60'>
+              <span>Caja</span><span class='font-mono'>#${c.caja_id}</span>
+            </div>
+            <div class='font-semibold text-sm leading-tight truncate pr-2' title='${c.lote||''}'>${c.lote||''}</div>
+            <div class='flex flex-wrap gap-1 text-[9px] flex-1'>
               ${vipFirst.map(v=>`<span class='badge badge-info badge-xs'>VIP</span>`).join('')}
               ${tics.map(t=>`<span class='badge badge-warning badge-xs'>TIC</span>`).join('')}
               ${cube.map(cb=>`<span class='badge badge-accent badge-xs'>CUBE</span>`).join('')}
             </div>
-            <div class='mt-1'>${timerBadge}</div>`;
+            <div class='mt-auto pt-2 space-y-1 w-full'>
+              <div class='timer-progress h-1.5 w-full bg-base-300/30 rounded-full overflow-hidden'>
+                <div class='timer-bar h-full bg-gradient-to-r from-primary via-primary to-primary/70 w-0' data-caja-bar='${c.caja_id}'></div>
+              </div>
+              <div class='flex items-center justify-between text-[10px] font-mono opacity-70'>
+                <span class='inline-flex items-center gap-1'>${timerBadge}</span>
+                <span class='opacity-50'>restante</span>
+              </div>
+            </div>`;
           grid.appendChild(div);
         }
       });
@@ -420,6 +431,14 @@
         const remaining = dur - elapsed;
         const span = el.querySelector('span[id^="tm-caja-"]');
         if(span){ span.textContent = formatTimerCaja(remaining); }
+        // Barra de progreso (duración total -> 100%)
+        const bar = document.querySelector(`[data-caja-bar='${cajaId}']`);
+        if(bar){
+          const pct = Math.min(100, Math.max(0, (elapsed/dur)*100));
+          bar.style.width = pct + '%';
+          bar.classList.toggle('bg-error', remaining<=0);
+          bar.classList.toggle('bg-warning', remaining>0 && remaining<=60);
+        }
         el.classList.toggle('badge-info', remaining<=0);
         const warn = remaining>0 && remaining<=60;
         el.classList.toggle('badge-warning', warn && remaining>0);
