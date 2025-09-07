@@ -19,6 +19,10 @@
   const addClear = document.getElementById('op-add-clear');
   const addHrs = document.getElementById('op-add-hrs');
   const addMin = document.getElementById('op-add-min');
+  const bulkMsg = document.getElementById('op-bulk-msg');
+  const bulkBtn = document.getElementById('op-bulk-start');
+  const bulkHrs = document.getElementById('op-bulk-hrs');
+  const bulkMin = document.getElementById('op-bulk-min');
   const countTic = document.getElementById('op-add-count-tic');
   const countVip = document.getElementById('op-add-count-vip');
   const countCube = document.getElementById('op-add-count-cube');
@@ -101,6 +105,24 @@
   addClear?.addEventListener('click', resetAdd);
   addConfirm?.addEventListener('click', async ()=>{ if(!addCajaId) return; const dur=(Number(addHrs?.value||0)*3600)+(Number(addMin?.value||0)*60); if(dur<=0) return; addConfirm.disabled=true; if(addMsg) addMsg.textContent='Moviendo...'; try { const r= await fetch('/operacion/operacion/add/move',{ method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ caja_id: addCajaId })}); const j= await r.json(); if(!j.ok){ if(addMsg) addMsg.textContent=j.error||'Error'; addConfirm.disabled=false; return; } if(addMsg) addMsg.textContent='Caja movida'; await load(); setTimeout(()=>{ try { modal.close(); } catch{} }, 600); } catch(e){ if(addMsg) addMsg.textContent='Error moviendo'; addConfirm.disabled=false; } });
   modal?.addEventListener('close', resetAdd);
+
+  // Bulk start timer replication (same lote)
+  bulkBtn?.addEventListener('click', async ()=>{
+    const sel = dataCajas.find(c=> c.estado==='Operación' && c.timer==null); // pick first without timer
+    const hrs = Number(bulkHrs?.value||0); const mins = Number(bulkMin?.value||0);
+    const dur = (hrs*3600)+(mins*60);
+    if(!sel){ if(bulkMsg) bulkMsg.textContent='No hay caja sin cronómetro'; return; }
+    if(dur<=0){ if(bulkMsg) bulkMsg.textContent='Duración inválida'; return; }
+    bulkBtn.disabled=true; if(bulkMsg) bulkMsg.textContent='Iniciando...';
+    try {
+      const r = await fetch('/operacion/operacion/caja/timer/start-bulk',{ method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ caja_id: sel.id, durationSec: dur })});
+      const j = await r.json();
+      if(!j.ok){ if(bulkMsg) bulkMsg.textContent=j.error||'Error'; bulkBtn.disabled=false; return; }
+      if(bulkMsg) bulkMsg.textContent=`Timers iniciados (${j.cajas})`;
+      await load();
+    } catch(e){ if(bulkMsg) bulkMsg.textContent='Error'; }
+    finally { bulkBtn.disabled=false; }
+  });
 
   // Init
   load(); startPolling();

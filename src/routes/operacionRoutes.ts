@@ -33,6 +33,7 @@ router.get('/operacion', requireAuth, OperacionController.operacion);
 router.get('/operacion/data', requireAuth, OperacionController.operacionData);
 router.post('/operacion/add/lookup', requireAuth, OperacionController.operacionAddLookup);
 router.post('/operacion/add/move', requireAuth, OperacionController.operacionAddMove);
+router.post('/operacion/caja/timer/start-bulk', requireAuth, OperacionController.operacionCajaTimerStartBulk);
 router.get('/devolucion', requireAuth, OperacionController.devolucion);
 router.get('/inspeccion', requireAuth, OperacionController.inspeccion);
 // En bodega

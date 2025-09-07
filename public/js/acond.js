@@ -10,10 +10,13 @@
   contCajas: '#grid-cajas',                // card/grid view container (ajustado a markup real)
     contCajasTabla: '#cajasTablaBody',           // table view body
     contListo: '#listoDespachoBody',            // tbody for listo para despacho table
+  contListoCardsWrap: '#grid-listo-wrapper',  // wrapper grid listo
+  contListoCards: '#grid-listo',
     placeholderListo: '#listoDespachoPlaceholder', // optional dedicated placeholder div (if exists)
-    toggleVistaBtns: '[data-vista-toggle]',
+  toggleVistaBtns: '[data-vista-toggle]', // (legacy no-op)
     // Ajustado a ID real en la vista acond.ejs
     filtroInput: '#search-ensam',
+  filtroListoInput: '#search-listo',
     scanInput: '#scanInput',
     scanForm: '#scanForm',
     validarBtn: '#validarParcialBtn',
@@ -33,12 +36,14 @@
   let cajas = [];          // cajas en ensamblaje (con timers)
   let listoDespacho = [];  // items listos para despacho
   let scanBuffer = [];     // objetos escaneados (parcial)
-  let viewMode = 'table';  // 'cards' | 'table' (por defecto tabla como en la vista actual)
+  let viewMode = localStorage.getItem('acondViewMode') || 'cards';  // persist across reloads
   let pollingTimer = null;
   let tickingTimer = null;
   let serverNowOffsetMs = 0; // serverNow - clientNow to sync timers
   let lastFilteredComponentCount = 0; // para mostrar (filtrados de total)
   let totalComponentCount = 0;
+  let listoFilteredCount = 0; // nuevos contadores filtrado lista despacho
+  let listoTotalCount = 0;
 
   // ========================= UTILITIES =========================
   function qs(selector){ return document.querySelector(selector); }
@@ -72,32 +77,56 @@
   // ========================= RENDER FUNCTIONS (LISTO) =========================
   function renderListo(){
     const body = qs(sel.contListo);
-    if(!body) return;
-    if(!listoDespacho || listoDespacho.length===0){
-      renderListoEmpty();
-      return;
-    }
-    const rows = listoDespacho.map(item => {
-      // cronometro: if provided show remaining or 'Completado'
-      let chrono = '-';
-    if(item.cronometro){
-      const now = Date.now() + serverNowOffsetMs; // use server-aligned time
-        const start = item.cronometro.startsAt ? new Date(item.cronometro.startsAt).getTime() : null;
-        const end = item.cronometro.endsAt ? new Date(item.cronometro.endsAt).getTime() : null;
-        if(start && end){
-          if(item.cronometro.completedAt || now >= end){
-            chrono = 'Completado';
-          } else {
-            const rem = end - now;
-            const sec = Math.max(0, Math.floor(rem/1000));
-            const m = Math.floor(sec/60); const s = sec % 60;
-            chrono = `${m}m ${s}s`;
+    const grid = qs(sel.contListoCards);
+    if(body){
+      if(!listoDespacho || listoDespacho.length===0){
+        renderListoEmpty();
+      } else {
+  const filterValue = (qs(sel.filtroListoInput)?.value || '').trim().toLowerCase();
+  const filtered = filterValue ? listoDespacho.filter(i => (i.codigo||'').toLowerCase().includes(filterValue) || (i.nombre||'').toLowerCase().includes(filterValue) || (i.lote||'').toLowerCase().includes(filterValue)) : listoDespacho;
+  listoTotalCount = listoDespacho.length;
+  listoFilteredCount = filtered.length;
+  const rows = filtered.map(item => {
+          let chrono='-';
+          if(item.cronometro && item.cronometro.startsAt && item.cronometro.endsAt){
+            const now = Date.now() + serverNowOffsetMs;
+            const start = item.cronometro.startsAt ? new Date(item.cronometro.startsAt).getTime() : null;
+            const end = item.cronometro.endsAt ? new Date(item.cronometro.endsAt).getTime() : null;
+            if(start && end){
+              if(item.cronometro.completedAt || now >= end){ chrono='Completado'; }
+              else {
+                const rem=end-now; const sec=Math.max(0,Math.floor(rem/1000)); const m=Math.floor(sec/60); const s=sec%60; chrono=`${m}m ${s}s`;
+              }
+            }
           }
-        }
+          return `<tr class="hover">\n        <td class="text-xs font-mono">${safeHTML(item.codigo || '')}</td>\n        <td>${safeHTML(item.nombre || '')}</td>\n        <td>${safeHTML(item.estado || '')}</td>\n        <td>${safeHTML(item.lote || '')}</td>\n        <td class="text-xs">${chrono}</td>\n        <td class="uppercase">${safeHTML(item.categoria || '')}</td>\n      </tr>`;
+        }).join('');
+        body.innerHTML = rows;
       }
-    return `<tr class="hover">\n        <td class="text-xs font-mono">${safeHTML(item.codigo || '')}</td>\n        <td>${safeHTML(item.nombre || '')}</td>\n        <td>${safeHTML(item.estado || '')}</td>\n        <td>${safeHTML(item.lote || '')}</td>\n        <td class="text-xs">${chrono}</td>\n        <td class="uppercase">${safeHTML(item.categoria || '')}</td>\n      </tr>`;
-    }).join('');
-    body.innerHTML = rows;
+    }
+    if(grid){
+      if(!listoDespacho || listoDespacho.length===0){
+        grid.innerHTML = '<div class="col-span-full text-center text-xs text-gray-400 py-4">Sin items listos para despacho</div>';
+      } else {
+  const filterValue = (qs(sel.filtroListoInput)?.value || '').trim().toLowerCase();
+  const filtered = filterValue ? listoDespacho.filter(i => (i.codigo||'').toLowerCase().includes(filterValue) || (i.nombre||'').toLowerCase().includes(filterValue) || (i.lote||'').toLowerCase().includes(filterValue)) : listoDespacho;
+  // Agrupar por caja (usamos lote si existe, si no caja_id / fallback)
+  const groupsMap = new Map();
+  filtered.forEach(it=>{
+    const key = it.lote; // grouping by lote (caja)
+    if(!groupsMap.has(key)) groupsMap.set(key,{ lote: it.lote, cajaId: it.caja_id || it.cajaId || it.cajaId || it.cajaID, items:[], categorias:{}, timers:[] });
+    const g = groupsMap.get(key);
+    g.items.push(it);
+    const cat = it.categoria||'NA';
+    g.categorias[cat] = (g.categorias[cat]||0)+1;
+    if(it.cronometro){
+      g.timers.push({ startsAt: it.cronometro.startsAt, endsAt: it.cronometro.endsAt, completedAt: it.cronometro.completedAt });
+    }
+  });
+  const groups = Array.from(groupsMap.values());
+  grid.innerHTML = groups.map(g => listoCajaCardHTML(g)).join('');
+      }
+    }
   }
 
   // ========================= RENDER FUNCTIONS (CAJAS) =========================
@@ -127,20 +156,25 @@
     const remaining = msRemaining(c);
     const timerText = timerDisplay(remaining, c.timer?.completedAt);
     const progress = timerProgressPct(c);
-  return `<div class="card bg-base-100 shadow-sm border border-base-200 mb-3" data-caja-id="${safeHTML(c.id)}">\n      <div class="card-body p-4">\n        <div class="flex justify-between items-start mb-2">\n          <h2 class="card-title text-sm font-semibold">${safeHTML(c.codigoCaja||'Caja')}</h2>\n          ${timerBadgeHTML(c, remaining)}\n        </div>\n        <div class="text-xs space-y-1">\n          <div><span class="font-medium">Estado:</span> ${safeHTML(c.estado||'-')}</div>\n          <div><span class="font-medium">Creado:</span> ${formatDateTime(c.createdAt)}</div>\n          <div><span class="font-medium">Actualizado:</span> ${formatDateTime(c.updatedAt)}</div>\n        </div>\n        <div class="mt-2">\n          <progress class="progress progress-primary w-full" value="${progress}" max="100"></progress>\n          <div class="text-[10px] text-right mt-1" data-timer-text>${timerText}</div>\n        </div>\n        <div class="mt-3 flex gap-2">\n          <button class="btn btn-xs btn-outline" data-action="detalle" data-caja-id="${safeHTML(c.id)}">Detalle</button>\n          ${timerControlButtonsHTML(c)}\n        </div>\n      </div>\n    </div>`;
+  return `<div class="card bg-base-100 shadow-sm border border-base-200 mb-3" data-caja-id="${safeHTML(c.id)}">\n      <div class="card-body p-4">\n        <div class="flex justify-between items-start mb-2">\n          <h2 class="card-title text-sm font-semibold">${safeHTML(c.codigoCaja||'Caja')}</h2>\n          ${timerBadgeHTML(c, remaining)}\n        </div>\n        <div class="text-xs space-y-1">\n          <div><span class="font-medium">Estado:</span> ${safeHTML(c.estado||'-')}</div>\n          <div><span class="font-medium">Creado:</span> ${formatDateTime(c.createdAt)}</div>\n          <div><span class="font-medium">Actualizado:</span> ${formatDateTime(c.updatedAt)}</div>\n        </div>\n        <div class="mt-2">\n          <progress class="progress progress-primary w-full" value="${progress}" max="100"></progress>\n          <div class="text-[10px] text-right mt-1" data-timer-text>${timerText}</div>\n        </div>\n        <div class="mt-3 flex gap-2">\n          ${timerControlButtonsHTML(c)}\n        </div>\n      </div>\n    </div>`;
   }
 
   // ========================= VIEW TOGGLE =========================
   function updateViewVisibility(){
     const gridWrap = document.getElementById('grid-cajas-wrapper');
     const tableEl = document.getElementById('tabla-ensam');
-    const tableWrap = tableEl ? tableEl.parentElement : null; // overflow container
-    if(gridWrap) gridWrap.classList.toggle('hidden', viewMode !== 'cards');
-    if(tableWrap) tableWrap.classList.toggle('hidden', viewMode === 'cards');
-    const btnCards = document.getElementById('btn-view-cards');
-    const btnText = document.getElementById('btn-view-text');
-    if(btnCards) btnCards.classList.toggle('btn-active', viewMode === 'cards');
-    if(btnText) btnText.classList.toggle('btn-active', viewMode === 'table');
+    const tableWrap = tableEl ? tableEl.parentElement : null;
+    const listoGridWrap = document.querySelector(sel.contListoCardsWrap);
+  const listoTable = document.getElementById('tabla-listo');
+    const btnCards = document.getElementById('btn-view-cards-global');
+    const btnText = document.getElementById('btn-view-text-global');
+    const showCards = viewMode === 'cards';
+    if(gridWrap) gridWrap.classList.toggle('hidden', !showCards);
+    if(tableWrap) tableWrap.classList.toggle('hidden', showCards);
+    if(listoGridWrap) listoGridWrap.classList.toggle('hidden', !showCards);
+  if(listoTable) listoTable.classList.toggle('hidden', showCards); // ocultar solo la tabla, no su contenedor
+    if(btnCards) btnCards.classList.toggle('btn-active', showCards);
+    if(btnText) btnText.classList.toggle('btn-active', !showCards);
   }
 
   function cajaRowsHTML(c){
@@ -222,7 +256,10 @@
     const ensam = qs(sel.counts.ensamblaje);
     const listo = qs(sel.counts.listo);
   if(ensam) ensam.textContent = `(${lastFilteredComponentCount} de ${totalComponentCount})`;
-  if(listo) listo.textContent = `(${listoDespacho.length} de ${listoDespacho.length})`;
+  if(listo){
+    if(listoTotalCount===0){ listo.textContent = '(0 de 0)'; }
+    else listo.textContent = `(${listoFilteredCount} de ${listoTotalCount})`;
+  }
   }
 
   // ========================= FILTER =========================
@@ -264,8 +301,26 @@
   }
 
   function startPolling(){
-    stopPolling();
-    pollingTimer = setInterval(loadData, 8000); // 8s
+    if(pollInterval) clearInterval(pollInterval);
+    pollInterval = setInterval(()=>{ loadData(); }, 12000);
+    // local lightweight ticking of visible countdown (every second) without hitting server
+    setInterval(()=>{
+      const timersByCaja = {};
+      listoDespacho.forEach(it=>{ if(it.caja_id && it.cronometro && it.cronometro.startsAt && it.cronometro.endsAt){ if(!timersByCaja[it.caja_id]) timersByCaja[it.caja_id]=it.cronometro; }});
+      document.querySelectorAll('[data-timer-chrono]').forEach(el=>{
+        if(!(el instanceof HTMLElement)) return;
+        const cajaId = el.getAttribute('data-caja-id');
+        const t = cajaId ? timersByCaja[cajaId] : null;
+        if(!t) return;
+        const now = Date.now() + serverNowOffsetMs;
+        const end = new Date(t.endsAt).getTime();
+        if(now>=end){ el.textContent='Finalizado'; el.className='badge badge-warning badge-xs font-mono'; return; }
+        const remMs = end-now; const sec = Math.max(0, Math.floor(remMs/1000)); const mm=Math.floor(sec/60); const ss=sec%60;
+        el.textContent = `${mm}m ${ss.toString().padStart(2,'0')}s`;
+        let cls='badge-info'; if(sec<=60) cls='badge-error'; else if(sec<=300) cls='badge-warning';
+        el.className = `badge ${cls} badge-xs font-mono`;
+      });
+    },1000);
   }
   function stopPolling(){ if(pollingTimer) clearInterval(pollingTimer); pollingTimer = null; }
 
@@ -314,10 +369,6 @@
     }
     if(modal){ modal.classList.add('modal-open'); }
   }
-  function closeCajaDetalle(){
-    const modal = qs(sel.modal);
-    if(modal){ modal.classList.remove('modal-open'); }
-  }
   function cajaDetalleHTML(c){
     const comps = (c.componentes||[]).map(cc=> `<li class="leading-tight">${safeHTML(cc.tipo||'')} - <span class="font-mono">${safeHTML(cc.codigo||'')}</span></li>`).join('');
     return `\n      <h3 class="font-semibold mb-2">${safeHTML(c.codigoCaja||'Caja')}</h3>\n      <div class="text-xs space-y-1 mb-2">\n        <div><span class="font-medium">Estado:</span> ${safeHTML(c.estado||'-')}</div>\n        <div><span class="font-medium">Creado:</span> ${formatDateTime(c.createdAt)}</div>\n        <div><span class="font-medium">Actualizado:</span> ${formatDateTime(c.updatedAt)}</div>\n      </div>\n      <div><span class="font-medium text-xs">Componentes:</span>\n        <ul class="text-xs mt-1 space-y-0.5">${comps||'<li class="text-gray-400">Sin componentes</li>'}</ul>\n      </div>`;
@@ -331,7 +382,7 @@
       ul.innerHTML = '<li class="text-xs text-gray-400">Sin componentes escaneados</li>';
       return;
     }
-    ul.innerHTML = scanBuffer.map(s=> `<li class="text-xs font-mono flex justify-between items-center">${safeHTML(s.codigo)} <button class="btn btn-ghost btn-xs" data-action="scan-remove" data-codigo="${safeHTML(s.codigo)}">✕</button></li>`).join('');
+    ul.innerHTML = scanBuffer.map(s=> `<li class=\"text-xs font-mono flex justify-between items-center\">${safeHTML(s.codigo)} <button class=\"btn btn-ghost btn-xs\" data-action=\"scan-remove\" data-codigo=\"${safeHTML(s.codigo)}\">✕</button></li>`).join('');
   }
 
   function processScan(code){
@@ -347,18 +398,68 @@
     if(scanBuffer.length===0) return;
     disableBtn(sel.validarBtn, true);
     try{
-  // Backend espera { rfids: [] }
-  const res = await fetch('/operacion/acond/ensamblaje/validate',{ method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ rfids: scanBuffer.map(s=> s.codigo) })});
+      const res = await fetch('/operacion/acond/ensamblaje/validate',{ method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ rfids: scanBuffer.map(s=> s.codigo) })});
       const json = await res.json();
       if(!res.ok){ throw new Error(json.message || 'Error de validación'); }
-      // Could show validations details / highlight required pending pieces
-      // For now we just log
       console.log('[Acond] Validación parcial OK', json);
     }catch(err){
       console.error('[Acond] validarParcial error:', err);
       alert(err.message || 'Error validando');
     }finally{ disableBtn(sel.validarBtn, false); }
   }
+
+  function listoCardHTML(item){
+    let chrono='-';
+    if(item.cronometro && item.cronometro.startsAt && item.cronometro.endsAt){
+      const now = Date.now() + serverNowOffsetMs;
+      const start = item.cronometro.startsAt ? new Date(item.cronometro.startsAt).getTime() : null;
+      const end = item.cronometro.endsAt ? new Date(item.cronometro.endsAt).getTime() : null;
+      if(start && end){
+        if(item.cronometro.completedAt || now >= end){ chrono='Completado'; }
+        else {
+          const rem=end-now; const sec=Math.max(0,Math.floor(rem/1000)); const m=Math.floor(sec/60); const s=sec%60; chrono=`${m}m ${s}s`;
+        }
+      }
+    }
+    return `<div class="card bg-base-100 shadow-sm border border-base-200 p-2" data-listo-rfid="${safeHTML(item.codigo)}">
+      <div class="flex items-start justify-between mb-1">
+        <span class="font-mono text-[10px]">${safeHTML(item.codigo)}</span>
+        <span class="badge badge-ghost badge-xs uppercase">${safeHTML(item.categoria||'')}</span>
+      </div>
+      <div class="text-[11px] font-semibold leading-tight mb-1">${safeHTML(item.nombre||'-')}</div>
+      <div class="text-[10px] opacity-70 mb-1">${safeHTML(item.estado||'')}</div>
+      <div class="text-[10px] text-right">${chrono}</div>
+    </div>`;
+  }
+  // Card agrupada por caja
+  function listoCajaCardHTML(group){
+    // Solo mostrar tiempo restante sin estado Completado
+    let badgeHTML = '<span class="badge badge-ghost badge-xs">Sin timer</span>'; let actionsHTML='';
+    const timer = group.timers && group.timers.length ? group.timers[0] : null;
+    if(timer && timer.startsAt && timer.endsAt){
+      const now = Date.now() + serverNowOffsetMs;
+      const end = new Date(timer.endsAt).getTime();
+      if(now < end){
+        const remMs = end-now; const sec = Math.max(0, Math.floor(remMs/1000)); const mm=Math.floor(sec/60); const ss=sec%60;
+        const colorClass = sec<=60 ? 'badge-error' : (sec<=300 ? 'badge-warning' : 'badge-info');
+        badgeHTML = `<span class="badge ${colorClass} badge-xs font-mono" data-timer-chrono data-caja-id="${safeHTML(group.cajaId)}">${mm}m ${ss.toString().padStart(2,'0')}s</span>`;
+        actionsHTML = `<div class="flex gap-1" data-timer-actions data-caja-id="${safeHTML(group.cajaId)}">
+            <button class="btn btn-ghost btn-xs" data-action="timer-clear" data-caja-id="${safeHTML(group.cajaId)}" title="Reiniciar"><span class="material-icons text-[14px]">restart_alt</span></button>
+          </div>`;
+      } else {
+        badgeHTML = `<span class="badge badge-warning badge-xs font-mono" data-timer-chrono data-caja-id="${safeHTML(group.cajaId)}">Finalizado</span>`;
+        actionsHTML = `<div class="flex gap-1" data-timer-actions data-caja-id="${safeHTML(group.cajaId)}">
+            <button class="btn btn-ghost btn-xs" data-action="timer-clear" data-caja-id="${safeHTML(group.cajaId)}" title="Reiniciar"><span class="material-icons text-[14px]">restart_alt</span></button>
+          </div>`;
+      }
+    } else {
+      actionsHTML = `<button class="btn btn-ghost btn-xs" data-action="timer-start" data-caja-id="${safeHTML(group.cajaId)}" title="Iniciar"><span class="material-icons text-[14px]">play_arrow</span></button>`;
+    }
+    const categoriaBadges = Object.entries(group.categorias).sort().map(([k,v])=>`<span class=\"badge badge-ghost badge-xs\">${k} x${v}</span>`).join(' ');
+    const codes = group.items.slice(0,8).map(it=>`<span class=\"badge badge-neutral badge-xs font-mono\" title=\"${safeHTML(it.codigo)}\">${safeHTML(it.codigo.slice(-6))}</span>`).join(' ');
+    return `<div class=\"card bg-base-100 shadow-sm border border-base-200 p-2\" data-listo-caja=\"${safeHTML(group.lote)}\" data-caja-id=\"${safeHTML(group.cajaId)}\">\n      <div class=\"flex items-start justify-between mb-1\">\n        <span class=\"font-mono text-[10px]\">${safeHTML(group.lote)}</span>\n        <span class=\"badge badge-info badge-xs\">${group.items.length} items</span>\n      </div>\n      <div class=\"text-[10px] flex flex-wrap gap-1 mb-1\">${categoriaBadges||''}</div>\n      <div class=\"text-[10px] grid grid-cols-3 gap-1 mb-1\">${codes}</div>\n      <div class=\"flex items-center justify-between\">\n        <div class=\"text-[10px] opacity-80\">${badgeHTML}</div>\n        ${actionsHTML}\n      </div>\n    </div>`;
+  }
+  
 
   async function crearCaja(){
     if(scanBuffer.length===0){ alert('Agregue componentes primero.'); return; }
@@ -421,15 +522,17 @@
 
   // ========================= EVENTS =========================
   function bindEvents(){
-  // Toggle vista usando los IDs existentes
-  const btnCards = document.getElementById('btn-view-cards');
-  const btnText = document.getElementById('btn-view-text');
-  if(btnCards){ btnCards.addEventListener('click', ()=>{ if(viewMode!=='cards'){ viewMode='cards'; updateViewVisibility(); renderCajas(); }}); }
-  if(btnText){ btnText.addEventListener('click', ()=>{ if(viewMode!=='table'){ viewMode='table'; updateViewVisibility(); renderCajas(); }}); }
+  // Toggle global (cards/text) afecta ambos bloques
+  const btnCards = document.getElementById('btn-view-cards-global');
+  const btnText = document.getElementById('btn-view-text-global');
+  if(btnCards){ btnCards.addEventListener('click', ()=>{ if(viewMode!=='cards'){ viewMode='cards'; localStorage.setItem('acondViewMode','cards'); updateViewVisibility(); renderCajas(); renderListo(); }}); }
+  if(btnText){ btnText.addEventListener('click', ()=>{ if(viewMode!=='table'){ viewMode='table'; localStorage.setItem('acondViewMode','table'); updateViewVisibility(); renderCajas(); renderListo(); }}); }
 
     // Filtro
-    const filtro = qs(sel.filtroInput);
+  const filtro = qs(sel.filtroInput);
   if(filtro){ filtro.addEventListener('input', ()=>{ applyFilter(); updateCounts(); }); }
+  const filtroListo = qs(sel.filtroListoInput);
+  if(filtroListo){ filtroListo.addEventListener('input', ()=>{ renderListo(); updateCounts(); }); }
 
     // Scan form
     const form = qs(sel.scanForm);
@@ -457,9 +560,9 @@
       }
 
       // timer actions
-      if(t.matches('[data-action="timer-start"]')){ timerAction(t.getAttribute('data-caja-id'),'start'); }
-      if(t.matches('[data-action="timer-complete"]')){ timerAction(t.getAttribute('data-caja-id'),'complete'); }
-      if(t.matches('[data-action="timer-clear"]')){ timerAction(t.getAttribute('data-caja-id'),'clear'); }
+      if(t.matches('[data-action="timer-start"]')){ const id=t.getAttribute('data-caja-id'); if(id) timerAction(id,'start'); }
+      if(t.matches('[data-action="timer-complete"]')){ const id=t.getAttribute('data-caja-id'); if(id) timerAction(id,'complete'); }
+      if(t.matches('[data-action="timer-clear"]')){ const id=t.getAttribute('data-caja-id'); if(id) timerAction(id,'clear'); }
 
       // detalle
       if(t.matches('[data-action="detalle"]')){ openCajaDetalle(t.getAttribute('data-caja-id')); }
@@ -550,15 +653,19 @@
         const res = await fetch('/operacion/acond/ensamblaje/validate',{ method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ rfids })});
         const json = await res.json();
         if(!res.ok || !json.ok) throw new Error(json.error||'Error validando');
-        // Reconstruir sets desde respuesta valid (rol)
-        ticSet.clear(); vipSet.clear(); cubeSet.clear();
-        json.valid.forEach(v=>{ if(v.rol==='tic') ticSet.add(v.rfid); else if(v.rol==='vip') vipSet.add(v.rfid); else if(v.rol==='cube') cubeSet.add(v.rfid); });
+  // Nuevo backend devuelve { ok:true, counts:{...}, roles:[ { rfid, rol } ] }
+  const roles = Array.isArray(json.roles) ? json.roles : [];
+  // Limpiar sets y reconstruir desde roles válidos
+  ticSet.clear(); vipSet.clear(); cubeSet.clear();
+        roles.forEach(v=>{ if(v.rol==='tic') ticSet.add(v.rfid); else if(v.rol==='vip') vipSet.add(v.rfid); else if(v.rol==='cube') cubeSet.add(v.rfid); });
         renderLists(); updateStatus();
         if(msg) msg.textContent='';
-        if(json.invalid && json.invalid.length){
-          const inv = json.invalid.find(i=>i.rfid===last);
-          if(inv && msg) msg.textContent = `${inv.rfid}: ${inv.reason}`;
+        if(Array.isArray(json.invalid) && json.invalid.length){
+          // Buscar si el último escaneado está inválido
+            const inv = last ? json.invalid.find(i=>i.rfid===last) : null;
+            if(inv && msg) msg.textContent = `${inv.rfid}: ${inv.reason}`;
         }
+        console.debug('[Ensamblaje] Validación OK', json);
       } catch(e){ if(msg) msg.textContent = e.message||'Error'; }
     }
     function handleScan(force){
@@ -592,8 +699,8 @@
         try { await fetch('/operacion/acond/caja/timer/start',{ method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ caja_id: json.caja_id, durationSec: durMin*60 })}); } catch(e){ console.warn('No se pudo iniciar timer', e); }
         if(msg) msg.textContent = `Caja ${json.lote} creada`;
         await loadData();
-  setTimeout(()=>{ try { dialog.close(); } catch(_){} }, 700);
-      } catch(e){ if(msg) msg.textContent = e.message||'Error creando'; }
+  setTimeout(()=>{ try { dialog.close(); } catch { } }, 700);
+      } catch(e){ if(msg) msg.textContent = e.message || 'Error creando'; }
       finally { crearBtn.disabled=false; }
     });
 
