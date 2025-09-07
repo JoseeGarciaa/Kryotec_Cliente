@@ -131,53 +131,6 @@ export const OperacionController = {
       res.status(500).json({ ok:false, error: e.message || 'Error resumen kanban' });
     }
   },
-  bodega: (_req: Request, res: Response) => res.render('operacion/bodega', { title: 'Operación · En bodega' }),
-  bodegaData: async (req: Request, res: Response) => {
-    const tenant = (req as any).user?.tenant;
-    const { q: qRaw, limit: limitRaw, page: pageRaw, cat: catRaw } = req.query as any;
-    const q = qRaw ? String(qRaw).trim().slice(0, 40) : '';
-    const page = Math.max(1, parseInt(pageRaw || '1', 10));
-    let limit = Math.min(200, Math.max(10, parseInt(limitRaw || '50', 10)));
-    const offset = (page - 1) * limit;
-    const cat = catRaw ? String(catRaw).toLowerCase() : '';
-    const params: any[] = [];
-  // Aseguramos case-insensitive para 'En bodega'
-  const where: string[] = ["LOWER(ic.estado) = LOWER('En bodega')"];
-    if (q) {
-      params.push('%' + q + '%');
-      where.push('(ic.nombre_unidad ILIKE $' + params.length + ' OR ic.rfid ILIKE $' + params.length + ' OR COALESCE(ic.lote,\'\') ILIKE $' + params.length + ')');
-    }
-    const catExpr = `CASE
-      WHEN m.nombre_modelo ILIKE '%tic%' THEN 'TIC'
-      WHEN m.nombre_modelo ILIKE '%vip%' THEN 'VIP'
-      WHEN m.nombre_modelo ILIKE '%cube%' OR m.nombre_modelo ILIKE '%cubo%' THEN 'Cubes'
-      ELSE 'Otros' END`;
-    if (cat === 'tic' || cat === 'tics') where.push(`${catExpr} = 'TIC'`);
-    else if (cat === 'vip' || cat === 'vips') where.push(`${catExpr} = 'VIP'`);
-    else if (cat === 'cube' || cat === 'cubes') where.push(`${catExpr} = 'Cubes'`);
-    const whereSQL = 'WHERE ' + where.join(' AND ');
-    const items = await withTenant(tenant, (c) => c.query(
-      `SELECT ic.id, ic.rfid, ic.nombre_unidad, ic.lote, ic.sub_estado, ${catExpr} AS categoria, ic.fecha_ingreso
-         FROM inventario_credocubes ic
-         JOIN modelos m ON m.modelo_id = ic.modelo_id
-         ${whereSQL}
-         ORDER BY ic.id DESC
-         LIMIT ${limit} OFFSET ${offset}`,
-      params
-    ));
-    const countRes = await withTenant(tenant, (c) => c.query(
-      `SELECT COUNT(*)::int AS total FROM inventario_credocubes ic JOIN modelos m ON m.modelo_id = ic.modelo_id ${whereSQL}`,
-      params
-    ));
-    // Conteos diagnósticos por estado/sub_estado para ayudar cuando no hay resultados
-    const diagEstados = await withTenant(tenant, (c) => c.query(
-      `SELECT LOWER(estado) AS estado, COALESCE(sub_estado,'(null)') AS sub_estado, COUNT(*)::int AS cantidad
-         FROM inventario_credocubes
-        GROUP BY 1,2
-        ORDER BY 3 DESC`
-    ));
-    res.json({ ok: true, items: items.rows, page, limit, total: countRes.rows[0]?.total || 0, estados: diagEstados.rows });
-  },
   preacond: (_req: Request, res: Response) => res.render('operacion/preacond', { title: 'Operación · Registrar pre-acondicionamiento' }),
   acond: (_req: Request, res: Response) => res.render('operacion/acond', { title: 'Operación · Acondicionamiento' }),
   operacion: (_req: Request, res: Response) => res.render('operacion/operacion', { title: 'Operación · Operación' }),
@@ -335,52 +288,25 @@ export const OperacionController = {
     const { rfid } = req.body as any;
     const code = typeof rfid === 'string' ? rfid.trim() : '';
     if(code.length !== 24) return res.status(400).json({ ok:false, error:'RFID inválido' });
-    // Obtener lote de la TIC si está en Pre Acond Congelado o Congelamiento (estado previo)
     const row = await withTenant(tenant, (c)=> c.query(
       `SELECT lote, estado, sub_estado FROM inventario_credocubes WHERE rfid=$1`, [code]));
     if(!row.rowCount) return res.status(404).json({ ok:false, error:'No existe' });
-    const r = row.rows[0] as any;
-    if(!(r.estado==='Pre Acondicionamiento' && (r.sub_estado==='Congelado' || r.sub_estado==='Congelamiento'))){
-      return res.status(400).json({ ok:false, error:'TIC no está en estado Congelado/Congelamiento' });
+    const base = row.rows[0] as any;
+    if(!(base.estado==='Pre Acondicionamiento' && (base.sub_estado==='Congelado' || base.sub_estado==='Congelamiento'))){
+      return res.status(400).json({ ok:false, error:'TIC no está en Congelado/Congelamiento' });
     }
-    const lote = (r.lote||'').toString().trim();
-    if(!lote){
-      return res.status(400).json({ ok:false, error:'La TIC no tiene lote asignado' });
-    }
-    const list = await withTenant(tenant, (c)=> c.query(
-      `SELECT rfid, nombre_unidad, estado, sub_estado, lote
+    const lote = (base.lote||'').toString().trim();
+    if(!lote) return res.status(400).json({ ok:false, error:'La TIC no tiene lote asignado' });
+    const ticsQ = await withTenant(tenant, (c)=> c.query(
+      `SELECT ic.rfid, ic.sub_estado
          FROM inventario_credocubes ic
          JOIN modelos m ON m.modelo_id = ic.modelo_id
-        WHERE lote=$1 AND ic.estado='Pre Acondicionamiento' AND ic.sub_estado IN ('Congelado','Congelamiento') AND (m.nombre_modelo ILIKE '%tic%')
-        ORDER BY ic.id DESC LIMIT 500`, [lote]));
-    res.json({ ok:true, lote, total: list.rowCount, items: list.rows });
-  },
-
-  // Traer (mover) todo un lote de TICs congeladas a Atemperamiento (opcional conservar lote)
-  preacondLoteMove: async (req: Request, res: Response) => {
-    const tenant = (req as any).user?.tenant;
-    const { lote, keepLote } = req.body as any;
-    const loteVal = typeof lote === 'string' ? lote.trim() : '';
-    if(!loteVal) return res.status(400).json({ ok:false, error:'Lote requerido' });
-    const rows = await withTenant(tenant, (c)=> c.query(
-      `SELECT rfid FROM inventario_credocubes ic
-         JOIN modelos m ON m.modelo_id = ic.modelo_id
-        WHERE lote=$1
+        WHERE ic.lote = $1
           AND ic.estado='Pre Acondicionamiento'
-          AND ic.sub_estado = 'Congelado'
-          AND (m.nombre_modelo ILIKE '%tic%')`, [loteVal]));
-    const rfids = rows.rows.map(r=>r.rfid);
-    if(!rfids.length) return res.status(400).json({ ok:false, error:'No hay TICs congeladas en ese lote' });
-    if(keepLote){
-      await withTenant(tenant, (c)=> c.query(
-        `UPDATE inventario_credocubes SET sub_estado='Atemperamiento'
-           WHERE rfid = ANY($1::text[])`, [rfids]));
-    } else {
-      await withTenant(tenant, (c)=> c.query(
-        `UPDATE inventario_credocubes SET sub_estado='Atemperamiento', lote=NULL
-           WHERE rfid = ANY($1::text[])`, [rfids]));
-    }
-    res.json({ ok:true, moved: rfids, lote: loteVal, kept: !!keepLote });
+          AND ic.sub_estado IN ('Congelado','Congelamiento')
+          AND (m.nombre_modelo ILIKE '%tic%')
+        ORDER BY ic.rfid`, [lote]));
+    res.json({ ok:true, lote, total: ticsQ.rowCount, tics: ticsQ.rows });
   },
 
   // Validate RFIDs before moving (registro-like UX)
@@ -771,7 +697,7 @@ export const OperacionController = {
         ORDER BY ic.id DESC
         LIMIT 200`));
         // Existing cajas with litraje + items (litraje may not exist yet → fallback)
-  let cajasRows:any[] = []; let cajaItemsRows:any[] = [];
+  let cajasRows:any[] = []; let cajaItemsRows:any[];
   const nowRes = await withTenant(tenant, (c)=> c.query<{ now:string }>(`SELECT NOW()::timestamptz AS now`));
         try {
           const cajasQ = await withTenant(tenant, (c) => c.query(
@@ -940,51 +866,31 @@ export const OperacionController = {
                        )`);
       await c.query(`DELETE FROM acond_cajas c WHERE NOT EXISTS (SELECT 1 FROM acond_caja_items aci WHERE aci.caja_id=c.caja_id)`);
     });
-    const rows = await withTenant(tenant, (c) => c.query(
-      `WITH cajas_validas AS (
-         SELECT c.caja_id
-           FROM acond_cajas c
-           JOIN acond_caja_items aci ON aci.caja_id = c.caja_id
-           JOIN inventario_credocubes ic2 ON ic2.rfid = aci.rfid
-          GROUP BY c.caja_id
-         HAVING bool_and(ic2.estado='Acondicionamiento' AND ic2.sub_estado='Ensamblaje')
-       )
-       SELECT ic.rfid, ic.estado, ic.sub_estado, ic.lote, m.nombre_modelo,
-              CASE WHEN aci.rfid IS NOT NULL THEN true ELSE false END AS ya_en_caja
+    const rows = await withTenant(tenant, (c)=> c.query(
+      `SELECT ic.rfid, ic.estado, ic.sub_estado, m.nombre_modelo,
+              EXISTS(SELECT 1 FROM acond_caja_items aci WHERE aci.rfid=ic.rfid) AS ya_en_caja
          FROM inventario_credocubes ic
          JOIN modelos m ON m.modelo_id = ic.modelo_id
-    LEFT JOIN acond_caja_items aci ON aci.rfid = ic.rfid AND aci.caja_id IN (SELECT caja_id FROM cajas_validas)
         WHERE ic.rfid = ANY($1::text[])`, [codes]));
-    const valid: { rfid:string; rol:string }[] = [];
-    const invalid: { rfid:string; reason:string }[] = [];
-    let haveCube=false, haveVip=false, ticCount=0;
-    for(const code of codes){
-      if(code.length !== 24){ invalid.push({ rfid: code, reason:'Longitud distinta de 24' }); continue; }
-      const r = (rows.rows as any[]).find(x=>x.rfid===code);
-      if(!r){ invalid.push({ rfid: code, reason:'No existe' }); continue; }
-      if(r.ya_en_caja){ invalid.push({ rfid: code, reason:'Ya asignado a una caja' }); continue; }
-      const name = (r.nombre_modelo||'').toLowerCase();
-      if(/tic/.test(name)){
-        // Must be atemperado
-        if(!(r.estado === 'Pre Acondicionamiento' && r.sub_estado === 'Atemperado')){ invalid.push({ rfid: code, reason:'TIC no Atemperado' }); continue; }
-        if(ticCount>=6){ invalid.push({ rfid: code, reason:'Excede 6 TICs' }); continue; }
-        ticCount++; valid.push({ rfid: code, rol:'tic' });
-      } else if(/cube/.test(name)){
-        if(haveCube){ invalid.push({ rfid: code, reason:'Ya hay CUBE' }); continue; }
-        haveCube=true; valid.push({ rfid: code, rol:'cube' });
+    let haveCube=false, haveVip=false, ticCount=0; const roles: { rfid:string; rol:'cube'|'vip'|'tic' }[] = [];
+    for(const r of rows.rows as any[]){
+      const name=(r.nombre_modelo||'').toLowerCase();
+      if(r.ya_en_caja) return res.status(400).json({ ok:false, error:`${r.rfid} ya está en una caja` });
+      if(/cube/.test(name)){
+        if(haveCube) return res.status(400).json({ ok:false, error:'Más de un CUBE' });
+        haveCube=true; roles.push({ rfid:r.rfid, rol:'cube' });
       } else if(/vip/.test(name)){
-        if(haveVip){ invalid.push({ rfid: code, reason:'Ya hay VIP' }); continue; }
-        haveVip=true; valid.push({ rfid: code, rol:'vip' });
+        if(haveVip) return res.status(400).json({ ok:false, error:'Más de un VIP' });
+        haveVip=true; roles.push({ rfid:r.rfid, rol:'vip' });
+      } else if(/tic/.test(name)){
+        if(!(r.estado==='Pre Acondicionamiento' && r.sub_estado==='Atemperado')) return res.status(400).json({ ok:false, error:`TIC ${r.rfid} no Atemperado` });
+        ticCount++; roles.push({ rfid:r.rfid, rol:'tic' });
       } else {
-        invalid.push({ rfid: code, reason:'Modelo no permitido' });
+        return res.status(400).json({ ok:false, error:`${r.rfid} modelo no permitido` });
       }
     }
-    const complete = haveCube && haveVip && ticCount===6;
-    res.json({ ok:true, valid, invalid, complete, faltantes: {
-      cube: haveCube?0:1, vip: haveVip?0:1, tics: 6 - ticCount
-    }});
+    res.json({ ok:true, counts:{ tics: ticCount, cube: haveCube?1:0, vip: haveVip?1:0 }, roles });
   },
-
   // Create caja (atomic) with exactly 1 cube, 1 vip, 6 tics (atemperadas)
   acondEnsamblajeCreate: async (req: Request, res: Response) => {
     const tenant = (req as any).user?.tenant;
@@ -1139,21 +1045,29 @@ export const OperacionController = {
     const code = typeof rfid === 'string' ? rfid.trim() : '';
     if(code.length !== 24) return res.status(400).json({ ok:false, error:'RFID inválido' });
     try {
-      const row = await withTenant(tenant, (c)=> c.query(
-        `SELECT c.caja_id, c.lote AS caja_lote,
-                array_agg(aci.rfid ORDER BY aci.rfid) AS rfids,
-                bool_and(ic.estado='Acondicionamiento' AND ic.sub_estado='Ensamblaje') AS all_ensamblaje,
-                COUNT(*) FILTER (WHERE ic.sub_estado IN ('Lista para Despacho','Listo')) AS listos,
-                COUNT(*)::int AS total
+      // 1. Obtener caja_id desde el RFID escaneado
+      const cajaRow = await withTenant(tenant, (c)=> c.query(
+        `SELECT c.caja_id, c.lote
            FROM acond_caja_items aci
            JOIN acond_cajas c ON c.caja_id = aci.caja_id
-           JOIN inventario_credocubes ic ON ic.rfid = aci.rfid
           WHERE aci.rfid = $1
-          GROUP BY c.caja_id, c.lote`, [code]));
-      if(!row.rowCount) return res.status(404).json({ ok:false, error:'RFID no pertenece a ninguna caja' });
-      const r:any = row.rows[0];
-      if(r.listos === r.total) return res.status(400).json({ ok:false, error:'La caja ya está marcada Lista para Despacho' });
-      res.json({ ok:true, caja_id: r.caja_id, lote: r.caja_lote, rfids: r.rfids, pendientes: r.total - r.listos, total: r.total });
+          LIMIT 1`, [code]));
+      if(!cajaRow.rowCount) return res.status(404).json({ ok:false, error:'RFID no pertenece a ninguna caja' });
+      const cajaId = cajaRow.rows[0].caja_id;
+      const lote = cajaRow.rows[0].lote;
+      // 2. Traer todos los componentes de la caja
+      const itemsQ = await withTenant(tenant, (c)=> c.query(
+        `SELECT aci.rfid, ic.estado, ic.sub_estado
+           FROM acond_caja_items aci
+           JOIN inventario_credocubes ic ON ic.rfid = aci.rfid
+          WHERE aci.caja_id = $1
+          ORDER BY aci.rfid`, [cajaId]));
+      const rfids = itemsQ.rows.map(r=> r.rfid);
+  const total: number = itemsQ.rowCount || 0;
+      let listos = 0;
+      for(const it of itemsQ.rows){ if(it.sub_estado === 'Lista para Despacho' || it.sub_estado === 'Listo') listos++; }
+      if(listos === total) return res.status(400).json({ ok:false, error:'La caja ya está marcada Lista para Despacho' });
+  res.json({ ok:true, caja_id: cajaId, lote, rfids, pendientes: (total - listos), total });
     } catch(e:any){
       res.status(500).json({ ok:false, error: e.message||'Error lookup' });
     }
@@ -1169,19 +1083,38 @@ export const OperacionController = {
         await c.query('BEGIN');
         try {
           const cajaQ = await c.query(
-            `SELECT c.caja_id
+            `SELECT c.caja_id, c.lote
                FROM acond_caja_items aci
                JOIN acond_cajas c ON c.caja_id = aci.caja_id
               WHERE aci.rfid=$1
               LIMIT 1`, [code]);
           if(!cajaQ.rowCount){ await c.query('ROLLBACK'); return res.status(404).json({ ok:false, error:'RFID no pertenece a caja' }); }
-          const cajaId = cajaQ.rows[0].caja_id;
+          const cajaId = cajaQ.rows[0].caja_id; const lote = cajaQ.rows[0].lote;
+          // Asegurar que todos los items con el mismo lote estén en la tabla de relación
+          await c.query(
+            `WITH lote_items AS (
+                SELECT ic.rfid,
+                  CASE
+                    WHEN m.nombre_modelo ILIKE '%cube%' THEN 'cube'
+                    WHEN m.nombre_modelo ILIKE '%vip%' THEN 'vip'
+                    WHEN m.nombre_modelo ILIKE '%tic%' THEN 'tic'
+                    ELSE 'tic'
+                  END AS rol
+                FROM inventario_credocubes ic
+                JOIN modelos m ON m.modelo_id = ic.modelo_id
+               WHERE ic.lote = $1
+            )
+            INSERT INTO acond_caja_items(caja_id, rfid, rol)
+            SELECT $2, li.rfid, li.rol
+              FROM lote_items li
+         LEFT JOIN acond_caja_items aci ON aci.rfid = li.rfid AND aci.caja_id = $2
+             WHERE aci.rfid IS NULL`, [lote, cajaId]);
           const upd = await c.query(
             `UPDATE inventario_credocubes ic
                 SET sub_estado='Lista para Despacho'
-               WHERE ic.rfid IN (SELECT rfid FROM acond_caja_items WHERE caja_id=$1)
+               WHERE ic.lote = $1
                  AND ic.estado='Acondicionamiento'
-                 AND ic.sub_estado='Ensamblaje'`, [cajaId]);
+                 AND ic.sub_estado='Ensamblaje'`, [lote]);
           await c.query('COMMIT');
           res.json({ ok:true, caja_id: cajaId, moved: upd.rowCount });
         } catch(e){ await c.query('ROLLBACK'); throw e; }

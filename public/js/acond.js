@@ -46,7 +46,13 @@
   function createEl(tag, cls){ const el = document.createElement(tag); if(cls) el.className = cls; return el; }
   function formatDateTime(iso){ if(!iso) return '-'; const d = new Date(iso); return d.toLocaleString(); }
   function safeHTML(str){ return (str||'').toString().replace(/[&<>\"]/g, s=>({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;"}[s])); }
-  function msRemaining(caja){ if(!caja.timer || !caja.timer.endsAt) return 0; const end = new Date(caja.timer.endsAt).getTime(); return end - Date.now() - serverNowOffsetMs; }
+  // Remaining milliseconds based on server time (serverNow = Date.now() + serverNowOffsetMs)
+  function msRemaining(caja){
+    if(!caja.timer || !caja.timer.endsAt) return 0;
+    const end = new Date(caja.timer.endsAt).getTime();
+    const serverNow = Date.now() + serverNowOffsetMs;
+    return end - serverNow;
+  }
 
   // ========================= INITIAL RENDER HELPERS =========================
   function renderInitialLoading(){
@@ -74,8 +80,8 @@
     const rows = listoDespacho.map(item => {
       // cronometro: if provided show remaining or 'Completado'
       let chrono = '-';
-      if(item.cronometro){
-        const now = Date.now();
+    if(item.cronometro){
+      const now = Date.now() + serverNowOffsetMs; // use server-aligned time
         const start = item.cronometro.startsAt ? new Date(item.cronometro.startsAt).getTime() : null;
         const end = item.cronometro.endsAt ? new Date(item.cronometro.endsAt).getTime() : null;
         if(start && end){
@@ -174,7 +180,7 @@
     if(!c.timer || !c.timer.startsAt || !c.timer.endsAt) return 0;
     const start = new Date(c.timer.startsAt).getTime();
     const end = new Date(c.timer.endsAt).getTime();
-    const now = Date.now() - serverNowOffsetMs;
+  const now = Date.now() + serverNowOffsetMs; // server-aligned current time
     if(now <= start) return 0;
     if(now >= end) return 100;
     return ((now - start) / (end - start)) * 100;

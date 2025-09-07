@@ -111,8 +111,9 @@
       setSpin('cong', true); setSpin('atem', true);
       const r = await fetch('/operacion/preacond/data', { headers: { 'Accept':'application/json' } });
       const j = await r.json();
-      const serverNow = new Date(j.now).getTime();
-      serverNowOffsetMs = Date.now() - serverNow;
+  const serverNow = new Date(j.now).getTime();
+  // Offset = serverNow - clientNow; to get current server time later: Date.now() + offset
+  serverNowOffsetMs = serverNow - Date.now();
   render(tableCongBody, j.congelamiento, 'No hay TICs en congelamiento', 'congelamiento');
   render(tableAtemBody, j.atemperamiento, 'No hay TICs en atemperamiento', 'atemperamiento');
   renderLotes(lotesCong, j.congelamiento, 'congelamiento');
@@ -260,7 +261,8 @@
   function startGlobalTick(){
     if(ticking) return; ticking = true;
     const step = ()=>{
-      const now = Date.now() - serverNowOffsetMs;
+      // Reconstruct approximate server 'now' each frame
+      const now = Date.now() + serverNowOffsetMs;
       document.querySelectorAll('tr[data-timer-started]').forEach((tr)=>{
         const started = Number(tr.getAttribute('data-timer-started')||'');
         const duration = Number(tr.getAttribute('data-item-duration')||'0');
