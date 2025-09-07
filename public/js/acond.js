@@ -227,9 +227,19 @@
   // ========================= POLLING + DATA LOAD =========================
   async function loadData(){
     try {
-      const res = await fetch('/operacion/acond/data');
-      if(!res.ok) throw new Error('Error al cargar datos');
-      const json = await res.json();
+      const res = await fetch('/operacion/acond/data', { headers: { 'Accept':'application/json' }});
+      const ct = res.headers.get('content-type')||'';
+      if(!ct.includes('application/json')){
+        const text = await res.text();
+        throw new Error(`Respuesta no JSON (status ${res.status}). Posible sesión expirada o ruta incorrecta. Primeros 120 chars: ${text.slice(0,120)}`);
+      }
+      let json;
+      try { json = await res.json(); } catch(parseErr){
+        throw new Error('No se pudo parsear JSON: '+ (parseErr?.message||parseErr));
+      }
+      if(!res.ok || json.ok===false){
+        throw new Error('Error al cargar datos: '+ (json.error||res.status));
+      }
       const serverNow = json.serverNow ? new Date(json.serverNow).getTime() : Date.now();
       serverNowOffsetMs = serverNow - Date.now();
       cajas = Array.isArray(json.cajas) ? json.cajas : [];
@@ -240,6 +250,10 @@
       ensureTicking();
     } catch(err){
       console.error('[Acond] loadData error:', err);
+      const body = qs(sel.contCajasTabla);
+      if(body && body.innerHTML.trim()===''){
+        body.innerHTML = `<tr><td colspan="6" class="text-center py-6 text-error text-xs">${safeHTML(err.message||'Error cargando')}</td></tr>`;
+      }
     }
   }
 

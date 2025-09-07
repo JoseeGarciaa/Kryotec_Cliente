@@ -12,9 +12,19 @@
   const modal = document.getElementById('op-modal-add');
   const addScan = document.getElementById('op-add-scan');
   const addSummary = document.getElementById('op-add-summary');
+  const addItemsWrap = document.getElementById('op-add-items');
   const addMsg = document.getElementById('op-add-msg');
   const addConfirm = document.getElementById('op-add-confirm');
+  const addClear = document.getElementById('op-add-clear');
+  const addHrs = document.getElementById('op-add-hrs');
+  const addMin = document.getElementById('op-add-min');
+  const countTic = document.getElementById('op-add-count-tic');
+  const countVip = document.getElementById('op-add-count-vip');
+  const countCube = document.getElementById('op-add-count-cube');
   let addCajaId = null;
+  let addFirstScan = null; // first TIC to auto-group
+  let addElegibles = []; // rfids elegibles de la caja
+  let addRoles = []; // { rfid, rol }
   let dataCajas = []; // todas cajas (operación + completadas)
   let polling=null; let ticking=null; let serverOffset=0;
 
@@ -80,11 +90,14 @@
   // Events
   filterInput?.addEventListener('input', render);
   btnAdd?.addEventListener('click', ()=>{ try { modal.showModal(); } catch{ modal.classList.remove('hidden'); } resetAdd(); setTimeout(()=> addScan?.focus(), 40); });
-  function resetAdd(){ addCajaId=null; if(addScan) addScan.value=''; if(addSummary){ addSummary.classList.add('hidden'); addSummary.innerHTML=''; } if(addMsg) addMsg.textContent=''; if(addConfirm) addConfirm.disabled=true; }
-  async function lookupAdd(code){ if(!code) return; if(addMsg) addMsg.textContent='Buscando...'; try { const r= await fetch('/operacion/operacion/add/lookup',{ method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ code })}); const j = await r.json(); if(!j.ok) { if(addMsg) addMsg.textContent=j.error||'Error'; addCajaId=null; if(addConfirm) addConfirm.disabled=true; return; } addCajaId=j.caja_id; if(addSummary){ addSummary.innerHTML = `<div class='mb-1'><strong>Caja:</strong> ${j.lote} (#${j.caja_id})</div><div class='mb-1'>Items elegibles: ${j.elegibles.length} / ${j.total}</div><div class='grid grid-cols-2 gap-1 max-h-32 overflow-auto'>${j.elegibles.map(rf=>`<span class='badge badge-ghost badge-xs font-mono'>${rf}</span>`).join('')}</div>`; addSummary.classList.remove('hidden'); } if(addMsg) addMsg.textContent=''; if(addConfirm) addConfirm.disabled=false; } catch(e){ if(addMsg) addMsg.textContent='Error'; } }
-  addScan?.addEventListener('input', ()=>{ const v=addScan.value.trim(); if(v.length===24 || /^CAJA\d+-\d{8}$/i.test(v)) lookupAdd(v); });
+  function resetAdd(){ addCajaId=null; addElegibles=[]; addRoles=[]; addFirstScan=null; if(addScan) addScan.value=''; if(addItemsWrap) addItemsWrap.innerHTML=''; if(addSummary) addSummary.classList.add('hidden'); if(addMsg) addMsg.textContent=''; if(addConfirm) addConfirm.disabled=true; updateCounts(); if(addHrs) addHrs.value=''; if(addMin) addMin.value=''; }
+  function updateCounts(){ const t=addRoles.filter(r=>r.rol==='tic').length; const v=addRoles.filter(r=>r.rol==='vip').length; const c=addRoles.filter(r=>r.rol==='cube').length; if(countTic) countTic.textContent=t; if(countVip) countVip.textContent=v; if(countCube) countCube.textContent=c; const dur=(Number(addHrs?.value||0)*3600)+(Number(addMin?.value||0)*60); const complete = t===6 && v===1 && c===1 && dur>0; addConfirm.disabled = !complete; }
+  async function lookupAdd(code){ if(!code) return; if(addMsg) addMsg.textContent='Buscando...'; try { const r= await fetch('/operacion/operacion/add/lookup',{ method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ code })}); const j = await r.json(); if(!j.ok) { if(addMsg) addMsg.textContent=j.error||'Error'; addCajaId=null; return; } addCajaId=j.caja_id; addElegibles=j.elegibles||[]; addRoles=j.roles||[]; if(addSummary){ addSummary.classList.remove('hidden'); } if(addItemsWrap){ addItemsWrap.innerHTML = addRoles.map(ro=>`<span class='badge badge-outline badge-xs font-mono' data-rfid='${ro.rfid}' data-rol='${ro.rol}'>${ro.rol.toUpperCase()} · ${ro.rfid}</span>`).join(''); } if(addMsg) addMsg.textContent=`Caja ${j.lote} detectada`; updateCounts(); } catch(e){ if(addMsg) addMsg.textContent='Error'; } }
+  addScan?.addEventListener('input', ()=>{ const v=addScan.value.trim(); if(v.length===24 || /^CAJA\d+-\d{8}$/i.test(v)) { lookupAdd(v); addScan.select(); } });
   addScan?.addEventListener('keydown', e=>{ if(e.key==='Enter'){ e.preventDefault(); const v=addScan.value.trim(); if(v) lookupAdd(v); }});
-  addConfirm?.addEventListener('click', async ()=>{ if(!addCajaId) return; addConfirm.disabled=true; if(addMsg) addMsg.textContent='Moviendo...'; try { const r= await fetch('/operacion/operacion/add/move',{ method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ caja_id: addCajaId })}); const j= await r.json(); if(!j.ok){ if(addMsg) addMsg.textContent=j.error||'Error'; addConfirm.disabled=false; return; } if(addMsg) addMsg.textContent='Caja movida'; await load(); setTimeout(()=>{ try { modal.close(); } catch{} }, 600); } catch(e){ if(addMsg) addMsg.textContent='Error moviendo'; addConfirm.disabled=false; } });
+  addHrs?.addEventListener('input', updateCounts); addMin?.addEventListener('input', updateCounts);
+  addClear?.addEventListener('click', resetAdd);
+  addConfirm?.addEventListener('click', async ()=>{ if(!addCajaId) return; const dur=(Number(addHrs?.value||0)*3600)+(Number(addMin?.value||0)*60); if(dur<=0) return; addConfirm.disabled=true; if(addMsg) addMsg.textContent='Moviendo...'; try { const r= await fetch('/operacion/operacion/add/move',{ method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ caja_id: addCajaId })}); const j= await r.json(); if(!j.ok){ if(addMsg) addMsg.textContent=j.error||'Error'; addConfirm.disabled=false; return; } if(addMsg) addMsg.textContent='Caja movida'; await load(); setTimeout(()=>{ try { modal.close(); } catch{} }, 600); } catch(e){ if(addMsg) addMsg.textContent='Error moviendo'; addConfirm.disabled=false; } });
   modal?.addEventListener('close', resetAdd);
 
   // Init

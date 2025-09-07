@@ -67,22 +67,60 @@
   </div>
 </div>
 
-<!-- Modal Agregar a Operación -->
+<!-- Modal Agregar a Operación (compose caja style) -->
 <dialog id="op-modal-add" class="modal">
-  <div class="modal-box max-w-xl">
+  <div class="modal-box max-w-3xl">
     <form method="dialog">
       <button class="btn btn-sm btn-circle btn-ghost absolute right-2 top-2">✕</button>
     </form>
-    <h3 class="font-bold text-lg mb-2">Mover Caja a Operación</h3>
-    <div class="text-xs opacity-70 mb-3">Escanea un RFID (24) de la caja o escribe el código de lote (CAJA###-ddMMyyyy). Debe estar en <strong>Lista para Despacho</strong>.</div>
-    <label class="input input-bordered flex items-center gap-2 w-full mb-3">
-      <span class="opacity-60 text-xs">Código / RFID</span>
-      <input id="op-add-scan" type="text" class="grow" maxlength="32" autocomplete="off" placeholder="Escanear..." />
+    <h3 class="font-bold text-lg mb-1">Armar caja (1 CUBE · 1 VIP · 6 TIC Atemperadas)</h3>
+    <p class="text-xs opacity-70 mb-4">Escanea RFIDs (auto‑detección de rol). Composición requerida: <strong>6 TIC Atemperadas · 1 VIP · 1 CUBE</strong>.</p>
+    <!-- Scan input -->
+    <label class="input input-bordered flex items-center gap-2 w-full mb-4">
+      <span class="opacity-60 text-xs">RFID</span>
+      <input id="op-add-scan" type="text" class="grow" maxlength="24" autocomplete="off" placeholder="Listo para escanear..." />
     </label>
-    <div id="op-add-summary" class="text-xs mb-3 hidden"></div>
-    <div class="flex gap-3 items-center">
-      <button id="op-add-confirm" class="btn btn-success btn-sm" disabled>Mover</button>
-      <span id="op-add-msg" class="text-xs opacity-70"></span>
+    <!-- Counters -->
+    <div class="flex flex-wrap gap-3 mb-4" id="op-add-counters">
+      <div class="flex-1 min-w-[110px] p-3 border rounded-lg bg-base-200/40" data-role-box="tic">
+        <div class="text-xs font-semibold mb-1">TICs</div>
+        <div class="text-sm"><span id="op-add-count-tic">0</span> / 6</div>
+      </div>
+      <div class="flex-1 min-w-[110px] p-3 border rounded-lg bg-base-200/40" data-role-box="vip">
+        <div class="text-xs font-semibold mb-1">VIP</div>
+        <div class="text-sm"><span id="op-add-count-vip">0</span> / 1</div>
+      </div>
+      <div class="flex-1 min-w-[110px] p-3 border rounded-lg bg-base-200/40" data-role-box="cube">
+        <div class="text-xs font-semibold mb-1">CUBE</div>
+        <div class="text-sm"><span id="op-add-count-cube">0</span> / 1</div>
+      </div>
+    </div>
+    <!-- Timer config -->
+    <div class="mb-4 border rounded-lg p-4 bg-base-200/30">
+      <div class="text-xs font-semibold mb-2">CRONÓMETRO DE CAJA (REQUERIDO)</div>
+      <div class="grid grid-cols-2 gap-3 mb-2">
+        <label class="form-control w-full">
+          <span class="label-text text-xs opacity-70">Horas</span>
+          <input id="op-add-hrs" type="number" min="0" class="input input-bordered input-sm" placeholder="Ej. 0" />
+        </label>
+        <label class="form-control w-full">
+          <span class="label-text text-xs opacity-70">Minutos</span>
+          <input id="op-add-min" type="number" min="0" max="59" class="input input-bordered input-sm" placeholder="Ej. 30" />
+        </label>
+      </div>
+      <p class="text-[11px] opacity-70">Debes indicar una duración > 0. El cronómetro iniciará automáticamente al crear la caja.</p>
+    </div>
+    <!-- Selected items list -->
+    <div id="op-add-summary" class="hidden mb-4">
+      <div class="text-xs font-semibold mb-1">Items detectados</div>
+      <div id="op-add-items" class="flex flex-wrap gap-1 max-h-32 overflow-auto"></div>
+    </div>
+    <div class="flex items-center justify-between gap-4">
+      <button type="button" id="op-add-clear" class="btn btn-ghost btn-xs">Limpiar</button>
+      <div class="flex items-center gap-3">
+        <span id="op-add-msg" class="text-xs opacity-70"></span>
+        <button id="op-add-confirm" class="btn btn-primary btn-sm" disabled>Crear caja</button>
+      </div>
     </div>
   </div>
 </dialog>
