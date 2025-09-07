@@ -4,12 +4,14 @@
   const qs = s=>document.querySelector(s);
   const qsa = s=>Array.from(document.querySelectorAll(s));
   const tbody = qs('#op-tbody');
-  const tbodyDone = qs('#op-tbody-done');
   const count = qs('#op-count');
-  const countDone = qs('#op-count-done');
   const filterInput = qs('#op-filter');
   const btnAdd = qs('#op-btn-add');
-  const btnAddDone = qs('#op-btn-add-done');
+  const btnViewCards = qs('#op-view-cards');
+  const btnViewList = qs('#op-view-list');
+  const gridWrapper = qs('#op-grid-wrapper');
+  const grid = qs('#op-grid');
+  const tableWrapper = qs('#op-table-wrapper');
   const modal = document.getElementById('op-modal-add');
   const addScan = document.getElementById('op-add-scan');
   const addSummary = document.getElementById('op-add-summary');
@@ -72,22 +74,40 @@
       <td class="w-32">${badge}</td>
     </tr>`).join('');
   }
+  function cardHTML(caja){
+    const comps = caja.componentes||[];
+    const tics = comps.filter(c=>c.tipo==='tic').length;
+    const vip = comps.some(c=>c.tipo==='vip');
+    const cube = comps.some(c=>c.tipo==='cube');
+    const timer = caja.timer; const rem = timer? msRemaining(timer):0;
+    const badgeCls = timer? badgeClass(rem, !!timer.completedAt):'badge-ghost';
+    const timerTxt = timer? (rem<=0? 'Finalizado': timerDisplay(rem)):'Sin iniciar';
+    return `<div class="border rounded-lg p-3 bg-base-200/30 flex flex-col gap-2" data-caja-card="${caja.id}">
+      <div class="flex items-start justify-between gap-2">
+        <div class="text-[11px] font-mono leading-tight">${caja.codigoCaja}</div>
+        <div>${controlButtonsHTML(caja)}</div>
+      </div>
+      <div class="flex flex-wrap gap-1 text-[10px] font-mono">
+        ${comps.map(c=>`<span class="badge badge-outline badge-xs">${c.tipo.toUpperCase()}</span>`).join('') || '<span class="opacity-40">(vacía)</span>'}
+      </div>
+      <div class="flex items-center justify-between text-[10px]">
+        <span class="opacity-70">TIC:${tics} VIP:${vip?1:0} CUBE:${cube?1:0}</span>
+        <span class="badge badge-xs ${badgeCls}" data-op-timer data-caja="${caja.id}">${timerTxt}</span>
+      </div>
+    </div>`;
+  }
   function render(){
     if(!tbody) return;
     const f = (filterInput?.value||'').trim().toLowerCase();
     const activos = dataCajas.filter(c=> c.estado!=='Completado');
-    const completados = dataCajas.filter(c=> c.estado==='Completado');
-    const filAct = f? activos.filter(c=> c.codigoCaja.toLowerCase().includes(f) || (c.componentes||[]).some(it=> it.codigo.toLowerCase().includes(f)) ): activos;
-  tbody.innerHTML = filAct.length? filAct.map(c=> rowHTML(c)).join('') : `<tr><td colspan="5" class="text-center py-6 text-xs opacity-50">Sin resultados</td></tr>`;
-    if(count) count.textContent = `(${filAct.reduce((a,c)=> a + (c.componentes||[]).length,0)} de ${activos.reduce((a,c)=> a + (c.componentes||[]).length,0)})`;
-    if(tbodyDone){
-      tbodyDone.innerHTML = completados.length? completados.map(c=>{
-        const total = (c.componentes||[]).length;
-        const finished = c.timer?.endsAt || '-';
-        return `<tr><td class="font-mono text-[10px]">${c.codigoCaja}</td><td class="text-xs">${finished? new Date(finished).toLocaleString(): '-'}</td><td class="text-xs">${total}</td></tr>`;
-      }).join('') : `<tr><td colspan="3" class="text-center py-6 text-xs opacity-50">Sin datos</td></tr>`;
-      if(countDone) countDone.textContent = `(${completados.length})`;
+  const filAct = f? activos.filter(c=> c.codigoCaja.toLowerCase().includes(f) || (c.componentes||[]).some(it=> it.codigo.toLowerCase().includes(f)) ): activos;
+    // Tabla
+    tbody.innerHTML = filAct.length? filAct.map(c=> rowHTML(c)).join('') : `<tr><td colspan="5" class="text-center py-6 text-xs opacity-50">Sin resultados</td></tr>`;
+    // Tarjetas (solo una por caja, no por componente)
+    if(grid){
+      grid.innerHTML = filAct.length? filAct.map(c=> cardHTML(c)).join('') : `<div class="text-xs opacity-50 col-span-full py-6 text-center">Sin resultados</div>`;
     }
+  if(count) count.textContent = `(${filAct.reduce((a,c)=> a + (c.componentes||[]).length,0)} de ${activos.reduce((a,c)=> a + (c.componentes||[]).length,0)})`;
   }
   function ensureTick(){ if(ticking) return; ticking = setInterval(()=>{
     qsa('[data-op-timer]').forEach(b=>{
@@ -112,9 +132,15 @@
 
   // Events
   filterInput?.addEventListener('input', render);
+  // Vista tarjetas/lista
+  function activateCards(){ if(!gridWrapper||!tableWrapper) return; gridWrapper.classList.remove('hidden'); tableWrapper.classList.add('hidden'); btnViewCards?.classList.add('btn-active'); btnViewList?.classList.remove('btn-active'); }
+  function activateList(){ if(!gridWrapper||!tableWrapper) return; tableWrapper.classList.remove('hidden'); gridWrapper.classList.add('hidden'); btnViewList?.classList.add('btn-active'); btnViewCards?.classList.remove('btn-active'); }
+  btnViewCards?.addEventListener('click', ()=> activateCards());
+  btnViewList?.addEventListener('click', ()=> activateList());
+  // Por defecto vista lista
+  activateList();
   function openAddModal(){ try { modal.showModal(); } catch{ modal.classList.remove('hidden'); } resetAdd(); setTimeout(()=> addScan?.focus(), 40); }
   btnAdd?.addEventListener('click', openAddModal);
-  btnAddDone?.addEventListener('click', openAddModal);
   function resetAdd(){ addCajaId=null; addElegibles=[]; addRoles=[]; addFirstScan=null; if(addScan) addScan.value=''; if(addItemsWrap) addItemsWrap.innerHTML=''; if(addSummary) addSummary.classList.add('hidden'); if(addMsg) addMsg.textContent=''; if(addConfirm) addConfirm.disabled=true; updateCounts(); if(addHrs) addHrs.value=''; if(addMin) addMin.value=''; }
   function updateCounts(){ const t=addRoles.filter(r=>r.rol==='tic').length; const v=addRoles.filter(r=>r.rol==='vip').length; const c=addRoles.filter(r=>r.rol==='cube').length; if(countTic) countTic.textContent=t; if(countVip) countVip.textContent=v; if(countCube) countCube.textContent=c; const dur=(Number(addHrs?.value||0)*3600)+(Number(addMin?.value||0)*60); const complete = t===6 && v===1 && c===1 && dur>0; addConfirm.disabled = !complete; }
   async function lookupAdd(code){
