@@ -10,8 +10,12 @@
 <body class="min-h-screen">
   <div class="drawer lg:drawer-open">
     <input id="drawer-nav" type="checkbox" class="drawer-toggle" />
+    <!-- Botón hamburguesa móvil (reagregado). Se oculta cuando el menú está abierto -->
+    <label for="drawer-nav" aria-label="Abrir menú" class="mobile-menu-btn lg:hidden fixed top-3 left-3 z-50 btn btn-square btn-sm btn-primary shadow-md">
+      <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16" /></svg>
+    </label>
     <div class="drawer-content flex flex-col">
-      <section class="p-4 animate-fade-in">
+      <section class="p-4 pt-16 lg:pt-4 animate-fade-in">
         <%- body %>
       </section>
     </div>
@@ -52,5 +56,9 @@
   </div>
   <script src="/static/js/theme.js?v=<%= assetVersion %>"></script>
   <script src="/static/js/ux.js?v=<%= assetVersion %>"></script>
+  <style>
+    /* Ocultar botón cuando drawer abierto */
+    #drawer-nav:checked + label.mobile-menu-btn { display:none }
+  </style>
 </body>
 </html>
