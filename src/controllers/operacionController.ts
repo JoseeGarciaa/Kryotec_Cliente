@@ -1323,5 +1323,130 @@ export const OperacionController = {
       await c.query(`UPDATE inventario_credocubes ic SET sub_estado='Completado' WHERE ic.rfid IN (SELECT rfid FROM acond_caja_items WHERE caja_id=$1) AND ic.estado='Operación'`, [cajaId]);
     });
     res.json({ ok:true });
+  },
+
+  // List cajas currently en Operación (or en tránsito) with timer info (for new UI)
+  operacionData: async (req: Request, res: Response) => {
+    const tenant = (req as any).user?.tenant;
+    try {
+      // Ensure timers table exists
+      await withTenant(tenant, (c)=> c.query(`CREATE TABLE IF NOT EXISTS operacion_caja_timers (
+        caja_id int PRIMARY KEY REFERENCES acond_cajas(caja_id) ON DELETE CASCADE,
+        started_at timestamptz,
+        duration_sec integer,
+        active boolean NOT NULL DEFAULT false,
+        updated_at timestamptz NOT NULL DEFAULT NOW()
+      )`));
+      const nowRes = await withTenant(tenant, (c)=> c.query<{ now:string }>(`SELECT NOW()::timestamptz AS now`));
+      const cajasQ = await withTenant(tenant, (c)=> c.query(
+        `SELECT c.caja_id, c.lote, act.started_at, act.duration_sec, act.active,
+                COUNT(*) FILTER (WHERE ic.estado='Operación') AS total_op,
+                COUNT(*) FILTER (WHERE ic.estado='Operación' AND ic.sub_estado='Completado') AS completados
+           FROM acond_cajas c
+           JOIN acond_caja_items aci ON aci.caja_id = c.caja_id
+           JOIN inventario_credocubes ic ON ic.rfid = aci.rfid
+      LEFT JOIN operacion_caja_timers act ON act.caja_id = c.caja_id
+          WHERE ic.estado='Operación'
+          GROUP BY c.caja_id, c.lote, act.started_at, act.duration_sec, act.active
+          ORDER BY c.caja_id DESC
+          LIMIT 300`));
+      const itemsQ = await withTenant(tenant, (c)=> c.query(
+        `SELECT c.caja_id, aci.rol, ic.rfid, ic.estado, ic.sub_estado, m.nombre_modelo
+           FROM acond_caja_items aci
+           JOIN acond_cajas c ON c.caja_id = aci.caja_id
+           JOIN inventario_credocubes ic ON ic.rfid = aci.rfid
+           JOIN modelos m ON m.modelo_id = ic.modelo_id
+          WHERE c.caja_id = ANY($1::int[])
+          ORDER BY c.caja_id DESC, CASE aci.rol WHEN 'vip' THEN 0 WHEN 'tic' THEN 1 ELSE 2 END, ic.rfid`, [cajasQ.rows.map(r=>r.caja_id)]));
+      const mapaItems: Record<string, any[]> = {};
+      for(const row of itemsQ.rows as any[]){
+        (mapaItems[row.caja_id] ||= []).push({
+          codigo: row.rfid,
+          rol: row.rol,
+          estado: row.estado,
+            sub_estado: row.sub_estado,
+          nombre: row.nombre_modelo
+        });
+      }
+      const nowIso = nowRes.rows[0]?.now;
+      const nowMs = nowIso ? new Date(nowIso).getTime() : Date.now();
+      const cajasUI = cajasQ.rows.map(r=>{
+        let timer=null; let completedAt=null; let endsAt=null;
+        if(r.started_at && r.duration_sec){
+          const endMs = new Date(r.started_at).getTime() + r.duration_sec*1000;
+          endsAt = new Date(endMs).toISOString();
+          if(!r.active && endMs <= nowMs) completedAt = endsAt;
+          timer = { startsAt: r.started_at, endsAt, completedAt };
+        }
+        return {
+          id: r.caja_id,
+          codigoCaja: r.lote,
+          estado: r.completados === r.total_op && r.total_op>0 ? 'Completado' : 'Operación',
+          timer,
+          componentes: (mapaItems[r.caja_id]||[]).map(it=> ({ codigo: it.codigo, tipo: it.rol, nombre: it.nombre, estado: it.estado, sub_estado: it.sub_estado }))
+        };
+      });
+      res.json({ ok:true, now: nowIso, cajas: cajasUI });
+    } catch(e:any){
+      res.status(500).json({ ok:false, error: e.message||'Error operacion data' });
+    }
+  },
+
+  // Lookup a caja (by component RFID or lote) that is lista para despacho and NOT yet in Operación
+  operacionAddLookup: async (req: Request, res: Response) => {
+    const tenant = (req as any).user?.tenant;
+    const { code } = req.body as any;
+    const val = typeof code === 'string' ? code.trim() : '';
+    if(!val) return res.status(400).json({ ok:false, error:'Código requerido' });
+    try {
+      let caja: any = null;
+      if(val.length===24){
+        const q = await withTenant(tenant, (c)=> c.query(
+          `SELECT c.caja_id, c.lote
+             FROM acond_caja_items aci
+             JOIN acond_cajas c ON c.caja_id = aci.caja_id
+             JOIN inventario_credocubes ic ON ic.rfid = aci.rfid
+            WHERE aci.rfid=$1
+            LIMIT 1`, [val]));
+        if(q.rowCount) caja = q.rows[0];
+      }
+      if(!caja){
+        const q2 = await withTenant(tenant, (c)=> c.query(`SELECT caja_id, lote FROM acond_cajas WHERE lote=$1 LIMIT 1`, [val]));
+        if(q2.rowCount) caja = q2.rows[0];
+      }
+      if(!caja) return res.status(404).json({ ok:false, error:'Caja no encontrada' });
+      // Get items still listos para despacho
+      const itemsQ = await withTenant(tenant, (c)=> c.query(
+        `SELECT aci.rfid, ic.estado, ic.sub_estado, aci.rol, m.nombre_modelo
+           FROM acond_caja_items aci
+           JOIN inventario_credocubes ic ON ic.rfid = aci.rfid
+           JOIN modelos m ON m.modelo_id = ic.modelo_id
+          WHERE aci.caja_id=$1`, [caja.caja_id]));
+      const items = itemsQ.rows as any[];
+      const elegibles = items.filter(i=> i.estado==='Acondicionamiento' && (i.sub_estado==='Lista para Despacho' || i.sub_estado==='Listo'));
+      if(!elegibles.length) return res.status(400).json({ ok:false, error:'Caja no está Lista para Despacho' });
+      res.json({ ok:true, caja_id: caja.caja_id, lote: caja.lote, total: items.length, elegibles: elegibles.map(e=>e.rfid) });
+    } catch(e:any){ res.status(500).json({ ok:false, error: e.message||'Error lookup' }); }
+  },
+  operacionAddMove: async (req: Request, res: Response) => {
+    const tenant = (req as any).user?.tenant;
+    const { caja_id } = req.body as any;
+    const id = Number(caja_id);
+    if(!Number.isFinite(id) || id<=0) return res.status(400).json({ ok:false, error:'caja_id inválido' });
+    try {
+      await withTenant(tenant, async (c)=>{
+        await c.query('BEGIN');
+        try {
+          const upd = await c.query(
+            `UPDATE inventario_credocubes ic
+                SET estado='Operación', sub_estado='Transito'
+               WHERE ic.rfid IN (SELECT rfid FROM acond_caja_items WHERE caja_id=$1)
+                 AND ic.estado='Acondicionamiento'
+                 AND ic.sub_estado IN ('Lista para Despacho','Listo')`, [id]);
+          await c.query('COMMIT');
+          res.json({ ok:true, moved: upd.rowCount });
+        } catch(e){ await c.query('ROLLBACK'); throw e; }
+      });
+    } catch(e:any){ res.status(500).json({ ok:false, error: e.message||'Error moviendo' }); }
   }
 };

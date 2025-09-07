@@ -3,39 +3,23 @@
   <h1 class="text-2xl font-bold">Gestión de Operación</h1>
 </div>
 
-<!-- Bloque: Tránsito / Recepción de Caja -->
+<!-- Bloque: Cajas en Operación -->
 <div class="card border border-info/20 bg-info/5 mb-8">
   <div class="card-body p-0">
     <div class="flex items-center justify-between px-5 pt-4 pb-3 flex-wrap gap-3">
       <div>
-        <div class="font-semibold text-lg flex items-center gap-2">Caja en Tránsito <span id="op-spin" class="loading loading-spinner loading-xs hidden"></span></div>
-        <div id="op-count" class="text-sm opacity-70">(0)</div>
+        <div class="font-semibold text-lg flex items-center gap-2">Cajas en Operación <span id="op-spin" class="loading loading-spinner loading-xs hidden"></span></div>
+        <div id="op-count" class="text-sm opacity-70">(0 de 0)</div>
       </div>
       <div class="flex gap-2 items-center">
-        <button id="op-btn-timer-start" class="btn btn-primary btn-sm" disabled>Iniciar Timer</button>
-        <button id="op-btn-timer-clear" class="btn btn-ghost btn-sm" disabled>Pausar</button>
-        <button id="op-btn-timer-complete" class="btn btn-success btn-sm" disabled>Completar</button>
+        <button id="op-btn-add" class="btn btn-primary btn-sm" type="button">Agregar Items</button>
       </div>
     </div>
-    <div class="px-5 pb-4 flex flex-col gap-4 md:flex-row md:items-end">
-      <label class="input input-bordered flex items-center gap-2 w-full md:max-w-lg">
+    <div class="px-5 pb-4">
+      <label class="input input-bordered flex items-center gap-2 w-full">
         <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 opacity-70" viewBox="0 0 24 24" fill="currentColor"><path d="M10 2a8 8 0 105.293 14.293l4.207 4.207a1 1 0 001.414-1.414l-4.207-4.207A8 8 0 0010 2zm0 2a6 6 0 110 12A6 6 0 0110 4z"/></svg>
-        <input id="op-scan" type="text" class="grow" placeholder="Escanear RFID (24) o código de caja ej. CAJA001-05092025" autocomplete="off" maxlength="32" />
+        <input id="op-filter" type="text" class="grow" placeholder="Buscar por lote o RFID..." />
       </label>
-      <div class="flex gap-2">
-        <button id="op-btn-lookup" class="btn btn-primary btn-sm">Buscar</button>
-        <button id="op-btn-move" class="btn btn-accent btn-sm" disabled>Mover a Operación</button>
-      </div>
-      <div class="flex gap-2 text-xs items-center">
-        <span class="opacity-60">Duración (min)</span>
-        <input id="op-timer-min" type="number" min="1" step="1" value="30" class="input input-bordered input-xs w-20" />
-        <span id="op-caja-timer" class="badge badge-neutral badge-xs">--</span>
-      </div>
-    </div>
-    <div class="px-5 pb-4 text-xs grid sm:grid-cols-3 gap-4" id="op-meta">
-      <div><span class="opacity-60">Caja:</span> <span id="op-caja-lote" class="font-mono"></span></div>
-      <div><span class="opacity-60">ID:</span> <span id="op-caja-id" class="font-mono"></span></div>
-      <div><span class="opacity-60">Estado:</span> <span id="op-caja-estado" class="font-semibold"></span></div>
     </div>
     <div class="overflow-x-auto border-t border-info/10">
       <table class="table table-xs sm:table-sm" id="op-table">
@@ -44,17 +28,63 @@
             <th>RFID</th>
             <th class="hidden md:table-cell">NOMBRE</th>
             <th class="hidden lg:table-cell">ESTADO</th>
-            <th>ROL</th>
-            <th>SUB-ESTADO</th>
+            <th>CAJA</th>
+            <th>CRONÓMETRO</th>
+            <th class="hidden md:table-cell">ROL</th>
           </tr>
         </thead>
         <tbody id="op-tbody">
-          <tr><td colspan="5" class="text-center py-6 text-xs opacity-50">Sin datos</td></tr>
+          <tr><td colspan="6" class="text-center py-6 text-xs opacity-50">Cargando...</td></tr>
         </tbody>
       </table>
     </div>
-    <div id="op-msg" class="px-5 py-3 text-xs opacity-80 min-h-[20px]"></div>
   </div>
 </div>
+
+<!-- Bloque: Cajas Completadas -->
+<div class="card border border-success/20 bg-success/5 mb-8">
+  <div class="card-body p-0">
+    <div class="flex items-center justify-between px-5 pt-4 pb-3 flex-wrap gap-3">
+      <div>
+        <div class="font-semibold text-lg flex items-center gap-2">Cajas Completadas</div>
+        <div id="op-count-done" class="text-sm opacity-70">(0)</div>
+      </div>
+    </div>
+    <div class="overflow-x-auto border-t border-success/10">
+      <table class="table table-xs sm:table-sm" id="op-table-done">
+        <thead>
+          <tr>
+            <th>CAJA</th>
+            <th>FINALIZADO</th>
+            <th>ITEMS</th>
+          </tr>
+        </thead>
+        <tbody id="op-tbody-done">
+          <tr><td colspan="3" class="text-center py-6 text-xs opacity-50">Sin datos</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<!-- Modal Agregar a Operación -->
+<dialog id="op-modal-add" class="modal">
+  <div class="modal-box max-w-xl">
+    <form method="dialog">
+      <button class="btn btn-sm btn-circle btn-ghost absolute right-2 top-2">✕</button>
+    </form>
+    <h3 class="font-bold text-lg mb-2">Mover Caja a Operación</h3>
+    <div class="text-xs opacity-70 mb-3">Escanea un RFID (24) de la caja o escribe el código de lote (CAJA###-ddMMyyyy). Debe estar en <strong>Lista para Despacho</strong>.</div>
+    <label class="input input-bordered flex items-center gap-2 w-full mb-3">
+      <span class="opacity-60 text-xs">Código / RFID</span>
+      <input id="op-add-scan" type="text" class="grow" maxlength="32" autocomplete="off" placeholder="Escanear..." />
+    </label>
+    <div id="op-add-summary" class="text-xs mb-3 hidden"></div>
+    <div class="flex gap-3 items-center">
+      <button id="op-add-confirm" class="btn btn-success btn-sm" disabled>Mover</button>
+      <span id="op-add-msg" class="text-xs opacity-70"></span>
+    </div>
+  </div>
+</dialog>
 
 <script src="/static/js/operacion.js?v=<%= assetVersion %>" defer></script>
