@@ -21,13 +21,13 @@
     </div>
     <div class="drawer-side">
       <label for="drawer-nav" aria-label="close sidebar" class="drawer-overlay"></label>
-      <aside class="min-h-full w-72 bg-base-200 p-4 border-r border-base-300/40 flex flex-col">
-        <div class="mb-4 px-2 text-lg font-bold flex items-center justify-between">
+      <aside class="min-h-full w-72 p-4 border-r border-base-300/40 flex flex-col">
+        <div class="mb-4 px-2 text-lg font-bold flex items-center justify-between k-title-gradient">
           <span>CredoCube</span>
           <label for="drawer-nav" aria-label="close sidebar" class="lg:hidden btn btn-ghost btn-xs">✕</label>
         </div>
         <div class="text-xs opacity-60 px-2 mb-3">Tenant: <%= (user && user.tenant) || '-' %></div>
-        <button id="btn-theme-toggle" class="btn btn-ghost btn-sm mb-4 text-xs justify-start">Cambiar tema</button>
+  <button id="btn-theme-toggle" class="btn k-gradient-btn btn-sm mb-4 text-xs justify-start">Cambiar tema</button>
         <ul class="menu flex-1">
           <li><a class="<%= currentPath.startsWith('/dashboard') ? 'active' : '' %>" href="/dashboard">Dashboard</a></li>
           <li><a class="<%= currentPath.startsWith('/registro') ? 'active' : '' %>" href="/registro">Registro</a></li>
