@@ -135,6 +135,78 @@ export const OperacionController = {
   acond: (_req: Request, res: Response) => res.render('operacion/acond', { title: 'Operación · Acondicionamiento' }),
   operacion: (_req: Request, res: Response) => res.render('operacion/operacion', { title: 'Operación · Operación' }),
   devolucion: (_req: Request, res: Response) => res.render('operacion/devolucion', { title: 'Operación · Devolución' }),
+  devolucionData: async (req: Request, res: Response) => {
+    const tenant = (req as any).user?.tenant;
+    try {
+  // Items pendientes: estado='Operación' y sub_estado='Transito'
+      const pendQ = await withTenant(tenant, (c)=> c.query(
+        `SELECT ic.rfid, m.nombre_modelo, 
+                CASE WHEN m.nombre_modelo ILIKE '%tic%' THEN 'tic'
+                     WHEN m.nombre_modelo ILIKE '%vip%' THEN 'vip'
+                     WHEN (m.nombre_modelo ILIKE '%cube%' OR m.nombre_modelo ILIKE '%cubo%') THEN 'cube'
+                     ELSE 'otro' END AS rol
+           FROM inventario_credocubes ic
+           JOIN modelos m ON m.modelo_id = ic.modelo_id
+          WHERE ic.estado='Operación' AND ic.sub_estado='Transito'
+          ORDER BY ic.id DESC
+          LIMIT 600`));
+      const rows = pendQ.rows as any[];
+      let cubes=0,vips=0,tics=0; for(const r of rows){ if(r.rol==='cube') cubes++; else if(r.rol==='vip') vips++; else if(r.rol==='tic') tics++; }
+      // De vuelta (estadísticas): estado='En bodega' y sub_estado NULL recientemente? Simple aggregate.
+      const devueltosQ = await withTenant(tenant, (c)=> c.query(
+        `SELECT 
+           SUM(CASE WHEN m.nombre_modelo ILIKE '%cube%' OR m.nombre_modelo ILIKE '%cubo%' THEN 1 ELSE 0 END)::int AS cubes,
+           SUM(CASE WHEN m.nombre_modelo ILIKE '%vip%' THEN 1 ELSE 0 END)::int AS vips,
+           SUM(CASE WHEN m.nombre_modelo ILIKE '%tic%' THEN 1 ELSE 0 END)::int AS tics
+         FROM inventario_credocubes ic
+         JOIN modelos m ON m.modelo_id = ic.modelo_id
+        WHERE ic.estado='En bodega'`));
+      const statsRow = devueltosQ.rows[0] || { cubes:0,vips:0,tics:0 };
+      res.json({ ok:true, pendientes: rows.map(r=> ({ rfid: r.rfid, rol: r.rol })), stats:{ cubes: statsRow.cubes, vips: statsRow.vips, tics: statsRow.tics, total: (statsRow.cubes||0)+(statsRow.vips||0)+(statsRow.tics||0) } });
+    } catch(e:any){ res.status(500).json({ ok:false, error: e.message||'Error devolucion data' }); }
+  },
+  devolucionConfirm: async (req: Request, res: Response) => {
+    const tenant = (req as any).user?.tenant;
+    const { rfids } = req.body as any;
+  const list = Array.isArray(rfids)? rfids.filter((x:any)=> typeof x==='string' && x.trim().length===24).slice(0,500):[];
+    if(!list.length) return res.status(400).json({ ok:false, error:'Sin RFIDs' });
+    try {
+      const updated = await withTenant(tenant, (c)=> c.query(
+        `UPDATE inventario_credocubes ic
+            SET estado='En bodega', sub_estado=NULL
+          WHERE ic.rfid = ANY($1::text[]) AND ic.estado='Operación' AND ic.sub_estado='Transito'
+          RETURNING ic.rfid`, [list]));
+      res.json({ ok:true, devueltos: updated.rowCount });
+    } catch(e:any){ res.status(500).json({ ok:false, error: e.message||'Error confirmando devolución' }); }
+  },
+  devolucionValidate: async (req: Request, res: Response) => {
+    const tenant = (req as any).user?.tenant;
+    const { rfids } = req.body as any;
+  const list = Array.isArray(rfids)? rfids.filter((x:any)=> typeof x==='string' && x.trim().length===24).slice(0,300):[];
+    if(!list.length) return res.json({ ok:true, valid:[], invalid:[] });
+    try {
+      const q = await withTenant(tenant, (c)=> c.query(
+        `SELECT ic.rfid, ic.estado, ic.sub_estado, m.nombre_modelo,
+                CASE WHEN m.nombre_modelo ILIKE '%tic%' THEN 'tic'
+                     WHEN m.nombre_modelo ILIKE '%vip%' THEN 'vip'
+                     WHEN (m.nombre_modelo ILIKE '%cube%' OR m.nombre_modelo ILIKE '%cubo%') THEN 'cube'
+                     ELSE 'otro' END AS rol
+           FROM inventario_credocubes ic
+           JOIN modelos m ON m.modelo_id = ic.modelo_id
+          WHERE ic.rfid = ANY($1::text[])`, [list]));
+      const map = new Map(q.rows.map((r:any)=> [r.rfid, r]));
+      const valid:any[] = []; const invalid:any[] = [];
+      for(const r of list){
+        const row = map.get(r);
+        if(!row){ invalid.push({ rfid:r, reason:'no_encontrado' }); continue; }
+        if(row.estado !== 'Operación'){ invalid.push({ rfid:r, reason:'estado_'+row.estado }); continue; }
+  // Valid only if currently in Transito
+  if(row.sub_estado !== 'Transito'){ invalid.push({ rfid:r, reason: row.sub_estado? ('subestado_'+row.sub_estado): 'no_transito' }); continue; }
+        valid.push({ rfid:r, rol: row.rol });
+      }
+      res.json({ ok:true, valid, invalid });
+    } catch(e:any){ res.status(500).json({ ok:false, error: e.message||'Error validando RFIDs' }); }
+  },
   inspeccion: (_req: Request, res: Response) => res.render('operacion/inspeccion', { title: 'Operación · Inspección' }),
   // Vista: En bodega
   bodega: (_req: Request, res: Response) => res.render('operacion/bodega', { title: 'Operación · En bodega' }),

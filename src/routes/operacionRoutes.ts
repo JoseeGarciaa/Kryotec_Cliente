@@ -46,6 +46,10 @@ router.post('/caja/timer/start', requireAuth, OperacionController.operacionCajaT
 router.post('/caja/timer/clear', requireAuth, OperacionController.operacionCajaTimerClear);
 router.post('/caja/timer/complete', requireAuth, OperacionController.operacionCajaTimerComplete);
 router.get('/devolucion', requireAuth, OperacionController.devolucion);
+// Devolucion data + confirm
+router.get('/devolucion/data', requireAuth, OperacionController.devolucionData as any);
+router.post('/devolucion/confirm', requireAuth, OperacionController.devolucionConfirm as any);
+router.post('/devolucion/validate', requireAuth, OperacionController.devolucionValidate as any);
 router.get('/inspeccion', requireAuth, OperacionController.inspeccion);
 // En bodega
 router.get('/bodega', requireAuth, OperacionController.bodega);
