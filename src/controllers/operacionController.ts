@@ -52,7 +52,132 @@ async function generateNextCajaLote(tenant: string): Promise<string> {
 export const OperacionController = {
   index: (_req: Request, res: Response) => res.redirect('/operacion/todas'),
   todas: (_req: Request, res: Response) => res.render('operacion/todas', { title: 'Operación · Todas las fases' }),
+  // Kanban data summary for all phases
+  kanbanData: async (req: Request, res: Response) => {
+    const tenant = (req as any).user?.tenant;
+    try {
+      // Ensure optional tables exist (cajas)
+      await withTenant(tenant, async (c) => {
+        await c.query(`CREATE TABLE IF NOT EXISTS acond_cajas (
+           caja_id serial PRIMARY KEY,
+           lote text NOT NULL,
+           created_at timestamptz NOT NULL DEFAULT NOW()
+        )`);
+      });
+      // En bodega counts
+      const enBodega = await withTenant(tenant, (c) => c.query(
+        `SELECT
+            SUM(CASE WHEN m.nombre_modelo ILIKE '%tic%' THEN 1 ELSE 0 END)::int AS tics,
+            SUM(CASE WHEN m.nombre_modelo ILIKE '%vip%' THEN 1 ELSE 0 END)::int AS vips,
+            SUM(CASE WHEN (m.nombre_modelo ILIKE '%cube%' OR m.nombre_modelo ILIKE '%cubo%') THEN 1 ELSE 0 END)::int AS cubes
+         FROM inventario_credocubes ic
+         JOIN modelos m ON m.modelo_id = ic.modelo_id
+        WHERE LOWER(ic.estado)=LOWER('En bodega')`
+      ));
+      // Pre-acond (congelamiento / atemperamiento) only TICs
+      const preAcondCong = await withTenant(tenant, (c) => c.query(
+        `SELECT
+            SUM(CASE WHEN ic.sub_estado='Congelamiento' THEN 1 ELSE 0 END)::int AS en_proceso,
+            SUM(CASE WHEN ic.sub_estado='Congelado' THEN 1 ELSE 0 END)::int AS completado
+         FROM inventario_credocubes ic
+         JOIN modelos m ON m.modelo_id = ic.modelo_id
+        WHERE ic.estado='Pre Acondicionamiento' AND (m.nombre_modelo ILIKE '%tic%')`
+      ));
+      const preAcondAtemp = await withTenant(tenant, (c) => c.query(
+        `SELECT
+            SUM(CASE WHEN ic.sub_estado='Atemperamiento' THEN 1 ELSE 0 END)::int AS en_proceso,
+            SUM(CASE WHEN ic.sub_estado='Atemperado' THEN 1 ELSE 0 END)::int AS completado
+         FROM inventario_credocubes ic
+         JOIN modelos m ON m.modelo_id = ic.modelo_id
+        WHERE ic.estado='Pre Acondicionamiento' AND (m.nombre_modelo ILIKE '%tic%')`
+      ));
+      // Acondicionamiento (ensamblaje items y cajas construidas)
+      const ensamblaje = await withTenant(tenant, (c) => c.query(
+        `SELECT COUNT(*)::int AS items
+           FROM inventario_credocubes ic
+           WHERE ic.estado='Acondicionamiento' AND ic.sub_estado='Ensamblaje'`
+      ));
+      const cajas = await withTenant(tenant, (c) => c.query(
+        `SELECT COUNT(*)::int AS total FROM acond_cajas`
+      ));
+      // Inspección (items cuyo estado es 'Inspección' o 'Inspeccion')
+      const inspeccionQ = await withTenant(tenant, (c) => c.query(
+        `SELECT
+            SUM(CASE WHEN m.nombre_modelo ILIKE '%tic%' THEN 1 ELSE 0 END)::int AS tics,
+            SUM(CASE WHEN m.nombre_modelo ILIKE '%vip%' THEN 1 ELSE 0 END)::int AS vips
+         FROM inventario_credocubes ic
+         JOIN modelos m ON m.modelo_id = ic.modelo_id
+        WHERE LOWER(ic.estado) IN ('inspeccion','inspección')`
+      ));
+      const inspeccion = inspeccionQ.rows[0] || { tics:0, vips:0 };
+      // Placeholders for future phases (Operación / Devolución) – se implementarán luego
+      const operacion = { tic_transito: 0, vip_transito: 0 };
+      const devolucion = { tic_pendiente: 0, vip_pendiente: 0 };
+      res.json({ ok: true, data: {
+        enBodega: enBodega.rows[0] || { tics:0, vips:0, cubes:0 },
+        preAcond: {
+          congelamiento: preAcondCong.rows[0] || { en_proceso:0, completado:0 },
+          atemperamiento: preAcondAtemp.rows[0] || { en_proceso:0, completado:0 }
+        },
+        acond: {
+          ensamblaje: ensamblaje.rows[0]?.items || 0,
+          cajas: cajas.rows[0]?.total || 0
+        },
+        inspeccion,
+        operacion,
+        devolucion
+      }});
+    } catch (e:any) {
+      res.status(500).json({ ok:false, error: e.message || 'Error resumen kanban' });
+    }
+  },
   bodega: (_req: Request, res: Response) => res.render('operacion/bodega', { title: 'Operación · En bodega' }),
+  bodegaData: async (req: Request, res: Response) => {
+    const tenant = (req as any).user?.tenant;
+    const { q: qRaw, limit: limitRaw, page: pageRaw, cat: catRaw } = req.query as any;
+    const q = qRaw ? String(qRaw).trim().slice(0, 40) : '';
+    const page = Math.max(1, parseInt(pageRaw || '1', 10));
+    let limit = Math.min(200, Math.max(10, parseInt(limitRaw || '50', 10)));
+    const offset = (page - 1) * limit;
+    const cat = catRaw ? String(catRaw).toLowerCase() : '';
+    const params: any[] = [];
+  // Aseguramos case-insensitive para 'En bodega'
+  const where: string[] = ["LOWER(ic.estado) = LOWER('En bodega')"];
+    if (q) {
+      params.push('%' + q + '%');
+      where.push('(ic.nombre_unidad ILIKE $' + params.length + ' OR ic.rfid ILIKE $' + params.length + ' OR COALESCE(ic.lote,\'\') ILIKE $' + params.length + ')');
+    }
+    const catExpr = `CASE
+      WHEN m.nombre_modelo ILIKE '%tic%' THEN 'TIC'
+      WHEN m.nombre_modelo ILIKE '%vip%' THEN 'VIP'
+      WHEN m.nombre_modelo ILIKE '%cube%' OR m.nombre_modelo ILIKE '%cubo%' THEN 'Cubes'
+      ELSE 'Otros' END`;
+    if (cat === 'tic' || cat === 'tics') where.push(`${catExpr} = 'TIC'`);
+    else if (cat === 'vip' || cat === 'vips') where.push(`${catExpr} = 'VIP'`);
+    else if (cat === 'cube' || cat === 'cubes') where.push(`${catExpr} = 'Cubes'`);
+    const whereSQL = 'WHERE ' + where.join(' AND ');
+    const items = await withTenant(tenant, (c) => c.query(
+      `SELECT ic.id, ic.rfid, ic.nombre_unidad, ic.lote, ic.sub_estado, ${catExpr} AS categoria, ic.fecha_ingreso
+         FROM inventario_credocubes ic
+         JOIN modelos m ON m.modelo_id = ic.modelo_id
+         ${whereSQL}
+         ORDER BY ic.id DESC
+         LIMIT ${limit} OFFSET ${offset}`,
+      params
+    ));
+    const countRes = await withTenant(tenant, (c) => c.query(
+      `SELECT COUNT(*)::int AS total FROM inventario_credocubes ic JOIN modelos m ON m.modelo_id = ic.modelo_id ${whereSQL}`,
+      params
+    ));
+    // Conteos diagnósticos por estado/sub_estado para ayudar cuando no hay resultados
+    const diagEstados = await withTenant(tenant, (c) => c.query(
+      `SELECT LOWER(estado) AS estado, COALESCE(sub_estado,'(null)') AS sub_estado, COUNT(*)::int AS cantidad
+         FROM inventario_credocubes
+        GROUP BY 1,2
+        ORDER BY 3 DESC`
+    ));
+    res.json({ ok: true, items: items.rows, page, limit, total: countRes.rows[0]?.total || 0, estados: diagEstados.rows });
+  },
   preacond: (_req: Request, res: Response) => res.render('operacion/preacond', { title: 'Operación · Registrar pre-acondicionamiento' }),
   acond: (_req: Request, res: Response) => res.render('operacion/acond', { title: 'Operación · Acondicionamiento' }),
   operacion: (_req: Request, res: Response) => res.render('operacion/operacion', { title: 'Operación · Operación' }),

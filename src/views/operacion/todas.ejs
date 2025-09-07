@@ -1,7 +1,137 @@
 <% title = title || 'Operación · Todas las fases' %>
-<div class="card bg-base-200">
-  <div class="card-body">
-    <div class="text-lg font-semibold">Todas las fases</div>
-    <div class="opacity-70 text-sm">Vista general de los items y su fase actual.</div>
+<div class="mb-6">
+  <h1 class="text-2xl md:text-3xl font-bold">Operación</h1>
+  <div class="opacity-70 text-sm md:text-base mt-1">Resumen Kanban de flujo completo (Bodega → Pre Acond → Acondicionamiento → Operación → Devolución)</div>
+</div>
+
+<div id="kanban" class="grid gap-4 md:gap-5 lg:gap-6 grid-cols-[repeat(auto-fill,minmax(250px,1fr))] 2xl:grid-cols-6">
+  <!-- Column: En bodega -->
+  <div class="flex flex-col border border-primary/30 bg-primary/5 rounded-xl overflow-hidden min-h-[220px]">
+    <div class="px-4 py-3 bg-base-200/60 border-b font-semibold tracking-wide text-sm">En bodega</div>
+    <div class="p-3 flex flex-col gap-3 flex-1">
+      <div class="card bg-base-100 border shadow-sm">
+        <div class="card-body p-4 gap-2">
+          <div class="flex items-center justify-between"><span class="badge badge-sm">TICs</span> <span id="kb-bodega-tics" class="text-sm font-semibold">0</span></div>
+          <div class="text-xs opacity-60">Items disponibles</div>
+        </div>
+      </div>
+      <div class="card bg-base-100 border shadow-sm">
+        <div class="card-body p-4 gap-2">
+          <div class="flex items-center justify-between"><span class="badge badge-sm">CUBES</span> <span id="kb-bodega-cubes" class="text-sm font-semibold">0</span></div>
+          <div class="text-xs opacity-60">Items disponibles</div>
+        </div>
+      </div>
+      <div class="card bg-base-100 border shadow-sm">
+        <div class="card-body p-4 gap-2">
+          <div class="flex items-center justify-between"><span class="badge badge-sm">VIPS</span> <span id="kb-bodega-vips" class="text-sm font-semibold">0</span></div>
+          <div class="text-xs opacity-60">Items disponibles</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Column: Pre Acond (Congelamiento) -->
+  <div class="flex flex-col border border-info/30 bg-info/5 rounded-xl overflow-hidden min-h-[220px]">
+    <div class="px-4 py-3 bg-base-200/60 border-b font-semibold tracking-wide text-sm">Registrar pre acondicionamiento</div>
+    <div class="p-3 flex flex-col gap-3 flex-1">
+      <div class="card bg-base-100 border shadow-sm">
+        <div class="card-body p-4 gap-1">
+          <div class="flex items-center justify-between"><span class="badge badge-outline badge-xs">TICs para Congelamiento</span> <span id="kb-cong-proc" class="text-sm font-semibold">0</span></div>
+          <div class="text-[11px] opacity-60">En proceso</div>
+          <div class="flex items-center justify-between mt-2"><span class="badge badge-primary badge-outline badge-xs">Congeladas</span> <span id="kb-cong-done" class="text-sm font-semibold">0</span></div>
+        </div>
+      </div>
+      <div class="card bg-base-100 border shadow-sm">
+        <div class="card-body p-4 gap-1">
+          <div class="flex items-center justify-between"><span class="badge badge-outline badge-xs">TICs para Atemperamiento</span> <span id="kb-atem-proc" class="text-sm font-semibold">0</span></div>
+          <div class="text-[11px] opacity-60">En proceso</div>
+          <div class="flex items-center justify-between mt-2"><span class="badge badge-warning badge-outline badge-xs">Atemperadas</span> <span id="kb-atem-done" class="text-sm font-semibold">0</span></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Column: Acondicionamiento -->
+  <div class="flex flex-col border border-error/30 bg-error/5 rounded-xl overflow-hidden min-h-[220px]">
+    <div class="px-4 py-3 bg-base-200/60 border-b font-semibold tracking-wide text-sm">Acondicionamiento</div>
+    <div class="p-3 flex flex-col gap-3 flex-1">
+      <div class="card bg-base-100 border shadow-sm">
+        <div class="card-body p-4 gap-2">
+          <div class="flex items-center justify-between"><span class="badge badge-outline badge-xs">Ensamblaje</span> <span id="kb-ensam-items" class="text-sm font-semibold">0</span></div>
+          <div class="text-xs opacity-60">Items en cajas en proceso</div>
+        </div>
+      </div>
+      <div class="card bg-base-100 border shadow-sm">
+        <div class="card-body p-4 gap-2">
+          <div class="flex items-center justify-between"><span class="badge badge-outline badge-xs">Cajas creadas</span> <span id="kb-ensam-cajas" class="text-sm font-semibold">0</span></div>
+          <div class="text-xs opacity-60">Cajas activas</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Column: Operación -->
+  <div class="flex flex-col border border-secondary/30 bg-secondary/5 rounded-xl overflow-hidden min-h-[220px]">
+    <div class="px-4 py-3 bg-base-200/60 border-b font-semibold tracking-wide text-sm">Operación</div>
+    <div class="p-3 flex flex-col gap-3 flex-1">
+      <div class="card bg-base-100 border shadow-sm">
+        <div class="card-body p-4 gap-2">
+          <div class="flex items-center justify-between"><span class="badge badge-outline badge-xs">TIC en tránsito</span> <span id="kb-op-tic" class="text-sm font-semibold">0</span></div>
+          <div class="text-xs opacity-60">Items en operación</div>
+        </div>
+      </div>
+      <div class="card bg-base-100 border shadow-sm">
+        <div class="card-body p-4 gap-2">
+          <div class="flex items-center justify-between"><span class="badge badge-outline badge-xs">VIP en tránsito</span> <span id="kb-op-vip" class="text-sm font-semibold">0</span></div>
+          <div class="text-xs opacity-60">Items en operación</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Column: Devolución -->
+  <div class="flex flex-col border border-accent/30 bg-accent/5 rounded-xl overflow-hidden min-h-[220px]">
+    <div class="px-4 py-3 bg-base-200/60 border-b font-semibold tracking-wide text-sm">Devolución</div>
+    <div class="p-3 flex flex-col gap-3 flex-1">
+      <div class="card bg-base-100 border shadow-sm">
+        <div class="card-body p-4 gap-2">
+          <div class="flex items-center justify-between"><span class="badge badge-outline badge-xs">TIC pendientes de devolución</span> <span id="kb-dev-tic" class="text-sm font-semibold">0</span></div>
+          <div class="text-xs opacity-60">Items listos para devolver</div>
+        </div>
+      </div>
+      <div class="card bg-base-100 border shadow-sm">
+        <div class="card-body p-4 gap-2">
+          <div class="flex items-center justify-between"><span class="badge badge-outline badge-xs">VIP pendientes</span> <span id="kb-dev-vip" class="text-sm font-semibold">0</span></div>
+          <div class="text-xs opacity-60">Items listos para devolver</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Column: Inspección (moved below Devolución) -->
+  <div class="flex flex-col border border-warning/30 bg-warning/5 rounded-xl overflow-hidden min-h-[220px]">
+    <div class="px-4 py-3 bg-base-200/60 border-b font-semibold tracking-wide text-sm">Inspección</div>
+    <div class="p-3 flex flex-col gap-3 flex-1">
+      <div class="card bg-base-100 border shadow-sm">
+        <div class="card-body p-4 gap-2">
+          <div class="flex items-center justify-between"><span class="badge badge-outline badge-xs">TIC en inspección</span> <span id="kb-insp-tic" class="text-sm font-semibold">0</span></div>
+          <div class="text-xs opacity-60">Items bajo inspección</div>
+        </div>
+      </div>
+      <div class="card bg-base-100 border shadow-sm">
+        <div class="card-body p-4 gap-2">
+          <div class="flex items-center justify-between"><span class="badge badge-outline badge-xs">VIP en inspección</span> <span id="kb-insp-vip" class="text-sm font-semibold">0</span></div>
+          <div class="text-xs opacity-60">Items bajo inspección</div>
+        </div>
+      </div>
+    </div>
   </div>
 </div>
+
+<div class="mt-6 flex items-center gap-3 text-xs opacity-70">
+  <span class="loading loading-spinner loading-xs hidden" id="kb-spin"></span>
+  <span id="kb-status">Actualizado</span>
+  <button id="kb-refresh" class="btn btn-ghost btn-xs">Refrescar</button>
+</div>
+
+<script src="/static/js/kanban.js?v=<%= assetVersion %>" defer></script>

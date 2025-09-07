@@ -8,6 +8,7 @@ import dashboardRoutes from './routes/dashboardRoutes';
 import inventarioRoutes from './routes/inventarioRoutes';
 import registroRoutes from './routes/registroRoutes';
 import operacionRoutes from './routes/operacionRoutes';
+import administracionRoutes from './routes/administracionRoutes';
 import jwt from 'jsonwebtoken';
 import { config } from './config';
 import expressStatic from 'express';
@@ -46,6 +47,7 @@ app.use((req, res, next) => {
 			res.locals.user = jwt.verify(token, config.jwtSecret);
 		} catch {}
 	}
+	// res.locals.user.rol se usa para condicionar navegación (Administración solo admins)
 	next();
 });
 
@@ -54,6 +56,7 @@ app.use('/dashboard', dashboardRoutes);
 app.use('/inventario', inventarioRoutes);
 app.use('/registro', registroRoutes);
 app.use('/operacion', operacionRoutes);
+app.use('/administracion', administracionRoutes);
 app.get('/', (_req: Request, res: Response) => res.redirect('/auth/login'));
 app.get('/health', (_req: Request, res: Response) => res.json({ ok: true, env: process.env.NODE_ENV, port: process.env.PORT }));
 

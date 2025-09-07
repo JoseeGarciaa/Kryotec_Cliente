@@ -1,7 +1,54 @@
 <% title = title || 'Operación · En bodega' %>
-<div class="card bg-base-200">
-  <div class="card-body">
-    <div class="text-lg font-semibold">En bodega</div>
-    <div class="opacity-70 text-sm">Items disponibles en bodega.</div>
+<div class="space-y-4">
+  <div class="card bg-base-200">
+    <div class="card-body gap-2">
+      <div class="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+        <div>
+          <div class="text-lg font-semibold">En bodega</div>
+          <div class="opacity-70 text-sm">Items disponibles (estado 'En bodega').</div>
+        </div>
+        <form id="form-filtros" class="flex flex-wrap gap-2 items-end">
+          <label class="form-control w-48">
+            <div class="label"><span class="label-text text-xs">Buscar</span></div>
+            <input name="q" id="f-q" class="input input-sm input-bordered" placeholder="RFID / nombre / lote" />
+          </label>
+          <label class="form-control w-40">
+            <div class="label"><span class="label-text text-xs">Categoría</span></div>
+            <select name="cat" id="f-cat" class="select select-sm select-bordered">
+              <option value="">Todas</option>
+              <option value="tics">TICs</option>
+              <option value="vips">VIPs</option>
+              <option value="cubes">Cubes</option>
+            </select>
+          </label>
+          <button class="btn btn-primary btn-sm" type="submit">Filtrar</button>
+        </form>
+      </div>
+      <div class="overflow-x-auto">
+        <table class="table table-sm" id="tabla-bodega">
+          <thead>
+            <tr>
+              <th>ID</th>
+              <th>RFID</th>
+              <th>Nombre</th>
+              <th>Lote</th>
+              <th>Categoría</th>
+              <th>Sub estado</th>
+              <th>Ingreso</th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </div>
+      <div class="flex items-center justify-between mt-2" id="paginacion">
+        <div class="text-xs opacity-70" id="info-total"></div>
+        <div class="join">
+          <button class="join-item btn btn-xs" id="btn-prev">«</button>
+          <button class="join-item btn btn-xs" id="btn-next">»</button>
+        </div>
+      </div>
+    </div>
   </div>
 </div>
+
+<script src="/static/js/bodega.js?v=<%= assetVersion %>" defer></script>

@@ -46,7 +46,9 @@
               </ul>
             </details>
           </li>
-          <li><a class="<%= currentPath.startsWith('/usuarios') ? 'active' : '' %>" href="#">Usuarios</a></li>
+          <% if (user && (user.rol === 'Admin' || user.rol === 'admin')) { %>
+            <li><a class="<%= currentPath.startsWith('/administracion') ? 'active' : '' %>" href="/administracion">Administración</a></li>
+          <% } %>
         </ul>
         <form method="post" action="/auth/logout" class="mt-4">
           <button class="btn btn-outline btn-sm w-full">Salir</button>

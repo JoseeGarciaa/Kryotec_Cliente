@@ -1,0 +1,127 @@
+<% title = title || 'Administración' %>
+<div class="space-y-6">
+  <% if (flash && flash.ok) { %>
+    <div class="alert alert-success shadow"><span><%= flash.ok %></span></div>
+  <% } %>
+  <% if (flash && flash.error) { %>
+    <div class="alert alert-error shadow"><span><%= flash.error %></span></div>
+  <% } %>
+  <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+    <div class="stat bg-base-200 rounded-box">
+      <div class="stat-title">Usuarios Totales</div>
+      <div class="stat-value text-primary"><%= total %></div>
+    </div>
+    <div class="stat bg-base-200 rounded-box">
+      <div class="stat-title">Usuarios Activos</div>
+      <div class="stat-value text-success"><%= activos %></div>
+    </div>
+    <div class="stat bg-base-200 rounded-box">
+      <div class="stat-title">Usuarios Inactivos</div>
+      <div class="stat-value text-error"><%= inactivos %></div>
+    </div>
+  </div>
+
+  <div class="card bg-base-200">
+    <div class="card-body">
+      <div class="flex items-center justify-between mb-2">
+        <h2 class="card-title">Gestión de Usuarios</h2>
+  <button id="btn-new-user" class="btn btn-primary btn-sm">+ Nuevo Usuario</button>
+      </div>
+      <div class="overflow-x-auto">
+        <table class="table table-zebra table-sm">
+          <thead>
+            <tr>
+              <th>Usuario</th>
+              <th>Teléfono</th>
+              <th>Rol</th>
+              <th>Estado</th>
+              <th>Último acceso</th>
+              <th>Acciones</th>
+            </tr>
+          </thead>
+          <tbody>
+            <% users.forEach(u => { %>
+              <tr>
+                <td>
+                  <div class="flex items-center gap-2">
+                    <div class="avatar placeholder">
+                      <div class="bg-primary text-primary-content rounded-full w-8"><span><%= (u.nombre||'?')[0].toUpperCase() %></span></div>
+                    </div>
+                    <div>
+                      <div class="font-semibold text-sm leading-tight"><%= u.nombre %></div>
+                      <div class="text-xs opacity-70"><%= u.correo %></div>
+                    </div>
+                  </div>
+                </td>
+                <td class="text-xs"><%= u.telefono || '-' %></td>
+                <td><span class="badge badge-outline <%= u.rol==='Admin'?'badge-primary':'' %>"><%= u.rol %></span></td>
+                <td>
+                  <button class="badge border-0 <%= u.activo ? 'badge-success' : 'badge-error' %> cursor-pointer btn-toggle-activo" data-id="<%= u.id %>" data-next="<%= u.activo ? 'false' : 'true' %>">
+                    <%= u.activo ? '+ Activo' : 'X Inactivo' %>
+                  </button>
+                </td>
+                <td class="text-xs"><%= u.ultimo_ingreso ? new Date(u.ultimo_ingreso).toLocaleString('es-CO') : '-' %></td>
+                <td class="flex gap-1">
+      <button class="btn btn-ghost btn-xs btn-edit-user" 
+        data-id="<%= u.id %>" 
+        data-nombre="<%- u.nombre %>" 
+        data-correo="<%- u.correo %>" 
+        data-telefono="<%- u.telefono || '' %>" 
+        data-rol="<%- u.rol %>" 
+        data-activo="<%= u.activo ? 'true' : 'false' %>">✏️</button>
+      <button class="btn btn-ghost btn-xs text-error btn-del-user" data-id="<%= u.id %>">🗑️</button>
+                </td>
+              </tr>
+            <% }) %>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+
+<dialog id="dlg-new-user" class="modal">
+  <div class="modal-box">
+    <form method="post" action="/administracion/nuevo" class="space-y-3">
+      <h3 class="font-bold text-lg">Nuevo Usuario</h3>
+      <input required name="nombre" placeholder="Nombre" class="input input-sm input-bordered w-full" />
+      <input required name="correo" type="email" placeholder="Correo" class="input input-sm input-bordered w-full" />
+      <input name="telefono" placeholder="Teléfono" class="input input-sm input-bordered w-full" />
+      <input name="password" type="password" placeholder="Password (opcional)" class="input input-sm input-bordered w-full" />
+      <select name="rol" class="select select-sm select-bordered w-full">
+        <option value="User">User</option>
+        <option value="Admin">Admin</option>
+      </select>
+      <div class="modal-action">
+        <button type="submit" class="btn btn-primary btn-sm">Guardar</button>
+  <button type="button" class="btn btn-sm btn-close-modal" data-target="dlg-new-user">Cerrar</button>
+      </div>
+    </form>
+  </div>
+</dialog>
+
+<dialog id="dlg-edit-user" class="modal">
+  <div class="modal-box">
+    <form id="form-edit" method="post" class="space-y-3">
+      <h3 class="font-bold text-lg">Editar Usuario</h3>
+      <input required name="nombre" placeholder="Nombre" class="input input-sm input-bordered w-full" />
+      <input required name="correo" type="email" placeholder="Correo" class="input input-sm input-bordered w-full" />
+      <input name="telefono" placeholder="Teléfono" class="input input-sm input-bordered w-full" />
+      <input name="password" type="password" placeholder="Password (dejar vacío para no cambiar)" class="input input-sm input-bordered w-full" />
+      <select name="rol" class="select select-sm select-bordered w-full">
+        <option value="User">User</option>
+        <option value="Admin">Admin</option>
+      </select>
+      <select name="activo" class="select select-sm select-bordered w-full">
+        <option value="true">Activo</option>
+        <option value="false">Inactivo</option>
+      </select>
+      <div class="modal-action">
+        <button type="submit" class="btn btn-primary btn-sm">Guardar</button>
+  <button type="button" class="btn btn-sm btn-close-modal" data-target="dlg-edit-user">Cerrar</button>
+      </div>
+    </form>
+  </div>
+</dialog>
+
+<script src="/static/js/administracion.js?v=<%= assetVersion %>" defer></script>
