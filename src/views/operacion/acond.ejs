@@ -148,6 +148,26 @@
   </div>
 </dialog>
 
+<!-- Modal Despacho (marcar caja completa con un solo RFID) -->
+<dialog id="modal-despacho" class="modal">
+  <div class="modal-box max-w-xl">
+    <form method="dialog">
+      <button class="btn btn-sm btn-circle btn-ghost absolute right-2 top-2">✕</button>
+    </form>
+    <h3 class="font-bold text-lg mb-2">Marcar Caja Lista para Despacho</h3>
+    <div class="text-xs opacity-70 mb-3">Escanea 1 RFID de la caja (cualquier componente). Detectaremos automáticamente todos los componentes y los moveremos a <strong>Lista para Despacho</strong>.</div>
+    <label class="input input-bordered flex items-center gap-2 w-full mb-3">
+      <span class="opacity-60 text-xs">RFID</span>
+  <input id="despacho-scan" type="text" class="grow" placeholder="Listo para escanear..." autocomplete="off" maxlength="24" />
+    </label>
+    <div id="despacho-summary" class="text-xs mb-4 hidden"></div>
+    <div class="flex gap-3 items-center">
+      <button id="btn-despacho-confirm" class="btn btn-success btn-sm" disabled>Marcar como Listo</button>
+      <span id="despacho-msg" class="text-xs opacity-70"></span>
+    </div>
+  </div>
+</dialog>
+
 <!-- Modal Detalle Caja -->
 <div id="modal-caja-detalle" class="hidden">
   <div class="fixed inset-0 bg-black/60 z-40 flex items-start justify-center overflow-auto py-10" data-close="detalle">

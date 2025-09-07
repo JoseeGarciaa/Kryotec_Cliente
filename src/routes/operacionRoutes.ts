@@ -28,7 +28,15 @@ router.post('/acond/ensamblaje/create', requireAuth, OperacionController.acondEn
 router.post('/acond/caja/timer/start', requireAuth, OperacionController.acondCajaTimerStart);
 router.post('/acond/caja/timer/clear', requireAuth, OperacionController.acondCajaTimerClear);
 router.post('/acond/caja/timer/complete', requireAuth, OperacionController.acondCajaTimerComplete);
+router.post('/acond/despacho/lookup', requireAuth, OperacionController.acondDespachoLookup);
+router.post('/acond/despacho/move', requireAuth, OperacionController.acondDespachoMove);
 router.get('/operacion', requireAuth, OperacionController.operacion);
+// Operación phase caja scan / timers
+router.post('/operacion/caja/lookup', requireAuth, OperacionController.operacionCajaLookup);
+router.post('/operacion/caja/move', requireAuth, OperacionController.operacionCajaMove);
+router.post('/operacion/caja/timer/start', requireAuth, OperacionController.operacionCajaTimerStart);
+router.post('/operacion/caja/timer/clear', requireAuth, OperacionController.operacionCajaTimerClear);
+router.post('/operacion/caja/timer/complete', requireAuth, OperacionController.operacionCajaTimerComplete);
 router.get('/devolucion', requireAuth, OperacionController.devolucion);
 router.get('/inspeccion', requireAuth, OperacionController.inspeccion);
 

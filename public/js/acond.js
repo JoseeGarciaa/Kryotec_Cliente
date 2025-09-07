@@ -12,15 +12,17 @@
     contListo: '#listoDespachoBody',            // tbody for listo para despacho table
     placeholderListo: '#listoDespachoPlaceholder', // optional dedicated placeholder div (if exists)
     toggleVistaBtns: '[data-vista-toggle]',
-    filtroInput: '#filtroCajaInput',
+    // Ajustado a ID real en la vista acond.ejs
+    filtroInput: '#search-ensam',
     scanInput: '#scanInput',
     scanForm: '#scanForm',
     validarBtn: '#validarParcialBtn',
     crearBtn: '#crearCajaBtn',
     listaParcial: '#scanItemsList',
     counts: {
-      ensamblaje: '#countEnsamblaje',
-      listo: '#countListo'
+      // IDs reales en el markup
+      ensamblaje: '#count-ensam',
+      listo: '#count-listo'
     },
     modal: '#detalleCajaModal',
     modalClose: '[data-close-modal]',
@@ -35,6 +37,8 @@
   let pollingTimer = null;
   let tickingTimer = null;
   let serverNowOffsetMs = 0; // serverNow - clientNow to sync timers
+  let lastFilteredComponentCount = 0; // para mostrar (filtrados de total)
+  let totalComponentCount = 0;
 
   // ========================= UTILITIES =========================
   function qs(selector){ return document.querySelector(selector); }
@@ -98,7 +102,11 @@
 
     // Filter (client-side) by text if filter input present
     const filterValue = (qs(sel.filtroInput)?.value || '').trim().toLowerCase();
-    const filtered = filterValue ? cajas.filter(c => (c.codigoCaja||'').toLowerCase().includes(filterValue) ) : cajas.slice();
+  const filtered = filterValue ? cajas.filter(c => (c.codigoCaja||'').toLowerCase().includes(filterValue) ) : cajas.slice();
+
+  // Contar componentes totales y filtrados
+  totalComponentCount = cajas.reduce((acc,c)=> acc + ((c.componentes||[]).length || 0), 0);
+  lastFilteredComponentCount = filtered.reduce((acc,c)=> acc + ((c.componentes||[]).length || 0), 0);
 
     // Cards view
   contCards.innerHTML = filtered.map(c => cajaCardHTML(c)).join('');
@@ -207,8 +215,8 @@
   function updateCounts(){
     const ensam = qs(sel.counts.ensamblaje);
     const listo = qs(sel.counts.listo);
-    if(ensam) ensam.textContent = cajas.length.toString();
-    if(listo) listo.textContent = listoDespacho.length.toString();
+  if(ensam) ensam.textContent = `(${lastFilteredComponentCount} de ${totalComponentCount})`;
+  if(listo) listo.textContent = `(${listoDespacho.length} de ${listoDespacho.length})`;
   }
 
   // ========================= FILTER =========================
@@ -401,7 +409,7 @@
 
     // Filtro
     const filtro = qs(sel.filtroInput);
-    if(filtro){ filtro.addEventListener('input', applyFilter); }
+  if(filtro){ filtro.addEventListener('input', ()=>{ applyFilter(); updateCounts(); }); }
 
     // Scan form
     const form = qs(sel.scanForm);
@@ -470,7 +478,7 @@
   // ========================= LEGACY / NUEVO MODAL DE ENSAMBLAJE =========================
   // El markup existe en la vista (dialog#modal-ensam). Aquí gestionamos escaneo y validación.
   function setupLegacyModal(){
-    const openBtns = [document.getElementById('btn-add-ensam'), document.getElementById('btn-add-listo')].filter(Boolean);
+  const openBtns = [document.getElementById('btn-add-ensam')].filter(Boolean);
     const dialog = document.getElementById('modal-ensam');
     if(!dialog || openBtns.length===0) return; // nada que hacer
     const scanInput = document.getElementById('scan-box');
@@ -571,4 +579,51 @@
 
   openBtns.forEach(b=> b.addEventListener('click', ()=>{ try { dialog.showModal(); } catch { dialog.classList.remove('hidden'); } resetAll(); scanInput?.focus(); }));
   }
+
+  // ========================= MODAL DESPACHO =========================
+  (function setupDespachoModal(){
+    const btn = document.getElementById('btn-add-listo');
+    const dialog = document.getElementById('modal-despacho');
+    if(!btn || !dialog) return;
+    const input = document.getElementById('despacho-scan');
+    const summary = document.getElementById('despacho-summary');
+    const msg = document.getElementById('despacho-msg');
+    const confirmBtn = document.getElementById('btn-despacho-confirm');
+    let lastCajaId = null; let lastRfid = '';
+    function reset(){ lastCajaId=null; lastRfid=''; if(summary){ summary.classList.add('hidden'); summary.innerHTML=''; } if(msg) msg.textContent=''; if(confirmBtn) confirmBtn.disabled=true; if(input) input.value=''; }
+    async function lookup(code){
+      if(!code || code.length!==24) return; if(msg) msg.textContent='Buscando caja...';
+      try {
+        const r = await fetch('/operacion/acond/despacho/lookup',{ method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ rfid: code })});
+        const j = await r.json();
+        if(!j.ok){ if(msg) msg.textContent = j.error||'Error'; if(confirmBtn) confirmBtn.disabled=true; return; }
+        lastCajaId = j.caja_id; lastRfid = code;
+        if(summary){
+          summary.innerHTML = `<div class='mb-2'><strong>Caja:</strong> ${j.lote} (ID ${j.caja_id})</div>
+            <div class='mb-2'>Componentes (${j.total}):<div class='mt-1 grid grid-cols-2 gap-1 max-h-40 overflow-auto'>${(j.rfids||[]).map(rf=>`<span class='badge badge-ghost badge-xs font-mono'>${rf}</span>`).join('')}</div></div>
+            <div class='opacity-70'>Pendientes por marcar: ${j.pendientes}</div>`;
+          summary.classList.remove('hidden');
+        }
+        if(msg) msg.textContent='';
+        if(confirmBtn) confirmBtn.disabled = false;
+      } catch(e){ if(msg) msg.textContent='Error lookup'; }
+    }
+    input?.addEventListener('input', ()=>{ const v=input.value.replace(/\s+/g,''); if(v.length===24){ lookup(v); } });
+  // Enforce máximo 24
+  input?.addEventListener('input', ()=>{ if(input.value.length>24){ input.value = input.value.slice(0,24); } });
+    input?.addEventListener('keydown', e=>{ if(e.key==='Enter'){ e.preventDefault(); const v=input.value.trim(); if(v.length===24) lookup(v); }});
+    confirmBtn?.addEventListener('click', async ()=>{
+      if(!lastCajaId || !lastRfid) return; confirmBtn.disabled=true; if(msg) msg.textContent='Marcando...';
+      try {
+        const r = await fetch('/operacion/acond/despacho/move',{ method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ rfid: lastRfid })});
+        const j = await r.json();
+        if(!j.ok){ if(msg) msg.textContent=j.error||'Error'; confirmBtn.disabled=false; return; }
+        if(msg) msg.textContent='Caja marcada lista.';
+        await loadData();
+        setTimeout(()=>{ try { dialog.close(); } catch{} }, 600);
+      } catch(e){ if(msg) msg.textContent='Error moviendo'; confirmBtn.disabled=false; }
+    });
+    btn.addEventListener('click', ()=>{ try { dialog.showModal(); } catch { dialog.classList.remove('hidden'); } reset(); setTimeout(()=>input?.focus(),50); });
+    dialog?.addEventListener('close', reset);
+  })();
 })();

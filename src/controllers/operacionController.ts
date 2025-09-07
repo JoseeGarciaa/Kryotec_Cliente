@@ -1129,5 +1129,199 @@ export const OperacionController = {
   await c.query(`UPDATE inventario_credocubes ic SET sub_estado='Lista para Despacho' WHERE ic.rfid IN (SELECT rfid FROM acond_caja_items WHERE caja_id=$1)`, [cajaId]);
     });
     res.json({ ok:true });
+  },
+
+  // ============================= ACONDICIONAMIENTO · DESPACHO MANUAL =============================
+  // Lookup a caja by scanning one of its RFIDs while in Ensamblaje
+  acondDespachoLookup: async (req: Request, res: Response) => {
+    const tenant = (req as any).user?.tenant;
+    const { rfid } = req.body as any;
+    const code = typeof rfid === 'string' ? rfid.trim() : '';
+    if(code.length !== 24) return res.status(400).json({ ok:false, error:'RFID inválido' });
+    try {
+      const row = await withTenant(tenant, (c)=> c.query(
+        `SELECT c.caja_id, c.lote AS caja_lote,
+                array_agg(aci.rfid ORDER BY aci.rfid) AS rfids,
+                bool_and(ic.estado='Acondicionamiento' AND ic.sub_estado='Ensamblaje') AS all_ensamblaje,
+                COUNT(*) FILTER (WHERE ic.sub_estado IN ('Lista para Despacho','Listo')) AS listos,
+                COUNT(*)::int AS total
+           FROM acond_caja_items aci
+           JOIN acond_cajas c ON c.caja_id = aci.caja_id
+           JOIN inventario_credocubes ic ON ic.rfid = aci.rfid
+          WHERE aci.rfid = $1
+          GROUP BY c.caja_id, c.lote`, [code]));
+      if(!row.rowCount) return res.status(404).json({ ok:false, error:'RFID no pertenece a ninguna caja' });
+      const r:any = row.rows[0];
+      if(r.listos === r.total) return res.status(400).json({ ok:false, error:'La caja ya está marcada Lista para Despacho' });
+      res.json({ ok:true, caja_id: r.caja_id, lote: r.caja_lote, rfids: r.rfids, pendientes: r.total - r.listos, total: r.total });
+    } catch(e:any){
+      res.status(500).json({ ok:false, error: e.message||'Error lookup' });
+    }
+  },
+  // Move entire caja to Lista para Despacho given one RFID (auto-detect caja)
+  acondDespachoMove: async (req: Request, res: Response) => {
+    const tenant = (req as any).user?.tenant;
+    const { rfid } = req.body as any;
+    const code = typeof rfid === 'string' ? rfid.trim() : '';
+    if(code.length !== 24) return res.status(400).json({ ok:false, error:'RFID inválido' });
+    try {
+      await withTenant(tenant, async (c) => {
+        await c.query('BEGIN');
+        try {
+          const cajaQ = await c.query(
+            `SELECT c.caja_id
+               FROM acond_caja_items aci
+               JOIN acond_cajas c ON c.caja_id = aci.caja_id
+              WHERE aci.rfid=$1
+              LIMIT 1`, [code]);
+          if(!cajaQ.rowCount){ await c.query('ROLLBACK'); return res.status(404).json({ ok:false, error:'RFID no pertenece a caja' }); }
+          const cajaId = cajaQ.rows[0].caja_id;
+          const upd = await c.query(
+            `UPDATE inventario_credocubes ic
+                SET sub_estado='Lista para Despacho'
+               WHERE ic.rfid IN (SELECT rfid FROM acond_caja_items WHERE caja_id=$1)
+                 AND ic.estado='Acondicionamiento'
+                 AND ic.sub_estado='Ensamblaje'`, [cajaId]);
+          await c.query('COMMIT');
+          res.json({ ok:true, caja_id: cajaId, moved: upd.rowCount });
+        } catch(e){ await c.query('ROLLBACK'); throw e; }
+      });
+    } catch(e:any){
+      res.status(500).json({ ok:false, error: e.message||'Error moviendo a despacho' });
+    }
+  },
+
+  // ============================= OPERACIÓN · CAJA LOOKUP & MOVE =============================
+  // Lookup caja by either a component RFID (24 chars) or the caja lote code (e.g. CAJA001-05092025)
+  operacionCajaLookup: async (req: Request, res: Response) => {
+    const tenant = (req as any).user?.tenant;
+    const { code } = req.body as any;
+    let val = typeof code === 'string' ? code.trim() : '';
+    if(!val) return res.status(400).json({ ok:false, error:'Código requerido' });
+    try {
+      // Resolve caja_id
+      let cajaRow: any = null;
+      if(val.length === 24){
+        const r = await withTenant(tenant, (c)=> c.query(
+          `SELECT c.caja_id, c.lote FROM acond_caja_items aci JOIN acond_cajas c ON c.caja_id = aci.caja_id WHERE aci.rfid=$1 LIMIT 1`, [val]));
+        if(r.rowCount) cajaRow = r.rows[0];
+      }
+      if(!cajaRow){
+        // Try as lote code
+        const r2 = await withTenant(tenant, (c)=> c.query(`SELECT caja_id, lote FROM acond_cajas WHERE lote=$1 LIMIT 1`, [val]));
+        if(r2.rowCount) cajaRow = r2.rows[0];
+      }
+      if(!cajaRow) return res.status(404).json({ ok:false, error:'Caja no encontrada' });
+      const cajaId = cajaRow.caja_id;
+      const itemsQ = await withTenant(tenant, (c)=> c.query(
+        `SELECT aci.rol, ic.rfid, ic.estado, ic.sub_estado, m.nombre_modelo
+           FROM acond_caja_items aci
+           JOIN inventario_credocubes ic ON ic.rfid = aci.rfid
+           JOIN modelos m ON m.modelo_id = ic.modelo_id
+          WHERE aci.caja_id=$1
+          ORDER BY CASE aci.rol WHEN 'vip' THEN 0 WHEN 'tic' THEN 1 ELSE 2 END, ic.rfid`, [cajaId]));
+      // Ensure table exists then fetch timer
+      await withTenant(tenant, (c)=> c.query(`CREATE TABLE IF NOT EXISTS operacion_caja_timers (
+           caja_id int PRIMARY KEY REFERENCES acond_cajas(caja_id) ON DELETE CASCADE,
+           started_at timestamptz,
+           duration_sec integer,
+           active boolean NOT NULL DEFAULT false,
+           updated_at timestamptz NOT NULL DEFAULT NOW()
+         )`));
+      const timerSingleQ = await withTenant(tenant, (c)=> c.query(`SELECT caja_id, started_at, duration_sec, active FROM operacion_caja_timers WHERE caja_id=$1`, [cajaId]));
+      let timerRow: any = null;
+      if(timerSingleQ.rowCount) timerRow = timerSingleQ.rows[0];
+      const items = itemsQ.rows as any[];
+      const allListo = items.every(i => i.estado==='Acondicionamiento' && (i.sub_estado==='Lista para Despacho' || i.sub_estado==='Listo'));
+      const allOperacion = items.every(i => i.estado==='Operación');
+      let timer: any = null;
+      if(timerRow && timerRow.started_at && timerRow.duration_sec){
+        const startsAt = timerRow.started_at;
+        const endsAt = new Date(new Date(startsAt).getTime() + timerRow.duration_sec*1000).toISOString();
+        timer = { startsAt, endsAt, active: !!timerRow.active };
+      }
+      res.json({ ok:true, caja: { id: cajaId, lote: cajaRow.lote, items, allListo, allOperacion, timer } });
+    } catch(e:any){
+      res.status(500).json({ ok:false, error: e.message||'Error lookup' });
+    }
+  },
+  // Move all items of caja from Lista para Despacho -> Operación (sub_estado 'Transito')
+  operacionCajaMove: async (req: Request, res: Response) => {
+    const tenant = (req as any).user?.tenant;
+    const { code } = req.body as any;
+    let val = typeof code === 'string' ? code.trim() : '';
+    if(!val) return res.status(400).json({ ok:false, error:'Código requerido' });
+    try {
+      let cajaId: number | null = null;
+      if(val.length===24){
+        const r = await withTenant(tenant, (c)=> c.query(`SELECT c.caja_id FROM acond_caja_items aci JOIN acond_cajas c ON c.caja_id=aci.caja_id WHERE aci.rfid=$1 LIMIT 1`, [val]));
+        if(r.rowCount) cajaId = r.rows[0].caja_id;
+      }
+      if(cajaId==null){
+        const r2 = await withTenant(tenant, (c)=> c.query(`SELECT caja_id FROM acond_cajas WHERE lote=$1 LIMIT 1`, [val]));
+        if(r2.rowCount) cajaId = r2.rows[0].caja_id;
+      }
+      if(cajaId==null) return res.status(404).json({ ok:false, error:'Caja no encontrada' });
+      await withTenant(tenant, async (c)=>{
+        await c.query('BEGIN');
+        try {
+          // Only move those currently listos para despacho
+            await c.query(
+              `UPDATE inventario_credocubes ic
+                  SET estado='Operación', sub_estado='Transito'
+                 WHERE ic.rfid IN (SELECT rfid FROM acond_caja_items WHERE caja_id=$1)
+                   AND ic.estado='Acondicionamiento'
+                   AND ic.sub_estado IN ('Lista para Despacho','Listo')`, [cajaId]);
+          await c.query('COMMIT');
+        } catch(e){ await c.query('ROLLBACK'); throw e; }
+      });
+      res.json({ ok:true, caja_id: cajaId });
+    } catch(e:any){ res.status(500).json({ ok:false, error: e.message||'Error moviendo a Operación' }); }
+  },
+  // Start manual timer in Operación phase for caja
+  operacionCajaTimerStart: async (req: Request, res: Response) => {
+    const tenant = (req as any).user?.tenant;
+    const { caja_id, durationSec } = req.body as any;
+    const cajaId = Number(caja_id);
+    const dur = Number(durationSec);
+    if(!Number.isFinite(cajaId) || cajaId<=0) return res.status(400).json({ ok:false, error:'caja_id inválido' });
+    if(!Number.isFinite(dur) || dur<=0) return res.status(400).json({ ok:false, error:'Duración inválida' });
+    await withTenant(tenant, async (c)=>{
+      await c.query(`CREATE TABLE IF NOT EXISTS operacion_caja_timers (
+           caja_id int PRIMARY KEY REFERENCES acond_cajas(caja_id) ON DELETE CASCADE,
+           started_at timestamptz,
+           duration_sec integer,
+           active boolean NOT NULL DEFAULT false,
+           updated_at timestamptz NOT NULL DEFAULT NOW()
+        )`);
+      const ex = await c.query(`SELECT 1 FROM acond_cajas WHERE caja_id=$1`, [cajaId]);
+      if(!ex.rowCount) return res.status(404).json({ ok:false, error:'Caja no existe' });
+      await c.query(`INSERT INTO operacion_caja_timers(caja_id, started_at, duration_sec, active, updated_at)
+                       VALUES($1,NOW(),$2,true,NOW())
+          ON CONFLICT (caja_id) DO UPDATE SET started_at=NOW(), duration_sec=EXCLUDED.duration_sec, active=true, updated_at=NOW()`,[cajaId,dur]);
+    });
+    res.json({ ok:true });
+  },
+  operacionCajaTimerClear: async (req: Request, res: Response) => {
+    const tenant = (req as any).user?.tenant;
+    const { caja_id } = req.body as any;
+    const cajaId = Number(caja_id);
+    if(!Number.isFinite(cajaId) || cajaId<=0) return res.status(400).json({ ok:false, error:'caja_id inválido' });
+    await withTenant(tenant, async (c)=>{
+      await c.query(`UPDATE operacion_caja_timers SET active=false, started_at=NULL, duration_sec=NULL, updated_at=NOW() WHERE caja_id=$1`, [cajaId]);
+    });
+    res.json({ ok:true });
+  },
+  operacionCajaTimerComplete: async (req: Request, res: Response) => {
+    const tenant = (req as any).user?.tenant;
+    const { caja_id } = req.body as any;
+    const cajaId = Number(caja_id);
+    if(!Number.isFinite(cajaId) || cajaId<=0) return res.status(400).json({ ok:false, error:'caja_id inválido' });
+    await withTenant(tenant, async (c)=>{
+      await c.query(`UPDATE operacion_caja_timers SET active=false, updated_at=NOW() WHERE caja_id=$1`, [cajaId]);
+      // Mark items as Operación completada
+      await c.query(`UPDATE inventario_credocubes ic SET sub_estado='Completado' WHERE ic.rfid IN (SELECT rfid FROM acond_caja_items WHERE caja_id=$1) AND ic.estado='Operación'`, [cajaId]);
+    });
+    res.json({ ok:true });
   }
 };
