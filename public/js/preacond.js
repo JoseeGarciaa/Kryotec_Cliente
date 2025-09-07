@@ -221,7 +221,7 @@
         tr.classList.add(section==='atemperamiento' ? 'bg-warning/10' : 'bg-info/10');
         tr.setAttribute('data-completed','1');
       } else { tr.removeAttribute('data-completed'); }
-      let controls = '';
+  let controls = '';
       if(active){
         controls = `<button class="btn btn-ghost btn-xs text-error" title="Detener" data-item-clear="${r.rfid}" data-section="${section}">
              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" class="w-4 h-4" fill="currentColor"><path d="M6 6h12v12H6z"/></svg>
@@ -232,14 +232,13 @@
              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" class="w-4 h-4" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
            </button>`;
       } else {
-  // Completed -> static status text instead of return option
-  const label = section==='congelamiento' ? 'Congelado' : 'Atemperado';
-  controls = `<span class="text-xs font-semibold ${section==='congelamiento'?'text-info':'text-warning'}">${label}</span>`;
+        // Completed -> no extra label here (status moves to ESTADO column)
+        controls = '';
       }
   const loteVal = r.lote || '';
       const lotePill = loteVal ? `<span class="badge badge-ghost badge-xs sm:badge-sm whitespace-nowrap">L: ${loteVal}</span>` : '';
       const badgeClass = isCompleted ? (section==='atemperamiento' ? 'badge-warning' : 'badge-info') : 'badge-neutral';
-  tr.innerHTML = `<td>${r.rfid}</td><td class="hidden md:table-cell">${r.nombre_unidad||''}</td><td class="hidden lg:table-cell">${r.lote||''}</td><td class="hidden md:table-cell">${r.estado||''}</td>
+  tr.innerHTML = `<td>${r.rfid}</td><td class="hidden md:table-cell">${r.nombre_unidad||''}</td><td class="hidden lg:table-cell">${r.lote||''}</td><td class="hidden md:table-cell">${r.sub_estado || '-'}</td>
         <td class="flex flex-wrap items-center gap-1 sm:gap-2">
           <span class="badge ${badgeClass} badge-sm" data-threshold="1"><span id="${timerId}">${active? '00:00:00' : ''}</span></span>
           ${lotePill}

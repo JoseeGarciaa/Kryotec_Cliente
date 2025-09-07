@@ -850,10 +850,12 @@ export const OperacionController = {
   // Items listos para despacho (sub_estado 'Listo')
   const listoRows = await withTenant(tenant, (c)=> c.query(
     `SELECT ic.rfid, ic.nombre_unidad, ic.lote, ic.estado, ic.sub_estado, NOW() AS updated_at, m.nombre_modelo,
-            act.started_at AS timer_started_at, act.duration_sec AS timer_duration_sec, act.active AS timer_active
+            act.started_at AS timer_started_at, act.duration_sec AS timer_duration_sec, act.active AS timer_active,
+            c.lote AS caja_lote
        FROM inventario_credocubes ic
        JOIN modelos m ON m.modelo_id = ic.modelo_id
   LEFT JOIN acond_caja_items aci ON aci.rfid = ic.rfid
+  LEFT JOiN acond_cajas c ON c.caja_id = aci.caja_id
   LEFT JOIN acond_caja_timers act ON act.caja_id = aci.caja_id
       WHERE ic.estado='Acondicionamiento' AND ic.sub_estado IN ('Lista para Despacho','Listo')
       ORDER BY ic.id DESC
@@ -900,14 +902,20 @@ export const OperacionController = {
         completedAt = endsAt;
       }
     }
+    // categoria simplificada (vip/tic/cube)
+    const modeloLower = (r.nombre_modelo||'').toLowerCase();
+    let categoriaSimple = 'otros';
+    if(/vip/.test(modeloLower)) categoriaSimple = 'vip';
+    else if(/tic/.test(modeloLower)) categoriaSimple = 'tic';
+    else if(/cube/.test(modeloLower)) categoriaSimple = 'cube';
     return {
       codigo: r.rfid,
-      nombre: r.nombre_unidad,
-      estado: r.sub_estado || r.estado,
-      lote: r.lote,
+      nombre: r.nombre_modelo, // mover modelo a nombre
+  estado: r.sub_estado || r.estado, // ahora mostrar sub_estado real
+      lote: r.caja_lote || r.lote, // mostrar lote de la caja si existe
       updatedAt: r.updated_at,
       fase: 'Acond',
-      categoria: r.nombre_modelo,
+      categoria: categoriaSimple,
       cronometro: startsAt ? { startsAt, endsAt, completedAt } : null
     };
   });

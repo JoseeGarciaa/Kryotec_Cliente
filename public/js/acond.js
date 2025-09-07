@@ -7,7 +7,7 @@
 
   // ========================= DOM SELECTORS =========================
   const sel = {
-    contCajas: '#cajasContainer',                // card/grid view container
+  contCajas: '#grid-cajas',                // card/grid view container (ajustado a markup real)
     contCajasTabla: '#cajasTablaBody',           // table view body
     contListo: '#listoDespachoBody',            // tbody for listo para despacho table
     placeholderListo: '#listoDespachoPlaceholder', // optional dedicated placeholder div (if exists)
@@ -31,7 +31,7 @@
   let cajas = [];          // cajas en ensamblaje (con timers)
   let listoDespacho = [];  // items listos para despacho
   let scanBuffer = [];     // objetos escaneados (parcial)
-  let viewMode = 'cards';  // 'cards' | 'table'
+  let viewMode = 'table';  // 'cards' | 'table' (por defecto tabla como en la vista actual)
   let pollingTimer = null;
   let tickingTimer = null;
   let serverNowOffsetMs = 0; // serverNow - clientNow to sync timers
@@ -85,40 +85,81 @@
           }
         }
       }
-      return `<tr class="hover">\n        <td class="text-xs font-mono">${safeHTML(item.codigo || '')}</td>\n        <td>${safeHTML(item.estado || '')}</td>\n        <td>${formatDateTime(item.updatedAt)}</td>\n        <td>${safeHTML(item.lote || '')}</td>\n        <td class="text-xs">${chrono}</td>\n        <td>${safeHTML(item.categoria || '')}</td>\n      </tr>`;
+    return `<tr class="hover">\n        <td class="text-xs font-mono">${safeHTML(item.codigo || '')}</td>\n        <td>${safeHTML(item.nombre || '')}</td>\n        <td>${safeHTML(item.estado || '')}</td>\n        <td>${safeHTML(item.lote || '')}</td>\n        <td class="text-xs">${chrono}</td>\n        <td class="uppercase">${safeHTML(item.categoria || '')}</td>\n      </tr>`;
     }).join('');
     body.innerHTML = rows;
   }
 
   // ========================= RENDER FUNCTIONS (CAJAS) =========================
   function renderCajas(){
-    const contCards = qs(sel.contCajas);
-    const contTableBody = qs(sel.contCajasTabla);
-    if(!contCards || !contTableBody) return;
+  const contCards = qs(sel.contCajas);
+  const contTableBody = qs(sel.contCajasTabla);
+  if(!contCards || !contTableBody) return;
 
     // Filter (client-side) by text if filter input present
     const filterValue = (qs(sel.filtroInput)?.value || '').trim().toLowerCase();
     const filtered = filterValue ? cajas.filter(c => (c.codigoCaja||'').toLowerCase().includes(filterValue) ) : cajas.slice();
 
     // Cards view
-    contCards.innerHTML = filtered.map(c => cajaCardHTML(c)).join('');
+  contCards.innerHTML = filtered.map(c => cajaCardHTML(c)).join('');
 
-    // Table rows
-    contTableBody.innerHTML = filtered.map(c => cajaRowHTML(c)).join('');
+  // Table rows (una fila por componente para evitar agrupado de RFIDs)
+  const tableRows = [];
+  filtered.forEach(c => { tableRows.push(...cajaRowsHTML(c)); });
+  contTableBody.innerHTML = tableRows.join('');
   }
 
   function cajaCardHTML(c){
     const remaining = msRemaining(c);
     const timerText = timerDisplay(remaining, c.timer?.completedAt);
     const progress = timerProgressPct(c);
-    return `<div class="card bg-base-100 shadow-sm border border-base-200 mb-3" data-caja-id="${safeHTML(c.id)}">\n      <div class="card-body p-4">\n        <div class="flex justify-between items-start mb-2">\n          <h2 class="card-title text-sm font-semibold">${safeHTML(c.codigoCaja||'Caja')}</h2>\n          ${timerBadgeHTML(c, remaining)}\n        </div>\n        <div class="text-xs space-y-1">\n          <div><span class="font-medium">Estado:</span> ${safeHTML(c.estado||'-')}</div>\n          <div><span class="font-medium">Creado:</span> ${formatDateTime(c.createdAt)}</div>\n          <div><span class="font-medium">Actualizado:</span> ${formatDateTime(c.updatedAt)}</div>\n        </div>\n        <div class="mt-2">\n          <progress class="progress progress-primary w-full" value="${progress}" max="100"></progress>\n          <div class="text-[10px] text-right mt-1">${timerText}</div>\n        </div>\n        <div class="mt-3 flex gap-2">\n          <button class="btn btn-xs btn-outline" data-action="detalle" data-caja-id="${safeHTML(c.id)}">Detalle</button>\n          ${timerControlButtonsHTML(c)}\n        </div>\n      </div>\n    </div>`;
+  return `<div class="card bg-base-100 shadow-sm border border-base-200 mb-3" data-caja-id="${safeHTML(c.id)}">\n      <div class="card-body p-4">\n        <div class="flex justify-between items-start mb-2">\n          <h2 class="card-title text-sm font-semibold">${safeHTML(c.codigoCaja||'Caja')}</h2>\n          ${timerBadgeHTML(c, remaining)}\n        </div>\n        <div class="text-xs space-y-1">\n          <div><span class="font-medium">Estado:</span> ${safeHTML(c.estado||'-')}</div>\n          <div><span class="font-medium">Creado:</span> ${formatDateTime(c.createdAt)}</div>\n          <div><span class="font-medium">Actualizado:</span> ${formatDateTime(c.updatedAt)}</div>\n        </div>\n        <div class="mt-2">\n          <progress class="progress progress-primary w-full" value="${progress}" max="100"></progress>\n          <div class="text-[10px] text-right mt-1" data-timer-text>${timerText}</div>\n        </div>\n        <div class="mt-3 flex gap-2">\n          <button class="btn btn-xs btn-outline" data-action="detalle" data-caja-id="${safeHTML(c.id)}">Detalle</button>\n          ${timerControlButtonsHTML(c)}\n        </div>\n      </div>\n    </div>`;
   }
 
-  function cajaRowHTML(c){
+  // ========================= VIEW TOGGLE =========================
+  function updateViewVisibility(){
+    const gridWrap = document.getElementById('grid-cajas-wrapper');
+    const tableEl = document.getElementById('tabla-ensam');
+    const tableWrap = tableEl ? tableEl.parentElement : null; // overflow container
+    if(gridWrap) gridWrap.classList.toggle('hidden', viewMode !== 'cards');
+    if(tableWrap) tableWrap.classList.toggle('hidden', viewMode === 'cards');
+    const btnCards = document.getElementById('btn-view-cards');
+    const btnText = document.getElementById('btn-view-text');
+    if(btnCards) btnCards.classList.toggle('btn-active', viewMode === 'cards');
+    if(btnText) btnText.classList.toggle('btn-active', viewMode === 'table');
+  }
+
+  function cajaRowsHTML(c){
     const remaining = msRemaining(c);
     const progress = timerProgressPct(c);
     const timerText = timerDisplay(remaining, c.timer?.completedAt);
-    return `<tr class="hover" data-caja-id="${safeHTML(c.id)}">\n      <td class="text-xs font-mono">${safeHTML(c.codigoCaja||'')}</td>\n      <td>${safeHTML(c.estado||'')}</td>\n      <td>${formatDateTime(c.createdAt)}</td>\n      <td>${formatDateTime(c.updatedAt)}</td>\n      <td class="w-32">\n        <progress class="progress progress-primary w-full" value="${progress}" max="100"></progress>\n        <div class="text-[10px] text-right">${timerText}</div>\n      </td>\n      <td class="text-center">${timerControlButtonsHTML(c)}</td>\n      <td><button class="btn btn-xs btn-outline" data-action="detalle" data-caja-id="${safeHTML(c.id)}">Detalle</button></td>\n    </tr>`;
+    const comps = (c.componentes||[]);
+    if(!comps.length){
+      // Cronómetro estilo "anterior": badge pequeño + (si aplica) botón acción
+      const controls = timerTableControlsHTML(c);
+      return [ `<tr class="hover" data-caja-id="${safeHTML(c.id)}">\n        <td class="text-[10px] font-mono leading-tight text-gray-400">(sin items)</td>\n        <td class="text-xs">-</td>\n        <td class="text-xs">${safeHTML(c.estado||'')}</td>\n        <td class="text-xs">${safeHTML(c.codigoCaja||'')}</td>\n        <td class="w-32">\n          <span class="badge badge-neutral badge-xs" data-timer-badge><span data-timer-text>${timerText}</span></span>\n          ${controls}\n        </td>\n        <td class="text-xs">-</td>\n      </tr>` ];
+    }
+    return comps.map(cc => {
+      const controls = timerTableControlsHTML(c);
+      return `<tr class="hover" data-caja-id="${safeHTML(c.id)}">\n      <td class="text-[10px] font-mono leading-tight">${safeHTML(cc.codigo)}</td>\n      <td class="text-xs">${safeHTML(cc.tipo||cc.nombre||'')}</td>\n      <td class="text-xs">${safeHTML(c.estado||'')}</td>\n      <td class="text-xs">${safeHTML(c.codigoCaja||'')}</td>\n      <td class="w-32 flex items-center gap-1">\n        <span class="badge badge-neutral badge-xs" data-timer-badge><span data-timer-text>${timerText}</span></span>\n        ${controls}\n      </td>\n      <td class="text-xs uppercase">${safeHTML(cc.tipo||'')}</td>\n    </tr>`;
+    });
+  }
+
+  // Controles estilo tabla (similar a preacond) dependiendo del estado del timer
+  function timerTableControlsHTML(c){
+    if(!c.timer || (!c.timer.startsAt && !c.timer.endsAt)){
+      // No iniciado
+      return `<button class="btn btn-ghost btn-xs text-success" title="Iniciar" data-action="timer-start" data-caja-id="${safeHTML(c.id)}">\n        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" class="w-4 h-4" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>\n      </button>`;
+    }
+    if(c.timer && c.timer.completedAt){
+      return `<span class="inline-flex items-center justify-center text-success" title="Completado">\n        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" class="w-4 h-4" fill="currentColor"><path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/></svg>\n      </span>`;
+    }
+    const remaining = msRemaining(c);
+    if(remaining <= 0){
+      return `<button class="btn btn-ghost btn-xs text-primary" title="Completar" data-action="timer-complete" data-caja-id="${safeHTML(c.id)}">\n        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" class="w-4 h-4" fill="currentColor"><path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/></svg>\n      </button>`;
+    }
+    // En progreso
+    return `<button class="btn btn-ghost btn-xs text-error" title="Reiniciar" data-action="timer-clear" data-caja-id="${safeHTML(c.id)}">\n      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" class="w-4 h-4" fill="currentColor"><path d="M6 6h12v12H6z"/></svg>\n    </button>`;
   }
 
   function timerProgressPct(c){
@@ -208,13 +249,28 @@
         const id = el.getAttribute('data-caja-id');
         const caja = cajas.find(c=> String(c.id) === String(id));
         if(!caja) return;
-        // progress
-        const progressEls = el.querySelectorAll('progress');
         const remaining = msRemaining(caja);
-        const pct = timerProgressPct(caja);
-        progressEls.forEach(p=>{ p.value = pct; });
-        const small = el.querySelector('.text-[10px]');
-        if(small){ small.textContent = timerDisplay(remaining, caja.timer?.completedAt); }
+        const small = el.querySelector('[data-timer-text]');
+        if(small){
+          small.textContent = timerDisplay(remaining, caja.timer?.completedAt);
+          // Update badge color semantics similar a preacond (warning/danger thresholds)
+          const badge = small.closest('[data-timer-badge]');
+          if(badge && caja.timer && !caja.timer.completedAt){
+            const remSec = Math.max(0, Math.floor(remaining/1000));
+            badge.classList.remove('badge-info','badge-warning','badge-error','badge-success','badge-neutral');
+            if(caja.timer.completedAt){
+              badge.classList.add('badge-success');
+            } else if(remSec<=0){
+              badge.classList.add('badge-info');
+            } else if(remSec<=60){
+              badge.classList.add('badge-error');
+            } else if(remSec<=300){
+              badge.classList.add('badge-warning');
+            } else {
+              badge.classList.add('badge-neutral');
+            }
+          }
+        }
       });
     }, 1000);
   }
@@ -263,7 +319,8 @@
     if(scanBuffer.length===0) return;
     disableBtn(sel.validarBtn, true);
     try{
-      const res = await fetch('/operacion/acond/ensamblaje/validate',{ method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ componentes: scanBuffer.map(s=> s.codigo) })});
+  // Backend espera { rfids: [] }
+  const res = await fetch('/operacion/acond/ensamblaje/validate',{ method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ rfids: scanBuffer.map(s=> s.codigo) })});
       const json = await res.json();
       if(!res.ok){ throw new Error(json.message || 'Error de validación'); }
       // Could show validations details / highlight required pending pieces
@@ -279,7 +336,8 @@
     if(scanBuffer.length===0){ alert('Agregue componentes primero.'); return; }
     disableBtn(sel.crearBtn, true);
     try{
-      const res = await fetch('/operacion/acond/ensamblaje/create',{ method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ componentes: scanBuffer.map(s=> s.codigo) })});
+  // Backend espera { rfids: [] }
+  const res = await fetch('/operacion/acond/ensamblaje/create',{ method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ rfids: scanBuffer.map(s=> s.codigo) })});
       const json = await res.json();
       if(!res.ok) throw new Error(json.message || 'Error creando caja');
       // Reset buffer
@@ -299,6 +357,13 @@
   }
 
   // ========================= TIMER ACTIONS =========================
+  function askDurationSec(){
+    let minStr = prompt('Duración en minutos para el cronómetro de la caja:', '30');
+    if(minStr==null) return null;
+    const mins = Number(minStr.trim());
+    if(!Number.isFinite(mins) || mins<=0) return null;
+    return Math.round(mins*60);
+  }
   async function timerAction(id, action){
     let endpoint = '';
     if(action==='start') endpoint = '/operacion/acond/caja/timer/start';
@@ -306,7 +371,17 @@
     else if(action==='clear') endpoint = '/operacion/acond/caja/timer/clear';
     if(!endpoint) return;
     try{
-      const res = await fetch(endpoint,{ method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ id })});
+      const payload = { caja_id: id };
+      if(action==='start'){
+        let dur = cajas.find(c=> String(c.id)===String(id))?.timer?.durationSec;
+        if(!Number.isFinite(dur) || dur<=0){
+          const sec = askDurationSec();
+          if(sec==null){ return; }
+          dur = sec;
+        }
+        payload.durationSec = dur;
+      }
+      const res = await fetch(endpoint,{ method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload)});
       const json = await res.json();
       if(!res.ok) throw new Error(json.message||'Error timer');
       await loadData();
@@ -318,17 +393,11 @@
 
   // ========================= EVENTS =========================
   function bindEvents(){
-    // Toggle vista
-    qsa(sel.toggleVistaBtns).forEach(btn => {
-      btn.addEventListener('click', e => {
-        const mode = btn.getAttribute('data-vista-toggle');
-        if(mode && mode !== viewMode){
-          viewMode = mode;
-          document.documentElement.setAttribute('data-acond-vista', viewMode);
-          renderCajas();
-        }
-      });
-    });
+  // Toggle vista usando los IDs existentes
+  const btnCards = document.getElementById('btn-view-cards');
+  const btnText = document.getElementById('btn-view-text');
+  if(btnCards){ btnCards.addEventListener('click', ()=>{ if(viewMode!=='cards'){ viewMode='cards'; updateViewVisibility(); renderCajas(); }}); }
+  if(btnText){ btnText.addEventListener('click', ()=>{ if(viewMode!=='table'){ viewMode='table'; updateViewVisibility(); renderCajas(); }}); }
 
     // Filtro
     const filtro = qs(sel.filtroInput);
@@ -385,8 +454,10 @@
     renderInitialLoading();
     bindEvents();
     refreshScanList();
+  setupLegacyModal(); // activa soporte para los botones "Agregar Items"
     loadData();
     startPolling();
+  updateViewVisibility();
   }
 
   // Wait DOM
@@ -394,5 +465,110 @@
     document.addEventListener('DOMContentLoaded', init);
   } else {
     init();
+  }
+  
+  // ========================= LEGACY / NUEVO MODAL DE ENSAMBLAJE =========================
+  // El markup existe en la vista (dialog#modal-ensam). Aquí gestionamos escaneo y validación.
+  function setupLegacyModal(){
+    const openBtns = [document.getElementById('btn-add-ensam'), document.getElementById('btn-add-listo')].filter(Boolean);
+    const dialog = document.getElementById('modal-ensam');
+    if(!dialog || openBtns.length===0) return; // nada que hacer
+    const scanInput = document.getElementById('scan-box');
+    const msg = document.getElementById('msg-ensam');
+    const listTic = document.getElementById('list-tic');
+    const listVip = document.getElementById('list-vip');
+    const listCube = document.getElementById('list-cube');
+    const ticCount = document.getElementById('tic-count');
+    const vipCount = document.getElementById('vip-count');
+    const cubeCount = document.getElementById('cube-count');
+    const hint = document.getElementById('scan-hint');
+    const horas = document.getElementById('ensam-hr');
+    const minutos = document.getElementById('ensam-min');
+    const crearBtn = document.getElementById('btn-crear-caja');
+    const limpiarBtn = document.getElementById('btn-clear-ensam');
+
+    const ticSet = new Set();
+    const vipSet = new Set();
+    const cubeSet = new Set();
+
+    function renderLists(){
+      if(listTic) listTic.innerHTML = [...ticSet].map(r=>`<li class="px-2 py-1 bg-base-200 rounded text-xs font-mono truncate">${r}</li>`).join('');
+      if(listVip) listVip.innerHTML = [...vipSet].map(r=>`<li class="px-2 py-1 bg-base-200 rounded text-xs font-mono truncate">${r}</li>`).join('');
+      if(listCube) listCube.innerHTML = [...cubeSet].map(r=>`<li class="px-2 py-1 bg-base-200 rounded text-xs font-mono truncate">${r}</li>`).join('');
+    }
+    function compComplete(){ return ticSet.size===6 && vipSet.size===1 && cubeSet.size===1; }
+    function durationMinutes(){
+      const h = Number(horas?.value||'0');
+      const m = Number(minutos?.value||'0');
+      return (isFinite(h)?h:0)*60 + (isFinite(m)?m:0);
+    }
+    function updateStatus(){
+      if(ticCount) ticCount.textContent = `${ticSet.size} / 6`;
+      if(vipCount) vipCount.textContent = `${vipSet.size} / 1`;
+      if(cubeCount) cubeCount.textContent = `${cubeSet.size} / 1`;
+      const faltTic = Math.max(0, 6 - ticSet.size);
+      const faltVip = Math.max(0, 1 - vipSet.size);
+      const faltCube = Math.max(0, 1 - cubeSet.size);
+      if(hint) hint.textContent = compComplete() ? 'Composición completa. Indica duración y crea la caja.' : `Faltan: ${faltTic} TIC · ${faltVip} VIP · ${faltCube} CUBE`;
+      if(crearBtn) crearBtn.disabled = !(compComplete() && durationMinutes()>0);
+    }
+    function resetAll(){ ticSet.clear(); vipSet.clear(); cubeSet.clear(); renderLists(); updateStatus(); if(msg) msg.textContent=''; }
+
+    async function validateAll(last){
+      const rfids = [...ticSet, ...vipSet, ...cubeSet];
+      if(last && !rfids.includes(last)) rfids.push(last);
+      if(rfids.length===0 && !last) return;
+      try {
+        const res = await fetch('/operacion/acond/ensamblaje/validate',{ method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ rfids })});
+        const json = await res.json();
+        if(!res.ok || !json.ok) throw new Error(json.error||'Error validando');
+        // Reconstruir sets desde respuesta valid (rol)
+        ticSet.clear(); vipSet.clear(); cubeSet.clear();
+        json.valid.forEach(v=>{ if(v.rol==='tic') ticSet.add(v.rfid); else if(v.rol==='vip') vipSet.add(v.rfid); else if(v.rol==='cube') cubeSet.add(v.rfid); });
+        renderLists(); updateStatus();
+        if(msg) msg.textContent='';
+        if(json.invalid && json.invalid.length){
+          const inv = json.invalid.find(i=>i.rfid===last);
+          if(inv && msg) msg.textContent = `${inv.rfid}: ${inv.reason}`;
+        }
+      } catch(e){ if(msg) msg.textContent = e.message||'Error'; }
+    }
+    function handleScan(force){
+      if(!scanInput) return;
+      let raw = (scanInput.value||'').trim().toUpperCase();
+      if(!raw) return;
+      if(raw.length===24 || force){
+        validateAll(raw); scanInput.value='';
+      } else if(raw.length>24){
+        let i=0; while(i+24<=raw.length){ validateAll(raw.slice(i,i+24)); i+=24; }
+        scanInput.value = raw.slice(i);
+      }
+    }
+    scanInput?.addEventListener('input', ()=>handleScan(false));
+    scanInput?.addEventListener('keydown', e=>{ if(e.key==='Enter'){ e.preventDefault(); handleScan(true); }});
+    horas?.addEventListener('input', updateStatus);
+    minutos?.addEventListener('input', updateStatus);
+    limpiarBtn?.addEventListener('click', ()=>{ resetAll(); scanInput?.focus(); });
+    crearBtn?.addEventListener('click', async ()=>{
+      if(crearBtn.disabled) return;
+      const rfids = [...ticSet, ...vipSet, ...cubeSet];
+      if(rfids.length!==8){ if(msg) msg.textContent='Composición incompleta'; return; }
+      const durMin = durationMinutes();
+      if(durMin<=0){ if(msg) msg.textContent='Duración inválida'; return; }
+      crearBtn.disabled = true; if(msg) msg.textContent='Creando caja...';
+      try {
+        const res = await fetch('/operacion/acond/ensamblaje/create',{ method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ rfids })});
+        const json = await res.json();
+        if(!res.ok || !json.ok) throw new Error(json.error||'Error creando caja');
+        // Inicia cronómetro inmediatamente
+        try { await fetch('/operacion/acond/caja/timer/start',{ method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ caja_id: json.caja_id, durationSec: durMin*60 })}); } catch(e){ console.warn('No se pudo iniciar timer', e); }
+        if(msg) msg.textContent = `Caja ${json.lote} creada`;
+        await loadData();
+  setTimeout(()=>{ try { dialog.close(); } catch(_){} }, 700);
+      } catch(e){ if(msg) msg.textContent = e.message||'Error creando'; }
+      finally { crearBtn.disabled=false; }
+    });
+
+  openBtns.forEach(b=> b.addEventListener('click', ()=>{ try { dialog.showModal(); } catch { dialog.classList.remove('hidden'); } resetAll(); scanInput?.focus(); }));
   }
 })();
