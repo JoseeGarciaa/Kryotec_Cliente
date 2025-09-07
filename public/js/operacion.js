@@ -36,19 +36,38 @@
   function msRemaining(timer){ if(!timer||!timer.endsAt) return 0; return new Date(timer.endsAt).getTime() - (Date.now()+serverOffset); }
   function timerDisplay(rem){ if(rem<=0) return 'Finalizado'; const s=Math.max(0,Math.floor(rem/1000)); const m=Math.floor(s/60); return `${m}m ${s%60}s`; }
   function badgeClass(rem, completed){ if(completed) return 'badge-success'; if(rem<=0) return 'badge-warning'; if(rem<=60*1000) return 'badge-error'; if(rem<=5*60*1000) return 'badge-warning'; return 'badge-neutral'; }
+  function controlButtonsHTML(caja){
+    const id = caja.id;
+    if(caja.estado==='Transito'){
+      return `<button class="btn btn-ghost btn-xs" data-op-act="clear" data-caja="${id}" title="Reiniciar">⏹</button>`;
+    }
+    // Base (Operación) sin timer o estado Retorno permite iniciar nuevo ciclo
+    return `<button class="btn btn-ghost btn-xs" data-op-act="start" data-caja="${id}" title="Iniciar">▶</button>`;
+  }
   function rowHTML(caja){
     const comps = caja.componentes||[];
     const timer = caja.timer;
+  const isTransito = caja.estado==='Transito';
+  const isRetorno = caja.estado==='Retorno';
     const remaining = timer? msRemaining(timer):0;
-    const timerTxt = timer? timerDisplay(remaining): '-';
-    const badge = timer? `<span class="badge badge-xs ${badgeClass(remaining, !!timer.completedAt)}" data-op-timer data-caja="${caja.id}">${timerTxt}</span>`:'<span class="badge badge-ghost badge-xs">-</span>';
+      let timerTxt='';
+    if(timer){
+      timerTxt = isRetorno? 'Finalizado' : timerDisplay(remaining);
+    }
+  const badgeCls = timer? badgeClass(remaining, !!timer.completedAt) : 'badge-ghost';
+      let badge;
+      if(timer){
+        badge = `<span class="badge badge-xs ${badgeCls} gap-1" data-op-timer data-caja="${caja.id}">${timerTxt}</span> ${controlButtonsHTML(caja)}`;
+      } else {
+        badge = controlButtonsHTML(caja);
+      }
     if(!comps.length){
       return `<tr data-caja-row="${caja.id}"><td class="font-mono text-[10px] opacity-50">(sin)</td><td class="hidden md:table-cell text-xs">-</td><td class="hidden lg:table-cell text-xs">${caja.estado}</td><td class="text-xs font-mono">${caja.codigoCaja}</td><td class="w-32">${badge}</td></tr>`;
     }
     return comps.map(it=> `<tr data-caja-row="${caja.id}">
       <td class="font-mono text-[10px]">${it.codigo}</td>
       <td class="hidden md:table-cell text-xs">${it.nombre||''}</td>
-      <td class="hidden lg:table-cell text-xs">${it.estado}</td>
+      <td class="hidden lg:table-cell text-xs">${caja.estado}</td>
       <td class="text-xs font-mono">${caja.codigoCaja}</td>
       <td class="w-32">${badge}</td>
     </tr>`).join('');
@@ -81,7 +100,7 @@
   async function load(){
     try {
       const spin = qs('#op-spin'); if(spin) spin.classList.remove('hidden');
-      const r = await fetch('/operacion/operacion/data');
+  const r = await fetch('/operacion/data');
       const j = await r.json(); if(!j.ok) throw new Error(j.error||'Error');
       dataCajas = Array.isArray(j.cajas)? j.cajas:[];
       const serverNow = j.now? new Date(j.now).getTime():Date.now(); serverOffset = serverNow - Date.now();
@@ -98,13 +117,49 @@
   btnAddDone?.addEventListener('click', openAddModal);
   function resetAdd(){ addCajaId=null; addElegibles=[]; addRoles=[]; addFirstScan=null; if(addScan) addScan.value=''; if(addItemsWrap) addItemsWrap.innerHTML=''; if(addSummary) addSummary.classList.add('hidden'); if(addMsg) addMsg.textContent=''; if(addConfirm) addConfirm.disabled=true; updateCounts(); if(addHrs) addHrs.value=''; if(addMin) addMin.value=''; }
   function updateCounts(){ const t=addRoles.filter(r=>r.rol==='tic').length; const v=addRoles.filter(r=>r.rol==='vip').length; const c=addRoles.filter(r=>r.rol==='cube').length; if(countTic) countTic.textContent=t; if(countVip) countVip.textContent=v; if(countCube) countCube.textContent=c; const dur=(Number(addHrs?.value||0)*3600)+(Number(addMin?.value||0)*60); const complete = t===6 && v===1 && c===1 && dur>0; addConfirm.disabled = !complete; }
-  async function lookupAdd(code){ if(!code) return; if(addMsg) addMsg.textContent='Buscando...'; try { const r= await fetch('/operacion/operacion/add/lookup',{ method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ code })}); const j = await r.json(); if(!j.ok) { if(addMsg) addMsg.textContent=j.error||'Error'; addCajaId=null; return; } addCajaId=j.caja_id; addElegibles=j.elegibles||[]; addRoles=j.roles||[]; if(addSummary){ addSummary.classList.remove('hidden'); } if(addItemsWrap){ addItemsWrap.innerHTML = addRoles.map(ro=>`<span class='badge badge-outline badge-xs font-mono' data-rfid='${ro.rfid}' data-rol='${ro.rol}'>${ro.rol.toUpperCase()} · ${ro.rfid}</span>`).join(''); } if(addMsg) addMsg.textContent=`Caja ${j.lote} detectada`; updateCounts(); } catch(e){ if(addMsg) addMsg.textContent='Error'; } }
+  async function lookupAdd(code){
+    if(!code) return; if(addMsg) addMsg.textContent='Buscando...';
+    try {
+  const r= await fetch('/operacion/add/lookup',{ method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ code })});
+      const j = await r.json();
+      if(!j.ok){ if(addMsg) addMsg.textContent=j.error||'Error'; addCajaId=null; return; }
+      addCajaId = j.caja_id;
+      // Backend ya filtra solo sub_estado 'Lista para Despacho'
+      addRoles = Array.isArray(j.roles)? j.roles.slice(): [];
+      if(addSummary) addSummary.classList.remove('hidden');
+      if(addItemsWrap){
+        addItemsWrap.innerHTML = addRoles.map(ro=>`<span class='badge badge-outline badge-xs font-mono' data-rfid='${ro.rfid}' data-rol='${ro.rol}'>${ro.rol.toUpperCase()} · ${ro.rfid}</span>`).join('');
+      }
+      if(addMsg) addMsg.textContent = `Caja ${j.lote} detectada (${addRoles.length} items en Lista para Despacho)`;
+      updateCounts();
+    } catch(e){ if(addMsg) addMsg.textContent='Error'; }
+  }
   addScan?.addEventListener('input', ()=>{ const v=addScan.value.trim(); if(v.length===24 || /^CAJA\d+-\d{8}$/i.test(v)) { lookupAdd(v); addScan.select(); } });
   addScan?.addEventListener('keydown', e=>{ if(e.key==='Enter'){ e.preventDefault(); const v=addScan.value.trim(); if(v) lookupAdd(v); }});
   addHrs?.addEventListener('input', updateCounts); addMin?.addEventListener('input', updateCounts);
   addClear?.addEventListener('click', resetAdd);
-  addConfirm?.addEventListener('click', async ()=>{ if(!addCajaId) return; const dur=(Number(addHrs?.value||0)*3600)+(Number(addMin?.value||0)*60); if(dur<=0) return; addConfirm.disabled=true; if(addMsg) addMsg.textContent='Moviendo...'; try { const r= await fetch('/operacion/operacion/add/move',{ method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ caja_id: addCajaId })}); const j= await r.json(); if(!j.ok){ if(addMsg) addMsg.textContent=j.error||'Error'; addConfirm.disabled=false; return; } if(addMsg) addMsg.textContent='Caja movida'; await load(); setTimeout(()=>{ try { modal.close(); } catch{} }, 600); } catch(e){ if(addMsg) addMsg.textContent='Error moviendo'; addConfirm.disabled=false; } });
+  addConfirm?.addEventListener('click', async ()=>{ if(!addCajaId) return; const dur=(Number(addHrs?.value||0)*3600)+(Number(addMin?.value||0)*60); if(dur<=0) return; addConfirm.disabled=true; if(addMsg) addMsg.textContent='Moviendo...'; try { const r= await fetch('/operacion/add/move',{ method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ caja_id: addCajaId })}); const j= await r.json(); if(!j.ok){ if(addMsg) addMsg.textContent=j.error||'Error'; addConfirm.disabled=false; return; } if(addMsg) addMsg.textContent='Caja movida'; await load(); setTimeout(()=>{ try { modal.close(); } catch{} }, 600); } catch(e){ if(addMsg) addMsg.textContent='Error moviendo'; addConfirm.disabled=false; } });
   modal?.addEventListener('close', resetAdd);
+
+  // Timer action handlers (delegated)
+  document.addEventListener('click', async (e)=>{
+    const t = e.target; if(!(t instanceof HTMLElement)) return;
+    const btn = t.closest('[data-op-act]'); if(!btn) return;
+    const act = btn.getAttribute('data-op-act'); const cid = btn.getAttribute('data-caja'); if(!cid) return;
+    try {
+      if(act==='start'){
+        let mins = prompt('Duración (minutos):','30'); if(mins==null) return; const m = Number(mins.trim()); if(!Number.isFinite(m)||m<=0) return;
+  const res = await fetch('/operacion/caja/timer/start',{ method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ caja_id: cid, durationSec: m*60 })});
+        await res.json();
+      } else if(act==='clear'){
+        if(!confirm('Reiniciar cronómetro?')) return;
+  await fetch('/operacion/caja/timer/clear',{ method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ caja_id: cid })});
+      } else if(act==='complete'){
+  await fetch('/operacion/caja/timer/complete',{ method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ caja_id: cid })});
+      }
+      await load();
+    } catch(err){ console.error('[Operación] timer action error', err); }
+  });
 
   // Bulk start timer replication (same lote)
   bulkBtn?.addEventListener('click', async ()=>{
@@ -115,7 +170,7 @@
     if(dur<=0){ if(bulkMsg) bulkMsg.textContent='Duración inválida'; return; }
     bulkBtn.disabled=true; if(bulkMsg) bulkMsg.textContent='Iniciando...';
     try {
-      const r = await fetch('/operacion/operacion/caja/timer/start-bulk',{ method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ caja_id: sel.id, durationSec: dur })});
+  const r = await fetch('/operacion/caja/timer/start-bulk',{ method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ caja_id: sel.id, durationSec: dur })});
       const j = await r.json();
       if(!j.ok){ if(bulkMsg) bulkMsg.textContent=j.error||'Error'; bulkBtn.disabled=false; return; }
       if(bulkMsg) bulkMsg.textContent=`Timers iniciados (${j.cajas})`;

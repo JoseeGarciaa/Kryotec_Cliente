@@ -839,17 +839,17 @@ export const OperacionController = {
             throw e;
           }
         }
-  // Items listos para despacho (sub_estado 'Listo')
+  // Items en flujo de despacho: incluyen los que están "Despachando" (timer activo) y los ya "Lista para Despacho"
   const listoRows = await withTenant(tenant, (c)=> c.query(
     `SELECT ic.rfid, ic.nombre_unidad, ic.lote, ic.estado, ic.sub_estado, NOW() AS updated_at, m.nombre_modelo,
             act.started_at AS timer_started_at, act.duration_sec AS timer_duration_sec, act.active AS timer_active,
-            c.lote AS caja_lote
+            c.lote AS caja_lote, c.caja_id
        FROM inventario_credocubes ic
        JOIN modelos m ON m.modelo_id = ic.modelo_id
   LEFT JOIN acond_caja_items aci ON aci.rfid = ic.rfid
-  LEFT JOiN acond_cajas c ON c.caja_id = aci.caja_id
+  LEFT JOIN acond_cajas c ON c.caja_id = aci.caja_id
   LEFT JOIN acond_caja_timers act ON act.caja_id = aci.caja_id
-      WHERE ic.estado='Acondicionamiento' AND ic.sub_estado IN ('Lista para Despacho','Listo')
+      WHERE ic.estado='Acondicionamiento' AND ic.sub_estado IN ('Despachando','Lista para Despacho','Listo')
       ORDER BY ic.id DESC
       LIMIT 500`));
 
@@ -890,7 +890,10 @@ export const OperacionController = {
     if(r.timer_started_at && r.timer_duration_sec){
       const endMs = new Date(r.timer_started_at).getTime() + (r.timer_duration_sec*1000);
       endsAt = new Date(endMs).toISOString();
-      if(!r.timer_active || endMs <= nowMs){
+      // Solo marcar completed si estaba activo y ya pasó el tiempo; si timer_active=false desde el inicio, lo tratamos como no iniciado
+      if(r.timer_active === false && !r.timer_started_at){
+        startsAt = null; endsAt = null; completedAt = null;
+      } else if(r.timer_active===false && endMs <= nowMs){
         completedAt = endsAt;
       }
     }
@@ -901,6 +904,7 @@ export const OperacionController = {
     else if(/tic/.test(modeloLower)) categoriaSimple = 'tic';
     else if(/cube/.test(modeloLower)) categoriaSimple = 'cube';
     return {
+      caja_id: r.caja_id,
       codigo: r.rfid,
       nombre: r.nombre_modelo, // mover modelo a nombre
   estado: r.sub_estado || r.estado, // ahora mostrar sub_estado real
@@ -1104,10 +1108,23 @@ export const OperacionController = {
       )`);
       const ex = await c.query(`SELECT 1 FROM acond_cajas WHERE caja_id=$1`, [cajaId]);
       if(!ex.rowCount) return res.status(404).json({ ok:false, error:'Caja no existe' });
-      await c.query(`INSERT INTO acond_caja_timers(caja_id, started_at, duration_sec, active, updated_at)
-          VALUES($1, NOW(), $2, true, NOW())
-          ON CONFLICT (caja_id) DO UPDATE SET started_at=NOW(), duration_sec=EXCLUDED.duration_sec, active=true, updated_at=NOW()`,
-        [cajaId, dur]);
+      await c.query('BEGIN');
+      try {
+        await c.query(`INSERT INTO acond_caja_timers(caja_id, started_at, duration_sec, active, updated_at)
+            VALUES($1, NOW(), $2, true, NOW())
+            ON CONFLICT (caja_id) DO UPDATE SET started_at=NOW(), duration_sec=EXCLUDED.duration_sec, active=true, updated_at=NOW()`,
+          [cajaId, dur]);
+        // Cambiar estado de los items de la caja a 'Despachando' si estaban en Ensamblaje
+        await c.query(`UPDATE inventario_credocubes ic
+                         SET sub_estado='Despachando'
+                        WHERE ic.rfid IN (SELECT rfid FROM acond_caja_items WHERE caja_id=$1)
+                          AND ic.estado='Acondicionamiento'
+                          AND ic.sub_estado='Ensamblaje'`, [cajaId]);
+        await c.query('COMMIT');
+      } catch(e){
+        await c.query('ROLLBACK');
+        throw e;
+      }
     });
     res.json({ ok:true });
   },
@@ -1155,13 +1172,13 @@ export const OperacionController = {
               FROM lote_items li
          LEFT JOIN acond_caja_items aci ON aci.rfid = li.rfid AND aci.caja_id = $2
              WHERE aci.rfid IS NULL`, [lote, cajaId]);
-        // Move all components of the caja from Ensamblaje -> Lista para Despacho
+        // Move all components of the caja from Despachando -> Lista para Despacho
         const upd = await c.query(
           `UPDATE inventario_credocubes ic
               SET sub_estado='Lista para Despacho'
              WHERE ic.rfid IN (SELECT rfid FROM acond_caja_items WHERE caja_id=$1)
                AND ic.estado='Acondicionamiento'
-               AND ic.sub_estado='Ensamblaje'`, [cajaId]);
+               AND ic.sub_estado='Despachando'`, [cajaId]);
         moved = upd.rowCount || 0;
         await c.query('COMMIT');
       } catch(e){
@@ -1447,8 +1464,8 @@ export const OperacionController = {
         try {
           // Only move those currently listos para despacho
             await c.query(
-              `UPDATE inventario_credocubes ic
-                  SET estado='Operación', sub_estado='Transito'
+        `UPDATE inventario_credocubes ic
+          SET estado='Operación', sub_estado=NULL
                  WHERE ic.rfid IN (SELECT rfid FROM acond_caja_items WHERE caja_id=$1)
                    AND ic.estado='Acondicionamiento'
                    AND ic.sub_estado IN ('Lista para Despacho','Listo')`, [cajaId]);
@@ -1476,9 +1493,19 @@ export const OperacionController = {
         )`);
       const ex = await c.query(`SELECT 1 FROM acond_cajas WHERE caja_id=$1`, [cajaId]);
       if(!ex.rowCount) return res.status(404).json({ ok:false, error:'Caja no existe' });
-      await c.query(`INSERT INTO operacion_caja_timers(caja_id, started_at, duration_sec, active, updated_at)
-                       VALUES($1,NOW(),$2,true,NOW())
-          ON CONFLICT (caja_id) DO UPDATE SET started_at=NOW(), duration_sec=EXCLUDED.duration_sec, active=true, updated_at=NOW()`,[cajaId,dur]);
+      await c.query('BEGIN');
+      try {
+        await c.query(`INSERT INTO operacion_caja_timers(caja_id, started_at, duration_sec, active, updated_at)
+                         VALUES($1,NOW(),$2,true,NOW())
+            ON CONFLICT (caja_id) DO UPDATE SET started_at=NOW(), duration_sec=EXCLUDED.duration_sec, active=true, updated_at=NOW()`,[cajaId,dur]);
+        // Asegurar sub_estado='Transito' para todos los items de la caja que estén en Operación y no finalizados
+        await c.query(`UPDATE inventario_credocubes ic
+                         SET sub_estado='Transito'
+                        WHERE ic.rfid IN (SELECT rfid FROM acond_caja_items WHERE caja_id=$1)
+                          AND ic.estado='Operación'
+                          AND (ic.sub_estado IS NULL OR ic.sub_estado NOT IN ('Retorno','Completado','Transito'))`, [cajaId]);
+        await c.query('COMMIT');
+      } catch(e){ await c.query('ROLLBACK'); throw e; }
     });
     res.json({ ok:true });
   },
@@ -1529,7 +1556,16 @@ export const OperacionController = {
     const cajaId = Number(caja_id);
     if(!Number.isFinite(cajaId) || cajaId<=0) return res.status(400).json({ ok:false, error:'caja_id inválido' });
     await withTenant(tenant, async (c)=>{
-      await c.query(`UPDATE operacion_caja_timers SET active=false, started_at=NULL, duration_sec=NULL, updated_at=NOW() WHERE caja_id=$1`, [cajaId]);
+      await c.query('BEGIN');
+      try {
+        await c.query(`UPDATE operacion_caja_timers SET active=false, started_at=NULL, duration_sec=NULL, updated_at=NOW() WHERE caja_id=$1`, [cajaId]);
+        // Volver items a estado base (sub_estado NULL) para permitir iniciar de nuevo
+        await c.query(`UPDATE inventario_credocubes ic
+                         SET sub_estado=NULL
+                        WHERE ic.rfid IN (SELECT rfid FROM acond_caja_items WHERE caja_id=$1)
+                          AND ic.estado='Operación'`, [cajaId]);
+        await c.query('COMMIT');
+      } catch(e){ await c.query('ROLLBACK'); throw e; }
     });
     res.json({ ok:true });
   },
@@ -1539,9 +1575,13 @@ export const OperacionController = {
     const cajaId = Number(caja_id);
     if(!Number.isFinite(cajaId) || cajaId<=0) return res.status(400).json({ ok:false, error:'caja_id inválido' });
     await withTenant(tenant, async (c)=>{
-      await c.query(`UPDATE operacion_caja_timers SET active=false, updated_at=NOW() WHERE caja_id=$1`, [cajaId]);
-      // Mark items as Operación completada
-      await c.query(`UPDATE inventario_credocubes ic SET sub_estado='Completado' WHERE ic.rfid IN (SELECT rfid FROM acond_caja_items WHERE caja_id=$1) AND ic.estado='Operación'`, [cajaId]);
+      await c.query('BEGIN');
+      try {
+        await c.query(`UPDATE operacion_caja_timers SET active=false, updated_at=NOW() WHERE caja_id=$1`, [cajaId]);
+        // Marcar items como Retorno (cronómetro finalizado)
+        await c.query(`UPDATE inventario_credocubes ic SET sub_estado='Retorno' WHERE ic.rfid IN (SELECT rfid FROM acond_caja_items WHERE caja_id=$1) AND ic.estado='Operación' AND ic.sub_estado='Transito'`, [cajaId]);
+        await c.query('COMMIT');
+      } catch(e){ await c.query('ROLLBACK'); throw e; }
     });
     res.json({ ok:true });
   },
@@ -1558,6 +1598,44 @@ export const OperacionController = {
         active boolean NOT NULL DEFAULT false,
         updated_at timestamptz NOT NULL DEFAULT NOW()
       )`));
+      // Auto-expirar timers vencidos y marcar items Retorno antes de construir respuesta
+      await withTenant(tenant, async (c)=>{
+        await c.query('BEGIN');
+        try {
+          await c.query(`WITH expired AS (
+              SELECT caja_id
+                FROM operacion_caja_timers
+               WHERE active=true
+                 AND started_at IS NOT NULL
+                 AND duration_sec IS NOT NULL
+                 AND started_at + (duration_sec || ' seconds')::interval <= NOW()
+          )
+          UPDATE operacion_caja_timers oct
+             SET active=false, updated_at=NOW()
+            WHERE caja_id IN (SELECT caja_id FROM expired)`);
+          await c.query(`UPDATE inventario_credocubes ic
+                           SET sub_estado='Retorno'
+                          WHERE ic.estado='Operación'
+                            AND ic.sub_estado='Transito'
+                            AND ic.rfid IN (
+                               SELECT rfid FROM acond_caja_items aci
+                               JOIN operacion_caja_timers oct ON oct.caja_id=aci.caja_id
+                               WHERE oct.active=false AND (oct.started_at IS NOT NULL AND oct.duration_sec IS NOT NULL)
+                                 AND oct.started_at + (oct.duration_sec || ' seconds')::interval <= NOW()
+                           )`);
+          // Saneamiento: cualquier item marcado Transito sin timer activo asociado -> reset a NULL
+          await c.query(`UPDATE inventario_credocubes ic
+                           SET sub_estado=NULL
+                          WHERE ic.estado='Operación'
+                            AND ic.sub_estado='Transito'
+                            AND NOT EXISTS (
+                              SELECT 1 FROM acond_caja_items aci
+                              JOIN operacion_caja_timers oct ON oct.caja_id=aci.caja_id AND oct.active=true
+                              WHERE aci.rfid=ic.rfid
+                            )`);
+          await c.query('COMMIT');
+        } catch(e){ await c.query('ROLLBACK'); /* no bloquear respuesta */ }
+      });
       const nowRes = await withTenant(tenant, (c)=> c.query<{ now:string }>(`SELECT NOW()::timestamptz AS now`));
       const cajasQ = await withTenant(tenant, (c)=> c.query(
         `SELECT c.caja_id, c.lote, act.started_at, act.duration_sec, act.active,
@@ -1599,12 +1677,19 @@ export const OperacionController = {
           if(!r.active && endMs <= nowMs) completedAt = endsAt;
           timer = { startsAt: r.started_at, endsAt, completedAt };
         }
+        // Derivar estado de la caja basado en sub_estados:
+        const items = mapaItems[r.caja_id]||[];
+        const anyTransito = items.some(it=> it.sub_estado==='Transito');
+        const anyRetorno = items.some(it=> it.sub_estado==='Retorno');
+        let estadoCaja = 'Operación';
+        if(anyTransito) estadoCaja = 'Transito';
+        else if(anyRetorno) estadoCaja = 'Retorno';
         return {
           id: r.caja_id,
           codigoCaja: r.lote,
-          estado: (r.started_at && r.duration_sec && r.completados === r.total_op && r.total_op>0) ? 'Completado' : 'Operación',
+          estado: estadoCaja,
           timer,
-          componentes: (mapaItems[r.caja_id]||[]).map(it=> ({ codigo: it.codigo, tipo: it.rol, nombre: it.nombre, estado: it.estado, sub_estado: it.sub_estado }))
+          componentes: items.map(it=> ({ codigo: it.codigo, tipo: it.rol, nombre: it.nombre, estado: it.estado, sub_estado: it.sub_estado }))
         };
       });
       res.json({ ok:true, now: nowIso, cajas: cajasUI });
@@ -1636,7 +1721,7 @@ export const OperacionController = {
         if(q2.rowCount) caja = q2.rows[0];
       }
       if(!caja) return res.status(404).json({ ok:false, error:'Caja no encontrada' });
-      // Get items still listos para despacho
+      // Obtener items de la caja y filtrar únicamente los que YA están en 'Lista para Despacho'
       const itemsQ = await withTenant(tenant, (c)=> c.query(
         `SELECT aci.rfid, ic.estado, ic.sub_estado, aci.rol, m.nombre_modelo
            FROM acond_caja_items aci
@@ -1644,9 +1729,17 @@ export const OperacionController = {
            JOIN modelos m ON m.modelo_id = ic.modelo_id
           WHERE aci.caja_id=$1`, [caja.caja_id]));
       const items = itemsQ.rows as any[];
-      const elegibles = items.filter(i=> i.estado==='Acondicionamiento' && (i.sub_estado==='Lista para Despacho' || i.sub_estado==='Listo'));
+      // Solo considerar exactamente sub_estado 'Lista para Despacho'
+      const elegibles = items.filter(i=> i.estado==='Acondicionamiento' && i.sub_estado==='Lista para Despacho');
       if(!elegibles.length) return res.status(400).json({ ok:false, error:'Caja no está Lista para Despacho' });
-      res.json({ ok:true, caja_id: caja.caja_id, lote: caja.lote, total: items.length, elegibles: elegibles.map(e=>e.rfid) });
+      res.json({
+        ok:true,
+        caja_id: caja.caja_id,
+        lote: caja.lote,
+        total: items.length,
+        elegibles: elegibles.map(e=> e.rfid),
+        roles: elegibles.map(e=> ({ rfid: e.rfid, rol: e.rol }))
+      });
     } catch(e:any){ res.status(500).json({ ok:false, error: e.message||'Error lookup' }); }
   },
   operacionAddMove: async (req: Request, res: Response) => {
@@ -1660,7 +1753,7 @@ export const OperacionController = {
         try {
           const upd = await c.query(
             `UPDATE inventario_credocubes ic
-                SET estado='Operación', sub_estado='Transito'
+                SET estado='Operación', sub_estado=NULL
                WHERE ic.rfid IN (SELECT rfid FROM acond_caja_items WHERE caja_id=$1)
                  AND ic.estado='Acondicionamiento'
                  AND ic.sub_estado IN ('Lista para Despacho','Listo')`, [id]);

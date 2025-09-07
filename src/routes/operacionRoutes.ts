@@ -28,12 +28,23 @@ router.post('/acond/caja/timer/complete', requireAuth, OperacionController.acond
 router.post('/acond/despacho/lookup', requireAuth, OperacionController.acondDespachoLookup);
 router.post('/acond/despacho/move', requireAuth, OperacionController.acondDespachoMove);
 router.get('/operacion', requireAuth, OperacionController.operacion);
-// Operación phase caja scan / timers
-// Nueva data consolidada de Operación
+// Operación phase caja scan / timers (legacy prefixed paths kept for backward compatibility)
 router.get('/operacion/data', requireAuth, OperacionController.operacionData);
 router.post('/operacion/add/lookup', requireAuth, OperacionController.operacionAddLookup);
 router.post('/operacion/add/move', requireAuth, OperacionController.operacionAddMove);
 router.post('/operacion/caja/timer/start-bulk', requireAuth, OperacionController.operacionCajaTimerStartBulk);
+router.post('/operacion/caja/timer/start', requireAuth, OperacionController.operacionCajaTimerStart);
+router.post('/operacion/caja/timer/clear', requireAuth, OperacionController.operacionCajaTimerClear);
+router.post('/operacion/caja/timer/complete', requireAuth, OperacionController.operacionCajaTimerComplete);
+
+// New concise aliases (so client can call /operacion/data etc.)
+router.get('/data', requireAuth, OperacionController.operacionData);
+router.post('/add/lookup', requireAuth, OperacionController.operacionAddLookup);
+router.post('/add/move', requireAuth, OperacionController.operacionAddMove);
+router.post('/caja/timer/start-bulk', requireAuth, OperacionController.operacionCajaTimerStartBulk);
+router.post('/caja/timer/start', requireAuth, OperacionController.operacionCajaTimerStart);
+router.post('/caja/timer/clear', requireAuth, OperacionController.operacionCajaTimerClear);
+router.post('/caja/timer/complete', requireAuth, OperacionController.operacionCajaTimerComplete);
 router.get('/devolucion', requireAuth, OperacionController.devolucion);
 router.get('/inspeccion', requireAuth, OperacionController.inspeccion);
 // En bodega

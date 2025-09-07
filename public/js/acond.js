@@ -39,6 +39,7 @@
   let viewMode = localStorage.getItem('acondViewMode') || 'cards';  // persist across reloads
   let pollingTimer = null;
   let tickingTimer = null;
+  let pollInterval = null; // usado por startPolling
   let serverNowOffsetMs = 0; // serverNow - clientNow to sync timers
   let lastFilteredComponentCount = 0; // para mostrar (filtrados de total)
   let totalComponentCount = 0;
@@ -87,20 +88,33 @@
   listoTotalCount = listoDespacho.length;
   listoFilteredCount = filtered.length;
   const rows = filtered.map(item => {
-          let chrono='-';
-          if(item.cronometro && item.cronometro.startsAt && item.cronometro.endsAt){
-            const now = Date.now() + serverNowOffsetMs;
-            const start = item.cronometro.startsAt ? new Date(item.cronometro.startsAt).getTime() : null;
-            const end = item.cronometro.endsAt ? new Date(item.cronometro.endsAt).getTime() : null;
-            if(start && end){
-              if(item.cronometro.completedAt || now >= end){ chrono='Completado'; }
-              else {
-                const rem=end-now; const sec=Math.max(0,Math.floor(rem/1000)); const m=Math.floor(sec/60); const s=sec%60; chrono=`${m}m ${s}s`;
-              }
-            }
-          }
-          return `<tr class="hover">\n        <td class="text-xs font-mono">${safeHTML(item.codigo || '')}</td>\n        <td>${safeHTML(item.nombre || '')}</td>\n        <td>${safeHTML(item.estado || '')}</td>\n        <td>${safeHTML(item.lote || '')}</td>\n        <td class="text-xs">${chrono}</td>\n        <td class="uppercase">${safeHTML(item.categoria || '')}</td>\n      </tr>`;
-        }).join('');
+    const cajaIdRef = item.caja_id || item.cajaId || item.cajaID;
+    const t = item.cronometro;
+    let cell;
+    if(t && t.startsAt && t.endsAt){
+      const now = Date.now() + serverNowOffsetMs;
+      const end = new Date(t.endsAt).getTime();
+      if(now < end){
+        const rem=end-now; const sec=Math.max(0,Math.floor(rem/1000)); const m=Math.floor(sec/60); const s=sec%60;
+        const cls = sec<=60 ? 'bg-error' : (sec<=300 ? 'bg-warning':'bg-info');
+        cell = `<span class=\"inline-flex items-center gap-1\">\n          <span class=\"w-2 h-2 rounded-full ${cls} animate-pulse\" data-listo-dot data-caja-id=\"${safeHTML(cajaIdRef)}\"></span>\n          <span class=\"badge badge-neutral badge-xs font-mono\" data-listo-remaining data-caja-id=\"${safeHTML(cajaIdRef)}\">${m}m ${s.toString().padStart(2,'0')}s</span>\n          <button class=\"btn btn-ghost btn-xs\" data-action=\"timer-clear\" data-caja-id=\"${safeHTML(cajaIdRef)}\" title=\"Reiniciar\">⏹</button>\n        </span>`;
+      } else {
+        // Expirado: mostrar opción para volver a iniciar (como play)
+        cell = `<span class=\"inline-flex items-center gap-1\">\n          <span class=\"w-2 h-2 rounded-full bg-neutral\" data-listo-dot data-caja-id=\"${safeHTML(cajaIdRef)}\"></span>\n          <button class=\"btn btn-ghost btn-xs\" data-action=\"timer-start\" data-caja-id=\"${safeHTML(cajaIdRef)}\" title=\"Iniciar\">▶</button>\n        </span>`;
+      }
+    } else if(cajaIdRef){
+      cell = `<span class=\"inline-flex items-center gap-1\">\n        <span class=\"w-2 h-2 rounded-full bg-neutral\" data-listo-dot data-caja-id=\"${safeHTML(cajaIdRef)}\"></span>\n        <button class=\"btn btn-ghost btn-xs\" data-action=\"timer-start\" data-caja-id=\"${safeHTML(cajaIdRef)}\" title=\"Iniciar\">▶</button>\n      </span>`;
+    } else {
+      cell = '-';
+    }
+    // Mostrar exactamente "Despachando" cuando el cronómetro está activo; cuando expiró o no hay timer -> "Lista para Despacho"
+    let estadoTxt = 'Lista para Despacho';
+    if(t && t.startsAt && t.endsAt){
+      const now = Date.now() + serverNowOffsetMs; const end = new Date(t.endsAt).getTime();
+      if(now < end) estadoTxt = 'Despachando';
+    }
+    return `<tr class=\"hover\">\n      <td class=\"text-xs font-mono\">${safeHTML(item.codigo || '')}</td>\n      <td>${safeHTML(item.nombre || '')}</td>\n      <td>${safeHTML(estadoTxt)}</td>\n      <td>${safeHTML(item.lote || '')}</td>\n      <td class=\"text-xs\">${cell}</td>\n      <td class=\"uppercase\">${safeHTML(item.categoria || '')}</td>\n    </tr>`;
+  }).join('');
         body.innerHTML = rows;
       }
     }
@@ -320,6 +334,26 @@
         let cls='badge-info'; if(sec<=60) cls='badge-error'; else if(sec<=300) cls='badge-warning';
         el.className = `badge ${cls} badge-xs font-mono`;
       });
+      // Actualizar cronómetro en tabla Listo
+      document.querySelectorAll('[data-listo-remaining]').forEach(el=>{
+        if(!(el instanceof HTMLElement)) return;
+        const cajaId = el.getAttribute('data-caja-id');
+        const t = cajaId ? timersByCaja[cajaId] : null;
+        const dot = document.querySelector(`[data-listo-dot][data-caja-id="${cajaId}"]`);
+        if(!t) return;
+        const now = Date.now() + serverNowOffsetMs;
+        const end = new Date(t.endsAt).getTime();
+        if(now>=end){
+          el.textContent='Finalizado';
+          el.className='badge badge-warning badge-xs';
+          if(dot) dot.className='w-2 h-2 rounded-full bg-warning';
+          return;
+        }
+        const remMs = end-now; const sec = Math.max(0, Math.floor(remMs/1000)); const mm=Math.floor(sec/60); const ss=sec%60;
+        el.textContent = `${mm}m ${ss.toString().padStart(2,'0')}s`;
+        let cls='bg-info'; if(sec<=60) cls='bg-error'; else if(sec<=300) cls='bg-warning';
+        if(dot) dot.className=`w-2 h-2 rounded-full ${cls} animate-pulse`;
+      });
     },1000);
   }
   function stopPolling(){ if(pollingTimer) clearInterval(pollingTimer); pollingTimer = null; }
@@ -442,18 +476,14 @@
       if(now < end){
         const remMs = end-now; const sec = Math.max(0, Math.floor(remMs/1000)); const mm=Math.floor(sec/60); const ss=sec%60;
         const colorClass = sec<=60 ? 'badge-error' : (sec<=300 ? 'badge-warning' : 'badge-info');
-        badgeHTML = `<span class="badge ${colorClass} badge-xs font-mono" data-timer-chrono data-caja-id="${safeHTML(group.cajaId)}">${mm}m ${ss.toString().padStart(2,'0')}s</span>`;
-        actionsHTML = `<div class="flex gap-1" data-timer-actions data-caja-id="${safeHTML(group.cajaId)}">
-            <button class="btn btn-ghost btn-xs" data-action="timer-clear" data-caja-id="${safeHTML(group.cajaId)}" title="Reiniciar"><span class="material-icons text-[14px]">restart_alt</span></button>
-          </div>`;
+        badgeHTML = `<span class=\"badge ${colorClass} badge-xs font-mono\" data-timer-chrono data-caja-id=\"${safeHTML(group.cajaId)}\">Despachando ${mm}m ${ss.toString().padStart(2,'0')}s</span>`;
+        actionsHTML = `<div class=\"flex gap-1\" data-timer-actions data-caja-id=\"${safeHTML(group.cajaId)}\">\n            <button class=\"btn btn-ghost btn-xs\" data-action=\"timer-clear\" data-caja-id=\"${safeHTML(group.cajaId)}\" title=\"Reiniciar\"><span class=\"material-icons text-[14px]\">restart_alt</span></button>\n          </div>`;
       } else {
-        badgeHTML = `<span class="badge badge-warning badge-xs font-mono" data-timer-chrono data-caja-id="${safeHTML(group.cajaId)}">Finalizado</span>`;
-        actionsHTML = `<div class="flex gap-1" data-timer-actions data-caja-id="${safeHTML(group.cajaId)}">
-            <button class="btn btn-ghost btn-xs" data-action="timer-clear" data-caja-id="${safeHTML(group.cajaId)}" title="Reiniciar"><span class="material-icons text-[14px]">restart_alt</span></button>
-          </div>`;
+        badgeHTML = `<span class=\"badge badge-success badge-xs font-mono\">Lista para Despacho</span>`;
+        actionsHTML = `<div class=\"flex gap-1\" data-timer-actions data-caja-id=\"${safeHTML(group.cajaId)}\">\n            <button class=\"btn btn-ghost btn-xs\" data-action=\"timer-start\" data-caja-id=\"${safeHTML(group.cajaId)}\" title=\"Iniciar\"><span class=\"material-icons text-[14px]\">play_arrow</span></button>\n          </div>`;
       }
     } else {
-      actionsHTML = `<button class="btn btn-ghost btn-xs" data-action="timer-start" data-caja-id="${safeHTML(group.cajaId)}" title="Iniciar"><span class="material-icons text-[14px]">play_arrow</span></button>`;
+      actionsHTML = `<button class=\"btn btn-ghost btn-xs\" data-action=\"timer-start\" data-caja-id=\"${safeHTML(group.cajaId)}\" title=\"Iniciar\"><span class=\"material-icons text-[14px]\">play_arrow</span></button>`;
     }
     const categoriaBadges = Object.entries(group.categorias).sort().map(([k,v])=>`<span class=\"badge badge-ghost badge-xs\">${k} x${v}</span>`).join(' ');
     const codes = group.items.slice(0,8).map(it=>`<span class=\"badge badge-neutral badge-xs font-mono\" title=\"${safeHTML(it.codigo)}\">${safeHTML(it.codigo.slice(-6))}</span>`).join(' ');
@@ -505,8 +535,9 @@
         let dur = cajas.find(c=> String(c.id)===String(id))?.timer?.durationSec;
         if(!Number.isFinite(dur) || dur<=0){
           const sec = askDurationSec();
-          if(sec==null){ return; }
-          dur = sec;
+          if(sec==null){ // default 30 min si usuario cancela
+            dur = 30*60;
+          } else dur = sec;
         }
         payload.durationSec = dur;
       }

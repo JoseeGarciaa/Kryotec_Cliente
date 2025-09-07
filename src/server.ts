@@ -24,7 +24,10 @@ app.set('views', path.join(process.cwd(), 'src', 'views'));
 app.use(expressLayouts);
 app.set('layout', 'layouts/main');
 
-app.use(helmet());
+// Helmet con HSTS deshabilitado en desarrollo para evitar forzar HTTPS (causa ERR_SSL_PROTOCOL_ERROR en http://localhost)
+app.use(helmet({
+	hsts: process.env.NODE_ENV === 'production' ? undefined : false
+} as any));
 app.use(express.urlencoded({ extended: true }));
 app.use(express.json());
 app.use(cookieParser());
