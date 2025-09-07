@@ -9,6 +9,7 @@
   const countDone = qs('#op-count-done');
   const filterInput = qs('#op-filter');
   const btnAdd = qs('#op-btn-add');
+  const btnAddDone = qs('#op-btn-add-done');
   const modal = document.getElementById('op-modal-add');
   const addScan = document.getElementById('op-add-scan');
   const addSummary = document.getElementById('op-add-summary');
@@ -38,7 +39,7 @@
     const timerTxt = timer? timerDisplay(remaining): '-';
     const badge = timer? `<span class="badge badge-xs ${badgeClass(remaining, !!timer.completedAt)}" data-op-timer data-caja="${caja.id}">${timerTxt}</span>`:'<span class="badge badge-ghost badge-xs">-</span>';
     if(!comps.length){
-      return `<tr data-caja-row="${caja.id}"><td class="font-mono text-[10px] opacity-50">(sin)</td><td class="hidden md:table-cell text-xs">-</td><td class="hidden lg:table-cell text-xs">${caja.estado}</td><td class="text-xs font-mono">${caja.codigoCaja}</td><td class="w-32">${badge}</td><td class="hidden md:table-cell text-xs">-</td></tr>`;
+      return `<tr data-caja-row="${caja.id}"><td class="font-mono text-[10px] opacity-50">(sin)</td><td class="hidden md:table-cell text-xs">-</td><td class="hidden lg:table-cell text-xs">${caja.estado}</td><td class="text-xs font-mono">${caja.codigoCaja}</td><td class="w-32">${badge}</td></tr>`;
     }
     return comps.map(it=> `<tr data-caja-row="${caja.id}">
       <td class="font-mono text-[10px]">${it.codigo}</td>
@@ -46,7 +47,6 @@
       <td class="hidden lg:table-cell text-xs">${it.estado}</td>
       <td class="text-xs font-mono">${caja.codigoCaja}</td>
       <td class="w-32">${badge}</td>
-      <td class="hidden md:table-cell text-xs uppercase">${it.tipo}</td>
     </tr>`).join('');
   }
   function render(){
@@ -55,7 +55,7 @@
     const activos = dataCajas.filter(c=> c.estado!=='Completado');
     const completados = dataCajas.filter(c=> c.estado==='Completado');
     const filAct = f? activos.filter(c=> c.codigoCaja.toLowerCase().includes(f) || (c.componentes||[]).some(it=> it.codigo.toLowerCase().includes(f)) ): activos;
-    tbody.innerHTML = filAct.length? filAct.map(c=> rowHTML(c)).join('') : `<tr><td colspan="6" class="text-center py-6 text-xs opacity-50">Sin resultados</td></tr>`;
+  tbody.innerHTML = filAct.length? filAct.map(c=> rowHTML(c)).join('') : `<tr><td colspan="5" class="text-center py-6 text-xs opacity-50">Sin resultados</td></tr>`;
     if(count) count.textContent = `(${filAct.reduce((a,c)=> a + (c.componentes||[]).length,0)} de ${activos.reduce((a,c)=> a + (c.componentes||[]).length,0)})`;
     if(tbodyDone){
       tbodyDone.innerHTML = completados.length? completados.map(c=>{
@@ -82,14 +82,16 @@
       dataCajas = Array.isArray(j.cajas)? j.cajas:[];
       const serverNow = j.now? new Date(j.now).getTime():Date.now(); serverOffset = serverNow - Date.now();
       render(); ensureTick();
-    } catch(e){ console.error('[Operación] load error', e); if(tbody) tbody.innerHTML = `<tr><td colspan="6" class="text-center py-6 text-error text-xs">Error cargando</td></tr>`; }
+  } catch(e){ console.error('[Operación] load error', e); if(tbody) tbody.innerHTML = `<tr><td colspan="5" class="text-center py-6 text-error text-xs">Error cargando</td></tr>`; }
     finally { const spin = qs('#op-spin'); if(spin) spin.classList.add('hidden'); }
   }
   function startPolling(){ if(polling) clearInterval(polling); polling = setInterval(load, 10000); }
 
   // Events
   filterInput?.addEventListener('input', render);
-  btnAdd?.addEventListener('click', ()=>{ try { modal.showModal(); } catch{ modal.classList.remove('hidden'); } resetAdd(); setTimeout(()=> addScan?.focus(), 40); });
+  function openAddModal(){ try { modal.showModal(); } catch{ modal.classList.remove('hidden'); } resetAdd(); setTimeout(()=> addScan?.focus(), 40); }
+  btnAdd?.addEventListener('click', openAddModal);
+  btnAddDone?.addEventListener('click', openAddModal);
   function resetAdd(){ addCajaId=null; addElegibles=[]; addRoles=[]; addFirstScan=null; if(addScan) addScan.value=''; if(addItemsWrap) addItemsWrap.innerHTML=''; if(addSummary) addSummary.classList.add('hidden'); if(addMsg) addMsg.textContent=''; if(addConfirm) addConfirm.disabled=true; updateCounts(); if(addHrs) addHrs.value=''; if(addMin) addMin.value=''; }
   function updateCounts(){ const t=addRoles.filter(r=>r.rol==='tic').length; const v=addRoles.filter(r=>r.rol==='vip').length; const c=addRoles.filter(r=>r.rol==='cube').length; if(countTic) countTic.textContent=t; if(countVip) countVip.textContent=v; if(countCube) countCube.textContent=c; const dur=(Number(addHrs?.value||0)*3600)+(Number(addMin?.value||0)*60); const complete = t===6 && v===1 && c===1 && dur>0; addConfirm.disabled = !complete; }
   async function lookupAdd(code){ if(!code) return; if(addMsg) addMsg.textContent='Buscando...'; try { const r= await fetch('/operacion/operacion/add/lookup',{ method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ code })}); const j = await r.json(); if(!j.ok) { if(addMsg) addMsg.textContent=j.error||'Error'; addCajaId=null; return; } addCajaId=j.caja_id; addElegibles=j.elegibles||[]; addRoles=j.roles||[]; if(addSummary){ addSummary.classList.remove('hidden'); } if(addItemsWrap){ addItemsWrap.innerHTML = addRoles.map(ro=>`<span class='badge badge-outline badge-xs font-mono' data-rfid='${ro.rfid}' data-rol='${ro.rol}'>${ro.rol.toUpperCase()} · ${ro.rfid}</span>`).join(''); } if(addMsg) addMsg.textContent=`Caja ${j.lote} detectada`; updateCounts(); } catch(e){ if(addMsg) addMsg.textContent='Error'; } }

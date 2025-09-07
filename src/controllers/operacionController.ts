@@ -55,7 +55,7 @@ export const OperacionController = {
   // Kanban data summary for all phases
   kanbanData: async (req: Request, res: Response) => {
     const tenant = (req as any).user?.tenant;
-    try {
+  try {
       // Ensure optional tables exist (cajas)
       await withTenant(tenant, async (c) => {
         await c.query(`CREATE TABLE IF NOT EXISTS acond_cajas (
@@ -136,6 +136,52 @@ export const OperacionController = {
   operacion: (_req: Request, res: Response) => res.render('operacion/operacion', { title: 'Operación · Operación' }),
   devolucion: (_req: Request, res: Response) => res.render('operacion/devolucion', { title: 'Operación · Devolución' }),
   inspeccion: (_req: Request, res: Response) => res.render('operacion/inspeccion', { title: 'Operación · Inspección' }),
+  // Vista: En bodega
+  bodega: (_req: Request, res: Response) => res.render('operacion/bodega', { title: 'Operación · En bodega' }),
+  // Datos para la vista En bodega
+  bodegaData: async (req: Request, res: Response) => {
+    const tenant = (req as any).user?.tenant;
+    try {
+      const page = Math.max(1, parseInt(String(req.query.page||'1'),10)||1);
+      const limit = Math.min(200, Math.max(10, parseInt(String(req.query.limit||'50'),10)||50));
+      const offset = (page-1)*limit;
+      const q = (req.query.q||'').toString().trim();
+      const cat = (req.query.cat||'').toString(); // tics | vips | cubes
+      const filters: string[] = ["LOWER(ic.estado)=LOWER('En bodega')"]; const params: any[] = [];
+      if(q){
+        params.push('%'+q.toLowerCase()+'%');
+        const idx = params.length;
+        // Correct empty string quoting inside COALESCE
+        filters.push(`(LOWER(ic.rfid) LIKE $${idx} OR LOWER(ic.nombre_unidad) LIKE $${idx} OR LOWER(COALESCE(ic.lote,'')) LIKE $${idx})`);
+      }
+      if(cat){
+        if(cat==='tics'){ params.push('%tic%'); filters.push('m.nombre_modelo ILIKE $'+params.length); }
+        else if(cat==='vips'){ params.push('%vip%'); filters.push('m.nombre_modelo ILIKE $'+params.length); }
+  else if(cat==='cubes'){ params.push('%cube%'); filters.push('(m.nombre_modelo ILIKE $'+params.length+" OR m.nombre_modelo ILIKE '%cubo%')"); }
+      }
+      const where = filters.length? ('WHERE '+filters.join(' AND ')) : '';
+      const baseSel = `FROM inventario_credocubes ic JOIN modelos m ON m.modelo_id = ic.modelo_id ${where}`;
+   // Use parameterized limit/offset via appended params to avoid string concat issues (even if safe here)
+   params.push(limit); const limitIdx = params.length;
+   params.push(offset); const offsetIdx = params.length;
+   const rows = await withTenant(tenant, (c) => c.query(
+     `SELECT ic.credocube_id AS id, ic.rfid, ic.nombre_unidad, ic.lote, ic.estado, ic.sub_estado, m.nombre_modelo,
+       CASE WHEN m.nombre_modelo ILIKE '%tic%' THEN 'TIC'
+         WHEN m.nombre_modelo ILIKE '%vip%' THEN 'VIP'
+         WHEN (m.nombre_modelo ILIKE '%cube%' OR m.nombre_modelo ILIKE '%cubo%') THEN 'CUBE'
+         ELSE 'OTRO' END AS categoria,
+       ic.updated_at AS fecha_ingreso
+     ${baseSel}
+     ORDER BY ic.updated_at DESC
+     LIMIT $${limitIdx} OFFSET $${offsetIdx}`, params));
+   const totalQ = await withTenant(tenant, (c) => c.query(`SELECT COUNT(*)::int AS total ${baseSel}`, params.slice(0, limitIdx-2))); // exclude limit/offset
+      res.json({ ok:true, page, limit, total: totalQ.rows[0]?.total||0, items: rows.rows });
+    } catch(e:any){
+      // Fallback: no bloquear la vista si algo falla. Log y retornar lista vacía.
+      console.error('[bodegaData] error', e);
+      res.json({ ok:true, page:1, limit:50, total:0, items:[], warning: e?.message || 'Error interno (se muestra vacío)' });
+    }
+  },
 
   // Data for pre-acondicionamiento lists
   preacondData: async (req: Request, res: Response) => {

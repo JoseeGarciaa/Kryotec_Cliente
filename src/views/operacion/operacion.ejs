@@ -30,11 +30,11 @@
             <th class="hidden lg:table-cell">ESTADO</th>
             <th>CAJA</th>
             <th>CRONÓMETRO</th>
-            <th class="hidden md:table-cell">ROL</th>
+            <!-- ROL column removed -->
           </tr>
         </thead>
         <tbody id="op-tbody">
-          <tr><td colspan="6" class="text-center py-6 text-xs opacity-50">Cargando...</td></tr>
+          <tr><td colspan="5" class="text-center py-6 text-xs opacity-50">Cargando...</td></tr>
         </tbody>
       </table>
     </div>
@@ -49,18 +49,23 @@
         <div class="font-semibold text-lg flex items-center gap-2">Cajas Completadas</div>
         <div id="op-count-done" class="text-sm opacity-70">(0)</div>
       </div>
+      <div class="flex gap-2 items-center">
+        <button id="op-btn-add-done" class="btn btn-outline btn-xs" type="button">Agregar Items</button>
+      </div>
     </div>
     <div class="overflow-x-auto border-t border-success/10">
       <table class="table table-xs sm:table-sm" id="op-table-done">
         <thead>
           <tr>
+            <th>RFID</th>
+            <th class="hidden md:table-cell">NOMBRE</th>
+            <th class="hidden lg:table-cell">ESTADO</th>
             <th>CAJA</th>
-            <th>FINALIZADO</th>
-            <th>ITEMS</th>
+            <th>CRONÓMETRO</th>
           </tr>
         </thead>
         <tbody id="op-tbody-done">
-          <tr><td colspan="3" class="text-center py-6 text-xs opacity-50">Sin datos</td></tr>
+          <tr><td colspan="5" class="text-center py-6 text-xs opacity-50">Sin datos</td></tr>
         </tbody>
       </table>
     </div>

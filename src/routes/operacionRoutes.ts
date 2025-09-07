@@ -35,5 +35,8 @@ router.post('/operacion/add/lookup', requireAuth, OperacionController.operacionA
 router.post('/operacion/add/move', requireAuth, OperacionController.operacionAddMove);
 router.get('/devolucion', requireAuth, OperacionController.devolucion);
 router.get('/inspeccion', requireAuth, OperacionController.inspeccion);
+// En bodega
+router.get('/bodega', requireAuth, OperacionController.bodega);
+router.get('/bodega/data', requireAuth, OperacionController.bodegaData);
 
 export default router;

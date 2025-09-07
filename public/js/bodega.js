@@ -18,9 +18,13 @@
     try {
       const res = await fetch('/operacion/bodega/data?'+params.toString());
       const data = await res.json();
-      if(!data.ok){ tbody.innerHTML='<tr><td colspan="7" class="text-center text-error">Error</td></tr>'; return; }
+      if(!data.ok){
+        tbody.innerHTML='<tr><td colspan="7" class="text-center text-error">Error</td></tr>';
+        return;
+      }
       if(!data.items.length){
-        tbody.innerHTML = '<tr><td colspan="7" class="text-center text-xs opacity-70">Sin items en bodega (estado exacto \"En bodega\").</td></tr>';
+        const msg = data.warning ? 'Sin items ('+data.warning+')' : 'Sin items en bodega (estado exacto "En bodega").';
+        tbody.innerHTML = '<tr><td colspan="7" class="text-center text-xs opacity-70">'+msg+'</td></tr>';
       } else {
         tbody.innerHTML = data.items.map(r => `
           <tr>
@@ -33,14 +37,14 @@
             <td class="text-[10px]">${r.fecha_ingreso ? new Date(r.fecha_ingreso).toLocaleString('es-CO') : '-'}</td>
           </tr>`).join('');
       }
-      window.__bodegaEstados = data.estados;
       const start = (data.page-1)*data.limit + 1;
       const end = Math.min(data.page*data.limit, data.total);
       if(infoTotal) infoTotal.textContent = data.total ? `${start}-${end} de ${data.total}` : 'Sin resultados';
       if(btnPrev) btnPrev.disabled = page<=1;
       if(btnNext) btnNext.disabled = end >= data.total;
-    } catch (e) {
-      console.error(e); tbody.innerHTML='<tr><td colspan="7" class="text-center text-error">Error</td></tr>';
+    } catch(e){
+      console.error(e);
+      tbody.innerHTML='<tr><td colspan="7" class="text-center text-error">Error</td></tr>';
     }
   }
   if(btnPrev) btnPrev.addEventListener('click', ()=>{ if(page>1){ page--; load(); }});
