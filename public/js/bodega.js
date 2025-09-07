@@ -46,6 +46,17 @@
   if(btnPrev) btnPrev.addEventListener('click', ()=>{ if(page>1){ page--; load(); }});
   if(btnNext) btnNext.addEventListener('click', ()=>{ page++; load(); });
   if(form) form.addEventListener('submit', (e)=>{ e.preventDefault(); page=1; load(); });
+  const btnClear = document.getElementById('btn-clear');
+  if(btnClear){
+    btnClear.addEventListener('click', ()=>{
+      const qEl = document.getElementById('f-q');
+      const catEl = document.getElementById('f-cat');
+      if(qEl) qEl.value='';
+      if(catEl) catEl.value='';
+      page=1; load();
+      if(qEl) qEl.focus();
+    });
+  }
   load();
   window.bodegaDiag = () => console.table((window).__bodegaEstados || []);
 })();
