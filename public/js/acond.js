@@ -68,7 +68,24 @@
       return;
     }
     const rows = listoDespacho.map(item => {
-      return `<tr class="hover">\n        <td class="text-xs font-mono">${safeHTML(item.codigo || item.codigoCaja || '')}</td>\n        <td>${safeHTML(item.estado || '')}</td>\n        <td>${formatDateTime(item.updatedAt)}</td>\n        <td>${safeHTML(item.usuario || '')}</td>\n        <td>${safeHTML(item.observacion || '')}</td>\n        <td>${safeHTML(item.fase || '')}</td>\n      </tr>`;
+      // cronometro: if provided show remaining or 'Completado'
+      let chrono = '-';
+      if(item.cronometro){
+        const now = Date.now();
+        const start = item.cronometro.startsAt ? new Date(item.cronometro.startsAt).getTime() : null;
+        const end = item.cronometro.endsAt ? new Date(item.cronometro.endsAt).getTime() : null;
+        if(start && end){
+          if(item.cronometro.completedAt || now >= end){
+            chrono = 'Completado';
+          } else {
+            const rem = end - now;
+            const sec = Math.max(0, Math.floor(rem/1000));
+            const m = Math.floor(sec/60); const s = sec % 60;
+            chrono = `${m}m ${s}s`;
+          }
+        }
+      }
+      return `<tr class="hover">\n        <td class="text-xs font-mono">${safeHTML(item.codigo || '')}</td>\n        <td>${safeHTML(item.estado || '')}</td>\n        <td>${formatDateTime(item.updatedAt)}</td>\n        <td>${safeHTML(item.lote || '')}</td>\n        <td class="text-xs">${chrono}</td>\n        <td>${safeHTML(item.categoria || '')}</td>\n      </tr>`;
     }).join('');
     body.innerHTML = rows;
   }

@@ -39,7 +39,7 @@
       </div>
     </div>
     <div class="overflow-x-auto border-t border-error/10">
-      <table id="tabla-ensam" class="table table-xs sm:table-sm">
+  <table id="tabla-ensam" class="table table-xs sm:table-sm">
         <thead>
           <tr>
             <th>RFID</th>
@@ -50,7 +50,7 @@
             <th class="hidden md:table-cell">CATEGORÍA</th>
           </tr>
         </thead>
-        <tbody></tbody>
+  <tbody id="cajasTablaBody"></tbody>
       </table>
     </div>
   </div>
@@ -87,12 +87,13 @@
             <th class="hidden md:table-cell">CATEGORÍA</th>
           </tr>
         </thead>
-        <tbody></tbody>
+        <tbody id="listoDespachoBody"></tbody>
       </table>
     </div>
   </div>
 </div>
 
+<div id="cajasContainer" class="hidden"></div>
 <script src="/static/js/acond.js?v=<%= assetVersion %>" defer></script>
 
 <!-- Modal Ensamblaje -->

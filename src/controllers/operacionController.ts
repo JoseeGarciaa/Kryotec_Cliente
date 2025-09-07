@@ -847,7 +847,71 @@ export const OperacionController = {
             throw e;
           }
         }
-  res.json({ ok:true, now: nowRes.rows[0]?.now, disponibles: { tics: tics.rows, cubes: cubes.rows, vips: vips.rows }, cajas: cajasRows, cajaItems: cajaItemsRows });
+  // Items listos para despacho (sub_estado 'Listo')
+  const listoRows = await withTenant(tenant, (c)=> c.query(
+    `SELECT ic.rfid, ic.nombre_unidad, ic.lote, ic.estado, ic.sub_estado, NOW() AS updated_at, m.nombre_modelo,
+            act.started_at AS timer_started_at, act.duration_sec AS timer_duration_sec, act.active AS timer_active
+       FROM inventario_credocubes ic
+       JOIN modelos m ON m.modelo_id = ic.modelo_id
+  LEFT JOIN acond_caja_items aci ON aci.rfid = ic.rfid
+  LEFT JOIN acond_caja_timers act ON act.caja_id = aci.caja_id
+      WHERE ic.estado='Acondicionamiento' AND ic.sub_estado IN ('Lista para Despacho','Listo')
+      ORDER BY ic.id DESC
+      LIMIT 500`));
+
+  // Normalizar estructura esperada por nuevo front-end (acond.js)
+  const nowIso = nowRes.rows[0]?.now;
+  const nowMs = nowIso ? new Date(nowIso).getTime() : Date.now();
+  // Map caja items by caja_id for componentes list
+  const componentesPorCaja: Record<string, { tipo:string; codigo:string }[]> = {};
+  for(const it of cajaItemsRows){
+    const arr = componentesPorCaja[it.caja_id] || (componentesPorCaja[it.caja_id] = []);
+    arr.push({ tipo: it.rol, codigo: it.rfid });
+  }
+  const cajasUI = cajasRows.map(r => {
+    let startsAt: string | null = r.timer_started_at || null;
+    let endsAt: string | null = null;
+    let completedAt: string | null = null;
+    if(r.timer_started_at && r.timer_duration_sec){
+      const endMs = new Date(r.timer_started_at).getTime() + (r.timer_duration_sec*1000);
+      endsAt = new Date(endMs).toISOString();
+      if(!r.timer_active && endMs <= nowMs){
+        completedAt = endsAt;
+      }
+    }
+    return {
+      id: r.caja_id,
+      codigoCaja: r.lote || `Caja #${r.caja_id}`,
+      estado: 'Ensamblaje',
+      createdAt: r.created_at,
+      updatedAt: r.created_at,
+      timer: startsAt ? { startsAt, endsAt, completedAt } : null,
+      componentes: componentesPorCaja[r.caja_id] || []
+    };
+  });
+  const listoDespacho = listoRows.rows.map(r => {
+    let startsAt = r.timer_started_at || null;
+    let endsAt: string | null = null;
+    let completedAt: string | null = null;
+    if(r.timer_started_at && r.timer_duration_sec){
+      const endMs = new Date(r.timer_started_at).getTime() + (r.timer_duration_sec*1000);
+      endsAt = new Date(endMs).toISOString();
+      if(!r.timer_active || endMs <= nowMs){
+        completedAt = endsAt;
+      }
+    }
+    return {
+      codigo: r.rfid,
+      nombre: r.nombre_unidad,
+      estado: r.sub_estado || r.estado,
+      lote: r.lote,
+      updatedAt: r.updated_at,
+      fase: 'Acond',
+      categoria: r.nombre_modelo,
+      cronometro: startsAt ? { startsAt, endsAt, completedAt } : null
+    };
+  });
+  res.json({ ok:true, now: nowIso, serverNow: nowIso, disponibles: { tics: tics.rows, cubes: cubes.rows, vips: vips.rows }, cajas: cajasUI, listoDespacho });
   },
 
   // Validate RFIDs for assembling a single caja
@@ -1053,8 +1117,8 @@ export const OperacionController = {
     if(!Number.isFinite(cajaId) || cajaId<=0) return res.status(400).json({ ok:false, error:'caja_id inválido' });
     await withTenant(tenant, async (c)=>{
       await c.query(`UPDATE acond_caja_timers SET active=false, updated_at=NOW() WHERE caja_id=$1`, [cajaId]);
-      // Opcional: mover items a nuevo sub_estado (comentado hasta definir regla)
-      // await c.query(`UPDATE inventario_credocubes ic SET sub_estado='Listo' WHERE ic.rfid IN (SELECT rfid FROM acond_caja_items WHERE caja_id=$1)`, [cajaId]);
+  // Marcar componentes de la caja como 'Listo' para que aparezcan en lista de despacho
+  await c.query(`UPDATE inventario_credocubes ic SET sub_estado='Lista para Despacho' WHERE ic.rfid IN (SELECT rfid FROM acond_caja_items WHERE caja_id=$1)`, [cajaId]);
     });
     res.json({ ok:true });
   }
