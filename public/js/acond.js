@@ -64,14 +64,14 @@
   function renderInitialLoading(){
     const body = qs(sel.contListo);
     if(body){
-      body.innerHTML = `<tr><td colspan="6" class="text-center py-6 text-sm text-gray-400">Cargando...</td></tr>`;
+      body.innerHTML = `<tr><td colspan="4" class="text-center py-6 text-sm text-gray-400">Cargando...</td></tr>`;
     }
   }
 
   function renderListoEmpty(){
     const body = qs(sel.contListo);
     if(body){
-      body.innerHTML = `<tr><td colspan="6" class="text-center py-6 text-sm text-gray-400">Sin items listos para despacho</td></tr>`;
+      body.innerHTML = `<tr><td colspan="4" class="text-center py-6 text-sm text-gray-400">Sin items listos para despacho</td></tr>`;
     }
   }
 
@@ -90,30 +90,26 @@
   const rows = filtered.map(item => {
     const cajaIdRef = item.caja_id || item.cajaId || item.cajaID;
     const t = item.cronometro;
-    let cell;
+    let timerCell = '<span class="badge badge-neutral badge-xs">-</span>';
     if(t && t.startsAt && t.endsAt){
       const now = Date.now() + serverNowOffsetMs;
       const end = new Date(t.endsAt).getTime();
       if(now < end){
         const rem=end-now; const sec=Math.max(0,Math.floor(rem/1000)); const m=Math.floor(sec/60); const s=sec%60;
         const cls = sec<=60 ? 'bg-error' : (sec<=300 ? 'bg-warning':'bg-info');
-        cell = `<span class=\"inline-flex items-center gap-1\">\n          <span class=\"w-2 h-2 rounded-full ${cls} animate-pulse\" data-listo-dot data-caja-id=\"${safeHTML(cajaIdRef)}\"></span>\n          <span class=\"badge badge-neutral badge-xs font-mono\" data-listo-remaining data-caja-id=\"${safeHTML(cajaIdRef)}\">${m}m ${s.toString().padStart(2,'0')}s</span>\n          <button class=\"btn btn-ghost btn-xs\" data-action=\"timer-clear\" data-caja-id=\"${safeHTML(cajaIdRef)}\" title=\"Reiniciar\">⏹</button>\n        </span>`;
+        timerCell = `<span class="inline-flex items-center gap-1">\n            <span class="w-2 h-2 rounded-full ${cls} animate-pulse" data-listo-dot data-caja-id="${safeHTML(cajaIdRef)}"></span>\n            <span class="badge badge-neutral badge-xs font-mono" data-listo-remaining data-caja-id="${safeHTML(cajaIdRef)}">${m}m ${s.toString().padStart(2,'0')}s</span>\n            <button class="btn btn-ghost btn-xs" data-action="timer-clear" data-caja-id="${safeHTML(cajaIdRef)}" title="Reiniciar">⏹</button>\n          </span>`;
       } else {
-        // Expirado: mostrar opción para volver a iniciar (como play)
-        cell = `<span class=\"inline-flex items-center gap-1\">\n          <span class=\"w-2 h-2 rounded-full bg-neutral\" data-listo-dot data-caja-id=\"${safeHTML(cajaIdRef)}\"></span>\n          <button class=\"btn btn-ghost btn-xs\" data-action=\"timer-start\" data-caja-id=\"${safeHTML(cajaIdRef)}\" title=\"Iniciar\">▶</button>\n        </span>`;
+        timerCell = `<span class="inline-flex items-center gap-1">\n            <button class="btn btn-ghost btn-xs" data-action="timer-start" data-caja-id="${safeHTML(cajaIdRef)}" title="Reiniciar">▶</button>\n          </span>`;
       }
     } else if(cajaIdRef){
-      cell = `<span class=\"inline-flex items-center gap-1\">\n        <span class=\"w-2 h-2 rounded-full bg-neutral\" data-listo-dot data-caja-id=\"${safeHTML(cajaIdRef)}\"></span>\n        <button class=\"btn btn-ghost btn-xs\" data-action=\"timer-start\" data-caja-id=\"${safeHTML(cajaIdRef)}\" title=\"Iniciar\">▶</button>\n      </span>`;
-    } else {
-      cell = '-';
+      timerCell = `<button class="btn btn-ghost btn-xs" data-action="timer-start" data-caja-id="${safeHTML(cajaIdRef)}" title="Iniciar">▶</button>`;
     }
-    // Mostrar exactamente "Despachando" cuando el cronómetro está activo; cuando expiró o no hay timer -> "Lista para Despacho"
     let estadoTxt = 'Lista para Despacho';
     if(t && t.startsAt && t.endsAt){
       const now = Date.now() + serverNowOffsetMs; const end = new Date(t.endsAt).getTime();
       if(now < end) estadoTxt = 'Despachando';
     }
-    return `<tr class=\"hover\">\n      <td class=\"text-xs font-mono\">${safeHTML(item.codigo || '')}</td>\n      <td>${safeHTML(item.nombre || '')}</td>\n      <td>${safeHTML(estadoTxt)}</td>\n      <td>${safeHTML(item.lote || '')}</td>\n      <td class=\"text-xs\">${cell}</td>\n      <td class=\"uppercase\">${safeHTML(item.categoria || '')}</td>\n    </tr>`;
+  return `<tr class="hover" data-caja-id="${safeHTML(cajaIdRef || '')}">\n      <td class="text-sm font-mono">${safeHTML(item.lote || '')}</td>\n      <td class="text-sm flex flex-col leading-tight">\n        <span class="uppercase tracking-wide">${safeHTML(item.nombre || '')}</span>\n        <span class="font-mono text-xs opacity-40">${safeHTML(item.codigo || '')}</span>\n      </td>\n      <td class="text-sm">${safeHTML(estadoTxt)}</td>\n      <td class="w-40">${timerCell}</td>\n    </tr>`;
   }).join('');
         body.innerHTML = rows;
       }
@@ -235,11 +231,12 @@
     if(!comps.length){
       // Cronómetro estilo "anterior": badge pequeño + (si aplica) botón acción
       const controls = timerTableControlsHTML(c);
-      return [ `<tr class="hover" data-caja-id="${safeHTML(c.id)}">\n        <td class="text-[10px] font-mono leading-tight text-gray-400">(sin items)</td>\n        <td class="text-xs">-</td>\n        <td class="text-xs">${safeHTML(c.estado||'')}</td>\n        <td class="text-xs">${safeHTML(c.codigoCaja||'')}</td>\n        <td class="w-32">\n          <span class="badge badge-neutral badge-xs" data-timer-badge><span data-timer-text>${timerText}</span></span>\n          ${controls}\n        </td>\n        <td class="text-xs">-</td>\n      </tr>` ];
+  return [ `<tr class="hover" data-caja-id="${safeHTML(c.id)}">\n        <td class="text-sm font-mono">${safeHTML(c.codigoCaja||'')}</td>\n        <td class="text-sm opacity-60">(sin items)</td>\n        <td class="text-sm">${safeHTML(c.estado||'')}</td>\n        <td class="w-32 flex items-center gap-1">\n          <span class="badge badge-neutral badge-xs" data-timer-badge><span data-timer-text>${timerText}</span></span>\n          ${controls}\n        </td>\n      </tr>` ];
     }
     return comps.map(cc => {
       const controls = timerTableControlsHTML(c);
-      return `<tr class="hover" data-caja-id="${safeHTML(c.id)}">\n      <td class="text-[10px] font-mono leading-tight">${safeHTML(cc.codigo)}</td>\n      <td class="text-xs">${safeHTML(cc.tipo||cc.nombre||'')}</td>\n      <td class="text-xs">${safeHTML(c.estado||'')}</td>\n      <td class="text-xs">${safeHTML(c.codigoCaja||'')}</td>\n      <td class="w-32 flex items-center gap-1">\n        <span class="badge badge-neutral badge-xs" data-timer-badge><span data-timer-text>${timerText}</span></span>\n        ${controls}\n      </td>\n      <td class="text-xs uppercase">${safeHTML(cc.tipo||'')}</td>\n    </tr>`;
+      // Nombre (tipo) en mayúsculas discretas y código en monoespaciado reducido
+  return `<tr class="hover" data-caja-id="${safeHTML(c.id)}">\n        <td class="text-sm font-mono">${safeHTML(c.codigoCaja||'')}</td>\n        <td class="text-sm flex flex-col leading-tight">\n          <span class="uppercase tracking-wide">${safeHTML(cc.tipo||cc.nombre||'')}</span>\n          <span class="font-mono text-xs opacity-40">${safeHTML(cc.codigo)}</span>\n        </td>\n        <td class="text-sm">${safeHTML(c.estado||'')}</td>\n        <td class="w-32 flex items-center gap-1">\n          <span class="badge badge-neutral badge-xs" data-timer-badge><span data-timer-text>${timerText}</span></span>\n          ${controls}\n        </td>\n      </tr>`;
     });
   }
 
@@ -431,23 +428,96 @@
           bar.classList.toggle('bg-warning', remSec>0 && remSec<=60);
         }
       });
+      // Actualizar si modal de detalle está visible
+      const visibleModal = !document.getElementById('modal-caja-detalle')?.classList.contains('hidden');
+      if(visibleModal){
+        const remSpans = document.querySelectorAll('[data-detalle-remaining]');
+        remSpans.forEach(sp=>{
+          const cajaId = sp.getAttribute('data-detalle-remaining');
+          const c = cajas.find(cc=> String(cc.id)===String(cajaId));
+          if(!c) return;
+          const rem = msRemaining(c);
+          sp.textContent = timerDisplay(rem, c.timer?.completedAt);
+          const bar = document.querySelector(`[data-detalle-bar="${cajaId}"]`);
+          if(bar && c.timer && c.timer.startsAt && c.timer.endsAt){
+            bar.style.width = Math.min(100, Math.max(0, timerProgressPct(c))).toFixed(1)+'%';
+          }
+        });
+      }
     }, 1000);
   }
 
   // ========================= MODAL DETALLE =========================
+  // Nueva implementación alineada al markup real (#modal-caja-detalle)
   function openCajaDetalle(id){
     const caja = cajas.find(c=> String(c.id) === String(id));
     if(!caja) return;
-    const modal = qs(sel.modal);
-    const content = qs(sel.modalContent);
-    if(content){
-      content.innerHTML = cajaDetalleHTML(caja);
+    const modalWrap = document.getElementById('modal-caja-detalle');
+    if(!modalWrap) return;
+
+    // Meta básica
+    const comps = (caja.componentes||[]);
+    const counts = { vip:0, tic:0, cube:0 };
+    comps.forEach(x=>{ if(x && x.tipo){ counts[x.tipo] = (counts[x.tipo]||0)+1; } });
+
+    const setText = (id, val) => { const el=document.getElementById(id); if(el) el.textContent = val; };
+    setText('detalle-caja-titulo', caja.codigoCaja || 'Caja');
+    setText('detalle-caja-lote', caja.codigoCaja || '');
+    setText('detalle-caja-id', `#${caja.id}`);
+    setText('detalle-caja-comp', `VIP:${counts.vip||0} · TIC:${counts.tic||0} · CUBE:${counts.cube||0}`);
+    setText('detalle-caja-fecha', formatDateTime(caja.createdAt));
+
+    // Items
+    const itemsBox = document.getElementById('detalle-caja-items');
+    if(itemsBox){
+      if(comps.length===0){
+        itemsBox.innerHTML = '<div class="col-span-full text-center text-xs opacity-60 italic">Sin componentes</div>';
+      } else {
+        itemsBox.innerHTML = comps.map(cc => {
+          const tipo = (cc.tipo||'').toLowerCase();
+          let color='badge-ghost';
+          if(tipo==='vip') color='badge-info';
+          else if(tipo==='tic') color='badge-warning';
+          else if(tipo==='cube') color='badge-accent';
+          return `<div class="border rounded-lg p-3 bg-base-300/10 flex flex-col gap-2" title="${safeHTML(cc.codigo||'')}">
+            <div class="flex items-center justify-between">
+              <span class="badge ${color} badge-xs font-semibold uppercase">${safeHTML(cc.tipo||'')}</span>
+            </div>
+            <div class="font-mono text-sm break-all">${safeHTML(cc.codigo||'')}</div>
+          </div>`;
+        }).join('');
+      }
     }
-    if(modal){ modal.classList.add('modal-open'); }
+
+    // Timer
+    const timerBox = document.getElementById('detalle-caja-timer-box');
+    if(timerBox){
+      let html='';
+      if(!caja.timer){
+        html = '<div class="text-sm opacity-60 italic">(Sin cronómetro)</div>';
+      } else if(caja.timer.completedAt){
+        html = '<div class="badge badge-success badge-sm">Cronómetro Completado</div>';
+      } else if(caja.timer.startsAt && caja.timer.endsAt){
+        const remaining = msRemaining(caja);
+        const remTxt = timerDisplay(remaining, caja.timer.completedAt);
+        const pct = timerProgressPct(caja);
+        html = `<div class="space-y-2">
+          <div class="text-sm">Tiempo restante: <span class="font-mono" data-detalle-remaining="${safeHTML(caja.id)}">${remTxt}</span></div>
+          <div class="h-2 rounded bg-base-300/40 overflow-hidden">
+            <div class="h-full bg-primary" style="width:${pct.toFixed(1)}%" data-detalle-bar="${safeHTML(caja.id)}"></div>
+          </div>
+        </div>`;
+      } else {
+        html = '<div class="text-sm opacity-60 italic">(Cronómetro sin iniciar)</div>';
+      }
+      timerBox.innerHTML = html;
+    }
+
+    modalWrap.classList.remove('hidden');
   }
-  function cajaDetalleHTML(c){
-    const comps = (c.componentes||[]).map(cc=> `<li class="leading-tight">${safeHTML(cc.tipo||'')} - <span class="font-mono">${safeHTML(cc.codigo||'')}</span></li>`).join('');
-    return `\n      <h3 class="font-semibold mb-2">${safeHTML(c.codigoCaja||'Caja')}</h3>\n      <div class="text-xs space-y-1 mb-2">\n        <div><span class="font-medium">Estado:</span> ${safeHTML(c.estado||'-')}</div>\n        <div><span class="font-medium">Creado:</span> ${formatDateTime(c.createdAt)}</div>\n        <div><span class="font-medium">Actualizado:</span> ${formatDateTime(c.updatedAt)}</div>\n      </div>\n      <div><span class="font-medium text-xs">Componentes:</span>\n        <ul class="text-xs mt-1 space-y-0.5">${comps||'<li class="text-gray-400">Sin componentes</li>'}</ul>\n      </div>`;
+  function closeCajaDetalle(){
+    const modalWrap = document.getElementById('modal-caja-detalle');
+    if(modalWrap) modalWrap.classList.add('hidden');
   }
 
   // ========================= SCAN / VALIDACION / CREACION =========================
@@ -639,6 +709,21 @@
 
       // detalle
       if(t.matches('[data-action="detalle"]')){ openCajaDetalle(t.getAttribute('data-caja-id')); }
+
+      // Click directo en tarjeta o fila para abrir detalle (evitar si se clickeó un botón dentro)
+      const cardEl = t.closest('.caja-card');
+      if(cardEl && !t.closest('button') && cardEl.hasAttribute('data-caja-id')){
+        openCajaDetalle(cardEl.getAttribute('data-caja-id'));
+      }
+      const rowEl = t.closest('tr[data-caja-id]');
+      if(rowEl && !t.closest('button')){
+        openCajaDetalle(rowEl.getAttribute('data-caja-id'));
+      }
+
+      // Cerrar modal detalle
+      if(t.matches('[data-close="detalle"]') || t.closest('[data-close="detalle"]')){
+        closeCajaDetalle();
+      }
 
       // close modal
       if(t.matches(sel.modalClose) || t.closest(sel.modalClose)){
