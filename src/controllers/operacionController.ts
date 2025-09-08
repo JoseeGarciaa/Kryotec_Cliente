@@ -2067,6 +2067,30 @@ export const OperacionController = {
         active boolean NOT NULL DEFAULT false,
         updated_at timestamptz NOT NULL DEFAULT NOW()
       )`));
+      // Asegurar que cada lote en Operación/Transito tenga fila en acond_cajas
+      try {
+        await withTenant(tenant, (c)=> c.query(`
+          INSERT INTO acond_cajas (lote)
+          SELECT DISTINCT ic.lote
+            FROM inventario_credocubes ic
+       LEFT JOIN acond_cajas c ON c.lote = ic.lote
+           WHERE ic.estado='Operación' AND ic.sub_estado='Transito' AND c.caja_id IS NULL AND ic.lote IS NOT NULL AND ic.lote <> ''`));
+      } catch(e){ if(KANBAN_DEBUG) console.log('[operacionData] insert missing cajas error', (e as any)?.message); }
+   // Auto-reparación: si existen items cuyo lote coincide con una caja pero no están en acond_caja_items, insertarlos.
+   try {
+     await withTenant(tenant, (c)=> c.query(`
+    INSERT INTO acond_caja_items (caja_id, rfid, rol)
+    SELECT c.caja_id, ic.rfid,
+        CASE WHEN m.nombre_modelo ILIKE '%tic%' THEN 'tic'
+          WHEN m.nombre_modelo ILIKE '%vip%' THEN 'vip'
+          WHEN (m.nombre_modelo ILIKE '%cube%' OR m.nombre_modelo ILIKE '%cubo%') THEN 'cube'
+          ELSE 'otro' END AS rol
+      FROM inventario_credocubes ic
+      JOIN acond_cajas c ON c.lote = ic.lote
+      JOIN modelos m ON m.modelo_id = ic.modelo_id
+    LEFT JOIN acond_caja_items aci ON aci.rfid = ic.rfid
+     WHERE aci.rfid IS NULL`));
+   } catch(e){ if(KANBAN_DEBUG) console.log('[operacionData] backfill acond_caja_items error', (e as any)?.message); }
       const nowRes = await withTenant(tenant, (c)=> c.query<{ now:string }>(`SELECT NOW()::timestamptz AS now`));
       const cajasQ = await withTenant(tenant, (c)=> c.query(
         `SELECT c.caja_id, c.lote, act.started_at, act.duration_sec, act.active,
