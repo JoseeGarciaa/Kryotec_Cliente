@@ -50,6 +50,8 @@ router.get('/devolucion', requireAuth, OperacionController.devolucion);
 router.get('/devolucion/data', requireAuth, OperacionController.devolucionData as any);
 router.post('/devolucion/confirm', requireAuth, OperacionController.devolucionConfirm as any);
 router.post('/devolucion/validate', requireAuth, OperacionController.devolucionValidate as any);
+router.post('/devolucion/ret/validate', requireAuth, OperacionController.devolucionRetValidate as any);
+router.post('/devolucion/ret/confirm', requireAuth, OperacionController.devolucionRetConfirm as any);
 router.get('/inspeccion', requireAuth, OperacionController.inspeccion);
 // En bodega
 router.get('/bodega', requireAuth, OperacionController.bodega);

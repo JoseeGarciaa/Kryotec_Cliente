@@ -429,7 +429,9 @@
       const r = await fetch('/operacion/preacond/lote/lookup', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ rfid: code }) });
       const j = await r.json();
       if(!j.ok){ msg.textContent=j.error||'No se pudo obtener lote'; return; }
-      loteDetected = j.lote; loteItemsCache = j.items||[];
+  loteDetected = j.lote; // backend devuelve 'tics'
+  loteItemsCache = j.items || j.tics || [];
+  if(!Array.isArray(loteItemsCache) || !loteItemsCache.length){ msg.textContent='No se encontraron TICs en el lote'; return; }
       // Resumen
       if(scanLoteSummary){
   const totalCongelado = loteItemsCache.filter(it=>/Congelado/i.test(it.sub_estado||'')).length;

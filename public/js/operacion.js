@@ -38,14 +38,8 @@
   function msRemaining(timer){ if(!timer||!timer.endsAt) return 0; return new Date(timer.endsAt).getTime() - (Date.now()+serverOffset); }
   function timerDisplay(rem){ if(rem<=0) return 'Finalizado'; const s=Math.max(0,Math.floor(rem/1000)); const m=Math.floor(s/60); return `${m}m ${s%60}s`; }
   function badgeClass(rem, completed){ if(completed) return 'badge-success'; if(rem<=0) return 'badge-warning'; if(rem<=60*1000) return 'badge-error'; if(rem<=5*60*1000) return 'badge-warning'; return 'badge-neutral'; }
-  function controlButtonsHTML(caja){
-    const id = caja.id;
-    if(caja.estado==='Transito'){
-      return `<button class="btn btn-ghost btn-xs" data-op-act="clear" data-caja="${id}" title="Reiniciar">⏹</button>`;
-    }
-    // Base (Operación) sin timer o estado Retorno permite iniciar nuevo ciclo
-    return `<button class="btn btn-ghost btn-xs" data-op-act="start" data-caja="${id}" title="Iniciar">▶</button>`;
-  }
+  // Timers son solo lectura (definidos en Listo para Despacho). No hay controles en Operación.
+  function controlButtonsHTML(_caja){ return ''; }
   function rowHTML(caja){
     const comps = caja.componentes||[];
     const timer = caja.timer;
@@ -59,10 +53,8 @@
   const badgeCls = timer? badgeClass(remaining, !!timer.completedAt) : 'badge-ghost';
       let badge;
       if(timer){
-        badge = `<span class="badge badge-xs ${badgeCls} gap-1" data-op-timer data-caja="${caja.id}">${timerTxt}</span> ${controlButtonsHTML(caja)}`;
-      } else {
-        badge = controlButtonsHTML(caja);
-      }
+        badge = `<span class="badge badge-xs ${badgeCls} gap-1" data-op-timer data-caja="${caja.id}">${timerTxt}</span>`;
+      } else { badge=''; }
     if(!comps.length){
       return `<tr data-caja-row="${caja.id}"><td class="font-mono text-[10px] opacity-50">(sin)</td><td class="hidden md:table-cell text-xs">-</td><td class="hidden lg:table-cell text-xs">${caja.estado}</td><td class="text-xs font-mono">${caja.codigoCaja}</td><td class="w-32">${badge}</td></tr>`;
     }
@@ -85,14 +77,13 @@
     return `<div class="border rounded-lg p-3 bg-base-200/30 flex flex-col gap-2" data-caja-card="${caja.id}">
       <div class="flex items-start justify-between gap-2">
         <div class="text-[11px] font-mono leading-tight">${caja.codigoCaja}</div>
-        <div>${controlButtonsHTML(caja)}</div>
       </div>
       <div class="flex flex-wrap gap-1 text-[10px] font-mono">
         ${comps.map(c=>`<span class="badge badge-outline badge-xs">${c.tipo.toUpperCase()}</span>`).join('') || '<span class="opacity-40">(vacía)</span>'}
       </div>
       <div class="flex items-center justify-between text-[10px]">
         <span class="opacity-70">TIC:${tics} VIP:${vip?1:0} CUBE:${cube?1:0}</span>
-        <span class="badge badge-xs ${badgeCls}" data-op-timer data-caja="${caja.id}">${timerTxt}</span>
+  <span class="badge badge-xs ${badgeCls}" data-op-timer data-caja="${caja.id}">${timerTxt}</span>
       </div>
     </div>`;
   }
@@ -168,42 +159,11 @@
   modal?.addEventListener('close', resetAdd);
 
   // Timer action handlers (delegated)
-  document.addEventListener('click', async (e)=>{
-    const t = e.target; if(!(t instanceof HTMLElement)) return;
-    const btn = t.closest('[data-op-act]'); if(!btn) return;
-    const act = btn.getAttribute('data-op-act'); const cid = btn.getAttribute('data-caja'); if(!cid) return;
-    try {
-      if(act==='start'){
-        let mins = prompt('Duración (minutos):','30'); if(mins==null) return; const m = Number(mins.trim()); if(!Number.isFinite(m)||m<=0) return;
-  const res = await fetch('/operacion/caja/timer/start',{ method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ caja_id: cid, durationSec: m*60 })});
-        await res.json();
-      } else if(act==='clear'){
-        if(!confirm('Reiniciar cronómetro?')) return;
-  await fetch('/operacion/caja/timer/clear',{ method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ caja_id: cid })});
-      } else if(act==='complete'){
-  await fetch('/operacion/caja/timer/complete',{ method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ caja_id: cid })});
-      }
-      await load();
-    } catch(err){ console.error('[Operación] timer action error', err); }
-  });
+  // Se elimina listener de acciones de timer (solo lectura)
 
   // Bulk start timer replication (same lote)
-  bulkBtn?.addEventListener('click', async ()=>{
-    const sel = dataCajas.find(c=> c.estado==='Operación' && c.timer==null); // pick first without timer
-    const hrs = Number(bulkHrs?.value||0); const mins = Number(bulkMin?.value||0);
-    const dur = (hrs*3600)+(mins*60);
-    if(!sel){ if(bulkMsg) bulkMsg.textContent='No hay caja sin cronómetro'; return; }
-    if(dur<=0){ if(bulkMsg) bulkMsg.textContent='Duración inválida'; return; }
-    bulkBtn.disabled=true; if(bulkMsg) bulkMsg.textContent='Iniciando...';
-    try {
-  const r = await fetch('/operacion/caja/timer/start-bulk',{ method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ caja_id: sel.id, durationSec: dur })});
-      const j = await r.json();
-      if(!j.ok){ if(bulkMsg) bulkMsg.textContent=j.error||'Error'; bulkBtn.disabled=false; return; }
-      if(bulkMsg) bulkMsg.textContent=`Timers iniciados (${j.cajas})`;
-      await load();
-    } catch(e){ if(bulkMsg) bulkMsg.textContent='Error'; }
-    finally { bulkBtn.disabled=false; }
-  });
+  // Botón bulk ya no aplica; si existe en DOM lo deshabilitamos
+  if(bulkBtn){ bulkBtn.disabled = true; if(bulkMsg) bulkMsg.textContent='Cronómetro general solo lectura'; }
 
   // Init
   load(); startPolling();

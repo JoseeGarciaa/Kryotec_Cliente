@@ -15,22 +15,53 @@
 
   <!-- Items Pendientes -->
   <div class="rounded-xl border border-warning/40 bg-warning/5 mb-8" id="dev-pend-wrapper">
-    <div class="flex items-center justify-between px-5 pt-4 pb-2 flex-wrap gap-3">
-      <div>
-        <div class="font-semibold text-lg flex items-center gap-2">Items Pendientes de Devolución <span id="dev-spin" class="loading loading-spinner loading-xs hidden"></span></div>
-        <div id="dev-pend-count" class="text-sm opacity-70">(0 items listos para devolver)</div>
+    <div class="px-5 pt-4 pb-3 flex flex-col gap-4">
+      <div class="flex items-start justify-between flex-wrap gap-3">
+        <div>
+          <div class="font-semibold text-lg flex items-center gap-2">Items Pendientes de Devolución <span id="dev-spin" class="loading loading-spinner loading-xs hidden"></span></div>
+          <div id="dev-pend-count" class="text-sm opacity-70">(0 items listos para devolver)</div>
+        </div>
+        <div class="flex items-center gap-2 flex-wrap">
+          <button id="dev-btn-add" class="btn btn-primary btn-sm gap-2" type="button">
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" class="w-4 h-4" fill="currentColor"><path d="M11 11V5a1 1 0 1 1 2 0v6h6a1 1 0 1 1 0 2h-6v6a1 1 0 1 1-2 0v-6H5a1 1 0 1 1 0-2h6Z"/></svg>
+            Agregar Items
+          </button>
+          <div class="join bg-base-300/40 rounded-xl overflow-hidden">
+            <button id="dev-view-cards" class="btn btn-ghost btn-xs join-item" title="Vista tarjetas">
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" class="w-4 h-4" fill="currentColor"><path d="M3 5h7v7H3V5zm0 9h7v5H3v-5zm11-9h7v5h-7V5zm0 7h7v7h-7v-7z"/></svg>
+            </button>
+            <button id="dev-view-list" class="btn btn-ghost btn-xs join-item" title="Vista lista">
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" class="w-4 h-4" fill="currentColor"><path d="M4 6h16v2H4V6zm0 5h16v2H4v-2zm0 5h10v2H4v-2z"/></svg>
+            </button>
+          </div>
+        </div>
       </div>
-      <button id="dev-btn-add" class="btn btn-primary btn-sm gap-2" type="button">
-        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" class="w-4 h-4" fill="currentColor"><path d="M11 11V5a1 1 0 1 1 2 0v6h6a1 1 0 1 1 0 2h-6v6a1 1 0 1 1-2 0v-6H5a1 1 0 1 1 0-2h6Z"/></svg>
-        Agregar Items
-      </button>
+      <div>
+        <label class="input input-bordered flex items-center gap-2 w-full">
+          <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 opacity-70" viewBox="0 0 24 24" fill="currentColor"><path d="M10 2a8 8 0 105.293 14.293l4.207 4.207a1 1 0 001.414-1.414l-4.207-4.207A8 8 0 0010 2zm0 2a6 6 0 110 12A6 6 0 0110 4z"/></svg>
+          <input id="dev-search" type="text" class="grow" placeholder="Buscar por RFID, rol o caja..." />
+        </label>
+      </div>
     </div>
     <div class="px-5 pb-5">
-      <div id="dev-empty" class="py-12 text-center text-sm opacity-60">
-        No hay items pendientes de devolución
+      <div id="dev-empty" class="py-12 text-center text-sm opacity-60">No hay items pendientes de devolución</div>
+      <!-- Grid tarjetas -->
+      <div id="dev-pend-list" class="hidden"></div>
+      <!-- Tabla lista -->
+      <div class="overflow-x-auto mt-4" id="dev-table-wrapper">
+        <table id="dev-pend-table" class="table table-xs sm:table-sm hidden">
+          <thead>
+            <tr>
+              <th>RFID</th>
+              <th class="hidden md:table-cell">NOMBRE</th>
+              <th class="hidden md:table-cell">CAJA</th>
+              <th class="hidden lg:table-cell">ESTADO</th>
+              <th>CRONÓMETRO</th>
+            </tr>
+          </thead>
+          <tbody id="dev-pend-table-body"></tbody>
+        </table>
       </div>
-  <!-- Contenedor de la lista; clases de grid se agregan dinámicamente via JS -->
-  <div id="dev-pend-list" class="hidden"></div>
     </div>
   </div>
 
@@ -54,6 +85,24 @@
         <div class="text-xs uppercase tracking-wide opacity-70">TICs</div>
       </div>
     </div>
+    <!-- Escaneo de Retorno a Bodega -->
+    <div class="px-5 pb-6">
+      <div class="mt-4 rounded-lg border border-base-200 bg-base-100 p-4">
+        <div class="flex items-start justify-between gap-3 flex-wrap mb-3">
+          <div>
+            <h3 class="font-semibold text-sm flex items-center gap-2">Mover Items en Retorno a Bodega</h3>
+            <p class="text-[11px] opacity-70">Escanea RFIDs en sub-estado <strong>Retorno</strong>. Se validan y luego puedes confirmar el ingreso a Bodega.</p>
+          </div>
+          <div class="flex gap-2">
+            <button type="button" id="ret-validate" class="btn btn-outline btn-xs">Validar</button>
+            <button type="button" id="ret-confirm" class="btn btn-primary btn-xs" disabled>Confirmar a Bodega</button>
+          </div>
+        </div>
+        <textarea id="ret-input" class="textarea textarea-bordered w-full h-28 text-xs font-mono resize-y mb-2" placeholder="Escanear / pegar RFIDs (uno por línea o espacios)"></textarea>
+        <div id="ret-msg" class="text-[11px] mb-3"></div>
+        <div id="ret-selected" class="flex flex-wrap gap-2"></div>
+      </div>
+    </div>
   </div>
 </div>
 
@@ -62,11 +111,11 @@
   <div class="modal-box w-full max-w-2xl md:max-w-3xl">
     <form method="dialog"><button class="btn btn-sm btn-circle btn-ghost absolute right-2 top-2">✕</button></form>
     <h3 class="font-bold text-lg mb-2">Confirmar Devolución</h3>
-  <p class="text-xs opacity-70 mb-4">Escanea o pega RFIDs. Solo se validan items en Operación con sub-estado Transito.</p>
+  <p class="text-xs opacity-70 mb-4">Escanea o pega RFIDs (24 caracteres cada uno). Se validan items en Operación con sub-estado Transito, Retorno o Completado.</p>
     <div class="space-y-3">
       <div>
         <label class="text-[11px] font-medium uppercase opacity-60 block mb-1">RFIDs</label>
-        <textarea id="dev-input" class="textarea textarea-bordered w-full h-28 text-xs font-mono resize-y" placeholder="Escanear o pegar (uno por línea o separados por espacios)"></textarea>
+  <textarea id="dev-input" class="textarea textarea-bordered w-full h-28 text-xs font-mono resize-y" placeholder="Escanear / pegar RFIDs de 24 caracteres (uno por línea o espacios)"></textarea>
       </div>
       <div id="dev-validate-msg" class="text-xs"></div>
       <div class="grid gap-2 sm:grid-cols-2 md:grid-cols-3" id="dev-selected"></div>
