@@ -286,8 +286,8 @@ export const OperacionController = {
         const row = map.get(r);
         if(!row){ invalid.push({ rfid:r, reason:'no_encontrado' }); continue; }
     if(row.estado !== 'Operación'){ invalid.push({ rfid:r, reason:'estado_'+row.estado }); continue; }
-  // Valid if currently in Transito, Retorno or Completado (listos para devolver)
-  if(!['Transito','Retorno','Completado'].includes(row.sub_estado)){ invalid.push({ rfid:r, reason: row.sub_estado? ('subestado_'+row.sub_estado): 'no_listo' }); continue; }
+  // Ahora sólo válido si está exactamente en sub_estado 'Retorno'
+  if(row.sub_estado !== 'Retorno'){ invalid.push({ rfid:r, reason: row.sub_estado? ('subestado_'+row.sub_estado): 'no_retorno' }); continue; }
         valid.push({ rfid:r, rol: row.rol });
       }
       res.json({ ok:true, valid, invalid });

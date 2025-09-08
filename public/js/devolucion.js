@@ -166,9 +166,14 @@
 
   async function doValidate(){
     const raw = (input?.value||'').trim();
-  const parts = raw.split(/\s+/).filter(x=> x && x.length===24); // solo RFIDs de 24 caracteres
-  if(!parts.length){ validateMsg.textContent='Ingresa RFIDs (24 caracteres)'; selected.clear(); renderSelected(); return; }
-  const unique = Array.from(new Set(parts));
+    if(!raw){ validateMsg.textContent='Ingresa RFIDs (24 caracteres)'; selected.clear(); renderSelected(); return; }
+    // Normalizar: dividir por espacios/nuevas líneas, truncar cada token a 24 y filtrar exactos de 24
+    let parts = raw.split(/\s+/).filter(Boolean).map(x=> x.slice(0,24));
+    parts = parts.filter(x=> x.length===24);
+    if(!parts.length){ validateMsg.textContent='Ingresa RFIDs válidos (24 caracteres)'; selected.clear(); renderSelected(); return; }
+    const unique = Array.from(new Set(parts));
+    // Reescribir textarea con tokens normalizados (uno por línea) para feedback visual
+    if(input) input.value = unique.join('\n');
     validateMsg.textContent='Validando...';
     try {
       const r = await fetch('/operacion/devolucion/validate', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ rfids: unique })});
