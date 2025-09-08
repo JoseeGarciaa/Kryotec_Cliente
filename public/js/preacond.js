@@ -200,6 +200,9 @@
       </div>`);
     });
     container.innerHTML = cards.join('');
+    if(!cards.length){
+      container.innerHTML = `<div class="py-10 text-center text-sm opacity-60">No hay TICs en ${section==='congelamiento'?'congelamiento':'atemperamiento'}</div>`;
+    }
   }
 
   function render(tbody, rows, emptyText, section){

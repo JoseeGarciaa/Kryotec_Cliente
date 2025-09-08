@@ -64,14 +64,33 @@
   function renderInitialLoading(){
     const body = qs(sel.contListo);
     if(body){
-      body.innerHTML = `<tr><td colspan="4" class="text-center py-6 text-sm text-gray-400">Cargando...</td></tr>`;
+  body.innerHTML = `<tr><td colspan="3" class="text-center py-6 text-sm text-gray-400">Cargando...</td></tr>`;
+    }
+    // Loading para vista en cards de Lista para Despacho
+    const listoGrid = qs(sel.contListoCards);
+    if(listoGrid){
+      listoGrid.innerHTML = `<div class="col-span-full flex flex-col items-center gap-3 py-10 opacity-70">
+        <span class="loading loading-spinner loading-md"></span>
+        <span class="text-sm">Cargando lista despacho...</span>
+      </div>`;
+    }
+    const gridCajas = qs(sel.contCajas);
+    if(gridCajas){
+      gridCajas.innerHTML = `<div class="col-span-full flex flex-col items-center gap-3 py-10 opacity-70">
+        <span class="loading loading-spinner loading-md"></span>
+        <span class="text-sm">Cargando cajas...</span>
+      </div>`;
+    }
+    const cajasTableBody = qs(sel.contCajasTabla);
+    if(cajasTableBody){
+      cajasTableBody.innerHTML = `<tr><td colspan="3" class="text-center py-8 text-sm opacity-60">Cargando cajas...</td></tr>`;
     }
   }
 
   function renderListoEmpty(){
     const body = qs(sel.contListo);
     if(body){
-      body.innerHTML = `<tr><td colspan="4" class="text-center py-6 text-sm text-gray-400">Sin items listos para despacho</td></tr>`;
+  body.innerHTML = `<tr><td colspan="3" class="text-center py-8 text-sm opacity-60">No hay cajas</td></tr>`;
     }
   }
 
@@ -90,51 +109,52 @@
   const rows = filtered.map(item => {
     const cajaIdRef = item.caja_id || item.cajaId || item.cajaID;
     const t = item.cronometro;
-    let timerCell = '<span class="badge badge-neutral badge-xs">-</span>';
-    if(t && t.startsAt && t.endsAt){
-      const now = Date.now() + serverNowOffsetMs;
-      const end = new Date(t.endsAt).getTime();
-      if(now < end){
-        const rem=end-now; const sec=Math.max(0,Math.floor(rem/1000)); const m=Math.floor(sec/60); const s=sec%60;
-        const cls = sec<=60 ? 'bg-error' : (sec<=300 ? 'bg-warning':'bg-info');
-        timerCell = `<span class="inline-flex items-center gap-1">\n            <span class="w-2 h-2 rounded-full ${cls} animate-pulse" data-listo-dot data-caja-id="${safeHTML(cajaIdRef)}"></span>\n            <span class="badge badge-neutral badge-xs font-mono" data-listo-remaining data-caja-id="${safeHTML(cajaIdRef)}">${m}m ${s.toString().padStart(2,'0')}s</span>\n            <button class="btn btn-ghost btn-xs" data-action="timer-clear" data-caja-id="${safeHTML(cajaIdRef)}" title="Reiniciar">⏹</button>\n          </span>`;
-      } else {
-        timerCell = `<span class="inline-flex items-center gap-1">\n            <button class="btn btn-ghost btn-xs" data-action="timer-start" data-caja-id="${safeHTML(cajaIdRef)}" title="Reiniciar">▶</button>\n          </span>`;
-      }
-    } else if(cajaIdRef){
-      timerCell = `<button class="btn btn-ghost btn-xs" data-action="timer-start" data-caja-id="${safeHTML(cajaIdRef)}" title="Iniciar">▶</button>`;
-    }
+    // Derivar estado sin mostrar controles de timer por fila
     let estadoTxt = 'Lista para Despacho';
     if(t && t.startsAt && t.endsAt){
       const now = Date.now() + serverNowOffsetMs; const end = new Date(t.endsAt).getTime();
-      if(now < end) estadoTxt = 'Despachando';
+  if(now < end) estadoTxt = 'Despachando';
     }
-  return `<tr class="hover" data-caja-id="${safeHTML(cajaIdRef || '')}">\n      <td class="text-sm font-mono">${safeHTML(item.lote || '')}</td>\n      <td class="text-sm flex flex-col leading-tight">\n        <span class="uppercase tracking-wide">${safeHTML(item.nombre || '')}</span>\n        <span class="font-mono text-xs opacity-40">${safeHTML(item.codigo || '')}</span>\n      </td>\n      <td class="text-sm">${safeHTML(estadoTxt)}</td>\n      <td class="w-40">${timerCell}</td>\n    </tr>`;
+    return `<tr class="hover" data-caja-id="${safeHTML(cajaIdRef || '')}">\n      <td class="text-sm font-mono">${safeHTML(item.lote || '')}</td>\n      <td class="text-sm flex flex-col leading-tight">\n        <span class="uppercase tracking-wide">${safeHTML(item.nombre || '')}</span>\n        <span class="font-mono text-xs opacity-40">${safeHTML(item.codigo || '')}</span>\n      </td>\n      <td class="text-sm">${safeHTML(estadoTxt)}</td>\n    </tr>`;
   }).join('');
         body.innerHTML = rows;
       }
     }
     if(grid){
       if(!listoDespacho || listoDespacho.length===0){
-        grid.innerHTML = '<div class="col-span-full text-center text-xs text-gray-400 py-4">Sin items listos para despacho</div>';
+  grid.innerHTML = '<div class="col-span-full py-10 text-center text-sm opacity-60">No hay cajas</div>';
       } else {
   const filterValue = (qs(sel.filtroListoInput)?.value || '').trim().toLowerCase();
   const filtered = filterValue ? listoDespacho.filter(i => (i.codigo||'').toLowerCase().includes(filterValue) || (i.nombre||'').toLowerCase().includes(filterValue) || (i.lote||'').toLowerCase().includes(filterValue)) : listoDespacho;
-  // Agrupar por caja (usamos lote si existe, si no caja_id / fallback)
+  // Agrupar por caja_id para evitar colisión cuando dos cajas comparten mismo lote
   const groupsMap = new Map();
   filtered.forEach(it=>{
-    const key = it.lote; // grouping by lote (caja)
-    if(!groupsMap.has(key)) groupsMap.set(key,{ lote: it.lote, cajaId: it.caja_id || it.cajaId || it.cajaId || it.cajaID, items:[], categorias:{}, timers:[] });
+    const cajaId = it.caja_id || it.cajaId || it.cajaID || it.caja; // caja_id numérico real
+    const key = cajaId ? `id:${cajaId}` : `lote:${it.lote}`; // fallback a lote sólo si no hay id
+    if(!groupsMap.has(key)) groupsMap.set(key, { lote: it.lote, cajaId: cajaId || it.lote, timers: [], componentes: [], categorias: {} });
     const g = groupsMap.get(key);
-    g.items.push(it);
-    const cat = it.categoria||'NA';
-    g.categorias[cat] = (g.categorias[cat]||0)+1;
-    if(it.cronometro){
-      g.timers.push({ startsAt: it.cronometro.startsAt, endsAt: it.cronometro.endsAt, completedAt: it.cronometro.completedAt });
-    }
+    // Colectar timer (puede repetirse, tomaremos primero válido)
+    if(it.cronometro && it.cronometro.startsAt && it.cronometro.endsAt){ g.timers.push(it.cronometro); }
+    const tipo = (it.categoria||'').toLowerCase();
+    g.componentes.push({ tipo, codigo: it.codigo });
+    g.categorias[tipo] = (g.categorias[tipo]||0)+1;
   });
-  const groups = Array.from(groupsMap.values());
-  grid.innerHTML = groups.map(g => listoCajaCardHTML(g)).join('');
+  const groups = Array.from(groupsMap.values()).map(g=>{
+    // Consolidar timer único
+    const t = g.timers.find(ti=> ti && ti.startsAt && ti.endsAt) || null;
+    return { ...g, timers: t? [t]: [], timer: t };
+  });
+    // Reusar cajaCardHTML adaptando estructura a la esperada (id, codigoCaja, estado, timer, componentes)
+    grid.innerHTML = groups.map(g => {
+      const fakeCaja = {
+        id: g.cajaId,
+        codigoCaja: g.lote || ('CAJA-'+g.cajaId),
+        estado: 'Lista para Despacho',
+        timer: g.timer ? { startsAt: g.timer.startsAt, endsAt: g.timer.endsAt, completedAt: g.timer.completedAt } : null,
+        componentes: g.componentes
+      };
+      return cajaCardHTML(fakeCaja);
+    }).join('');
       }
     }
   }
@@ -155,11 +175,18 @@
 
     // Cards view
   contCards.innerHTML = filtered.map(c => cajaCardHTML(c)).join('');
+  if(!filtered.length){
+    contCards.innerHTML = `<div class="col-span-full py-10 text-center text-sm opacity-60">No hay cajas</div>`;
+  }
 
   // Table rows (una fila por componente para evitar agrupado de RFIDs)
   const tableRows = [];
   filtered.forEach(c => { tableRows.push(...cajaRowsHTML(c)); });
-  contTableBody.innerHTML = tableRows.join('');
+  if(tableRows.length){
+    contTableBody.innerHTML = tableRows.join('');
+  } else {
+    contTableBody.innerHTML = `<tr><td colspan="3" class="text-center py-8 text-sm opacity-60">No hay cajas</td></tr>`;
+  }
   }
 
   function cajaCardHTML(c){
@@ -180,20 +207,36 @@
     let timerBadge='';
     if(c.timer && c.timer.startsAt && c.timer.endsAt && !c.timer.completedAt){
       timerBadge = `<span class='badge badge-neutral badge-xs flex items-center gap-1' data-caja-timer-started='${new Date(c.timer.startsAt).getTime()}' data-caja-timer-duration='${Math.round((new Date(c.timer.endsAt).getTime() - new Date(c.timer.startsAt).getTime())/1000)}' data-caja-id='${safeHTML(c.id)}'>
-          <span id='tm-caja-${safeHTML(c.id)}'>${timerText}</span>
+          <span id='tm-caja-${safeHTML(c.id)}' class='font-mono whitespace-nowrap tabular-nums'>${timerText}</span>
           <button class='btn btn-ghost btn-xs px-1 h-4 shrink-0 stop-caja-timer' data-caja='${safeHTML(c.id)}' title='Cancelar'>✕</button>
         </span>`;
     } else if(c.timer && c.timer.completedAt){
-      timerBadge = `<span class='badge badge-success badge-xs'>Completado</span>`;
+  timerBadge = `<span class='badge badge-success badge-xs'>Listo</span>`;
     } else {
-      timerBadge = `<span class='badge badge-outline badge-xs opacity-60'>Sin cronómetro</span>`;
+      // Si el sub_estado de todos los componentes es Ensamblado (o caja ya está Ensamblado) mostrar 'Listo'
+      const allEnsamblado = (c.componentes||[]).length>0 ? (c.componentes.every(()=> true) && (c.estado==='Ensamblado' || /Ensamblado/i.test(c.sub_estado||''))) : /Ensamblado/i.test(c.sub_estado||c.estado||'');
+      if(allEnsamblado || /Ensamblado/i.test(c.estado||'')){
+        timerBadge = `<span class='badge badge-success badge-xs'>Listo</span>`;
+      } else {
+        timerBadge = `<span class='badge badge-outline badge-xs opacity-60'>Sin cronómetro</span>`;
+      }
     }
     const pct = Math.min(100, Math.max(0, progress));
-    return `<div class='caja-card rounded-lg border border-base-300/40 bg-base-200/10 p-3 flex flex-col gap-2 hover:border-primary/60 transition cursor-pointer' data-caja-id='${safeHTML(c.id)}'>
+    // Mostrar identificador: usar c.codigoCaja (lote) completo abreviado si muy largo
+    const fullCode = c.codigoCaja || '';
+    let rightId = '';
+    if(fullCode.startsWith('CAJA-')){
+      rightId = fullCode; // nuevo patrón CAJA-ddMMyyyy-XXXXX
+    } else if(/^CAJA\d+/i.test(fullCode)){
+      rightId = fullCode.split('-')[0];
+    } else if(c.id != null){
+      rightId = '#'+c.id;
+    }
+  return `<div class='caja-card rounded-lg border border-base-300/40 bg-base-200/10 p-3 flex flex-col gap-2 hover:border-primary/60 transition' data-caja-id='${safeHTML(c.id)}'>
         <div class='flex items-center justify-between text-[10px] tracking-wide uppercase opacity-60'>
-          <span>Caja</span><span class='font-mono'>#${safeHTML(c.id)}</span>
+          <span>Caja</span><span class='font-mono'>${safeHTML(rightId)}</span>
         </div>
-        <div class='font-semibold text-sm leading-tight truncate pr-2' title='${safeHTML(c.codigoCaja||'Caja')}'>${safeHTML(c.codigoCaja||'Caja')}</div>
+  <div class='font-semibold text-xs leading-tight break-all pr-2' title='${safeHTML(fullCode||'Caja')}'>${safeHTML(fullCode||'Caja')}</div>
         <div class='flex flex-wrap gap-1 text-[9px] flex-1'>${compBadges || "<span class='badge badge-ghost badge-xs'>Sin items</span>"}</div>
         <div class='timer-progress h-1.5 w-full bg-base-300/30 rounded-full overflow-hidden'>
           <div class='timer-bar h-full bg-gradient-to-r from-primary via-primary to-primary/70' style='width:${pct.toFixed(1)}%' data-caja-bar='${safeHTML(c.id)}'></div>
@@ -229,14 +272,12 @@
     const timerText = timerDisplay(remaining, c.timer?.completedAt);
     const comps = (c.componentes||[]);
     if(!comps.length){
-      // Cronómetro estilo "anterior": badge pequeño + (si aplica) botón acción
-      const controls = timerTableControlsHTML(c);
-  return [ `<tr class="hover" data-caja-id="${safeHTML(c.id)}">\n        <td class="text-sm font-mono">${safeHTML(c.codigoCaja||'')}</td>\n        <td class="text-sm opacity-60">(sin items)</td>\n        <td class="text-sm">${safeHTML(c.estado||'')}</td>\n        <td class="w-32 flex items-center gap-1">\n          <span class="badge badge-neutral badge-xs" data-timer-badge><span data-timer-text>${timerText}</span></span>\n          ${controls}\n        </td>\n      </tr>` ];
+  // Vista simplificada: sin cronómetro por componente/caja en tabla de Ensamblaje
+  return [ `<tr class="hover" data-caja-id="${safeHTML(c.id)}">\n        <td class="text-sm font-mono">${safeHTML(c.codigoCaja||'')}</td>\n        <td class="text-sm opacity-60">(sin items)</td>\n        <td class="text-sm">${safeHTML(c.estado||'')}</td>\n      </tr>` ];
     }
     return comps.map(cc => {
-      const controls = timerTableControlsHTML(c);
-      // Nombre (tipo) en mayúsculas discretas y código en monoespaciado reducido
-  return `<tr class="hover" data-caja-id="${safeHTML(c.id)}">\n        <td class="text-sm font-mono">${safeHTML(c.codigoCaja||'')}</td>\n        <td class="text-sm flex flex-col leading-tight">\n          <span class="uppercase tracking-wide">${safeHTML(cc.tipo||cc.nombre||'')}</span>\n          <span class="font-mono text-xs opacity-40">${safeHTML(cc.codigo)}</span>\n        </td>\n        <td class="text-sm">${safeHTML(c.estado||'')}</td>\n        <td class="w-32 flex items-center gap-1">\n          <span class="badge badge-neutral badge-xs" data-timer-badge><span data-timer-text>${timerText}</span></span>\n          ${controls}\n        </td>\n      </tr>`;
+  // Fila sin columna de cronómetro (solo caja, componente y estado)
+  return `<tr class="hover" data-caja-id="${safeHTML(c.id)}">\n        <td class="text-sm font-mono">${safeHTML(c.codigoCaja||'')}</td>\n        <td class="text-sm flex flex-col leading-tight">\n          <span class="uppercase tracking-wide">${safeHTML(cc.tipo||cc.nombre||'')}</span>\n          <span class="font-mono text-xs opacity-40">${safeHTML(cc.codigo)}</span>\n        </td>\n        <td class="text-sm">${safeHTML(c.estado||'')}</td>\n      </tr>`;
     });
   }
 
@@ -247,7 +288,7 @@
       return `<button class="btn btn-ghost btn-xs text-success" title="Iniciar" data-action="timer-start" data-caja-id="${safeHTML(c.id)}">\n        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" class="w-4 h-4" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>\n      </button>`;
     }
     if(c.timer && c.timer.completedAt){
-      return `<span class="inline-flex items-center justify-center text-success" title="Completado">\n        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" class="w-4 h-4" fill="currentColor"><path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/></svg>\n      </span>`;
+  return `<span class="inline-flex items-center justify-center text-success" title="Listo">\n        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" class="w-4 h-4" fill="currentColor"><path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/></svg>\n      </span>`;
     }
     const remaining = msRemaining(c);
     if(remaining <= 0){
@@ -268,17 +309,22 @@
   }
 
   function timerDisplay(remainingMs, completedAt){
-    if(completedAt) return 'Completado';
+  if(completedAt) return 'Listo';
     if(remainingMs <= 0) return 'Finalizado';
-    const sec = Math.floor(remainingMs/1000);
-    const m = Math.floor(sec/60);
-    const s = sec % 60;
-    return `${m}m ${s}s`;
+    const totalSec = Math.floor(remainingMs/1000);
+    const hours = Math.floor(totalSec/3600);
+    const minutes = Math.floor((totalSec % 3600)/60);
+    const seconds = totalSec % 60;
+    // Always show HH:MM:SS (hours grows without cap for long timers)
+    const hh = String(hours).padStart(2,'0');
+    const mm = String(minutes).padStart(2,'0');
+    const ss = String(seconds).padStart(2,'0');
+    return `${hh}:${mm}:${ss}`;
   }
 
   function timerBadgeHTML(c, remaining){
     if(!c.timer) return '<span class="badge badge-ghost badge-xs">Sin timer</span>';
-    if(c.timer.completedAt) return '<span class="badge badge-success badge-xs">Completado</span>';
+  if(c.timer.completedAt) return '<span class="badge badge-success badge-xs">Listo</span>';
     if(remaining <= 0) return '<span class="badge badge-warning badge-xs">Finalizado</span>';
     return '<span class="badge badge-info badge-xs">En progreso</span>';
   }
@@ -342,7 +388,7 @@
       console.error('[Acond] loadData error:', err);
       const body = qs(sel.contCajasTabla);
       if(body && body.innerHTML.trim()===''){
-        body.innerHTML = `<tr><td colspan="6" class="text-center py-6 text-error text-xs">${safeHTML(err.message||'Error cargando')}</td></tr>`;
+  body.innerHTML = `<tr><td colspan="3" class="text-center py-6 text-error text-xs">${safeHTML(err.message||'Error cargando')}</td></tr>`;
       }
     }
   }
@@ -362,30 +408,12 @@
         const now = Date.now() + serverNowOffsetMs;
         const end = new Date(t.endsAt).getTime();
         if(now>=end){ el.textContent='Finalizado'; el.className='badge badge-warning badge-xs font-mono'; return; }
-        const remMs = end-now; const sec = Math.max(0, Math.floor(remMs/1000)); const mm=Math.floor(sec/60); const ss=sec%60;
-        el.textContent = `${mm}m ${ss.toString().padStart(2,'0')}s`;
+  const remMs = end-now; const sec = Math.max(0, Math.floor(remMs/1000));
+  const h = Math.floor(sec/3600); const m = Math.floor((sec%3600)/60); const s = sec%60;
+  const hh = String(h).padStart(2,'0'); const mm = String(m).padStart(2,'0'); const ss = String(s).padStart(2,'0');
+  el.textContent = `${hh}:${mm}:${ss}`;
         let cls='badge-info'; if(sec<=60) cls='badge-error'; else if(sec<=300) cls='badge-warning';
         el.className = `badge ${cls} badge-xs font-mono`;
-      });
-      // Actualizar cronómetro en tabla Listo
-      document.querySelectorAll('[data-listo-remaining]').forEach(el=>{
-        if(!(el instanceof HTMLElement)) return;
-        const cajaId = el.getAttribute('data-caja-id');
-        const t = cajaId ? timersByCaja[cajaId] : null;
-        const dot = document.querySelector(`[data-listo-dot][data-caja-id="${cajaId}"]`);
-        if(!t) return;
-        const now = Date.now() + serverNowOffsetMs;
-        const end = new Date(t.endsAt).getTime();
-        if(now>=end){
-          el.textContent='Finalizado';
-          el.className='badge badge-warning badge-xs';
-          if(dot) dot.className='w-2 h-2 rounded-full bg-warning';
-          return;
-        }
-        const remMs = end-now; const sec = Math.max(0, Math.floor(remMs/1000)); const mm=Math.floor(sec/60); const ss=sec%60;
-        el.textContent = `${mm}m ${ss.toString().padStart(2,'0')}s`;
-        let cls='bg-info'; if(sec<=60) cls='bg-error'; else if(sec<=300) cls='bg-warning';
-        if(dot) dot.className=`w-2 h-2 rounded-full ${cls} animate-pulse`;
       });
     },1000);
   }
@@ -397,7 +425,15 @@
       // Only update timers (progress + remaining text) without re-rendering entire DOM structure for performance
       qsa('[data-caja-id]').forEach(el => {
         const id = el.getAttribute('data-caja-id');
-        const caja = cajas.find(c=> String(c.id) === String(id));
+        let caja = cajas.find(c=> String(c.id) === String(id));
+        // Si no está en ensamblaje, intentar mapear timer desde listoDespacho
+        if(!caja){
+          const dispItems = listoDespacho.filter(it=> String(it.caja_id)===String(id));
+          if(dispItems.length){
+            const tIt = dispItems.find(it=> it.cronometro && (it.cronometro.startsAt||it.cronometro.endsAt));
+            caja = { id, timer: tIt ? { startsAt: tIt.cronometro.startsAt, endsAt: tIt.cronometro.endsAt, completedAt: tIt.cronometro.completedAt } : null };
+          }
+        }
         if(!caja) return;
         const remaining = msRemaining(caja);
         // Actualizar span de tiempo dentro del badge si existe
@@ -428,6 +464,28 @@
           bar.classList.toggle('bg-warning', remSec>0 && remSec<=60);
         }
       });
+      // Timers de despacho en tarjetas agrupadas (data-timer-chrono)
+      document.querySelectorAll('[data-timer-chrono]').forEach(el=>{
+        if(!(el instanceof HTMLElement)) return;
+        const cajaId = el.getAttribute('data-caja-id');
+        if(!cajaId) return;
+        const items = listoDespacho.filter(it=> String(it.caja_id)===String(cajaId));
+        const tIt = items.find(it=> it.cronometro && (it.cronometro.startsAt||it.cronometro.endsAt));
+        if(!tIt || !tIt.cronometro.startsAt || !tIt.cronometro.endsAt) return;
+        const now = Date.now() + serverNowOffsetMs;
+        const end = new Date(tIt.cronometro.endsAt).getTime();
+        const label = el.getAttribute('data-label');
+        if(now>=end){ el.textContent = label? `${label} 00:00:00` : 'Finalizado'; el.classList.remove('badge-error','badge-warning','badge-info'); el.classList.add('badge-warning'); return; }
+        const remSec = Math.max(0, Math.floor((end-now)/1000));
+        const h=Math.floor(remSec/3600), m=Math.floor((remSec%3600)/60), s=remSec%60;
+        el.textContent = `${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`;
+        el.classList.remove('badge-error','badge-warning','badge-info');
+        if(remSec<=60) el.classList.add('badge-error');
+        else if(remSec<=300) el.classList.add('badge-warning');
+        else el.classList.add('badge-info');
+      });
+  // Auto-completar cajas cuyo cronómetro llegó a cero
+  autoCompleteTimers();
       // Actualizar si modal de detalle está visible
       const visibleModal = !document.getElementById('modal-caja-detalle')?.classList.contains('hidden');
       if(visibleModal){
@@ -447,11 +505,71 @@
     }, 1000);
   }
 
+  // ========================= AUTO COMPLETE TIMERS =========================
+  const autoCompleteFired = new Set();
+  function autoCompleteTimers(){
+    // Ensamblaje timers
+    cajas.forEach(c => {
+      if(!c.timer || c.timer.completedAt) return;
+      const remaining = msRemaining(c);
+      const key = 'ens-' + c.id;
+      if(remaining <= 0 && !autoCompleteFired.has(key)){
+        autoCompleteFired.add(key);
+        fetch('/operacion/acond/caja/timer/complete', {
+          method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ caja_id: c.id })
+        }).then(()=>{ loadData(); })
+          .catch(()=>{ autoCompleteFired.delete(key); });
+      }
+    });
+    // Despacho timers (cajas en Despachando dentro de listoDespacho)
+    const dispatchTimers = new Map();
+    listoDespacho.forEach(it=>{
+      if(it.caja_id && it.cronometro && it.cronometro.startsAt && it.cronometro.endsAt && !it.cronometro.completedAt){
+        // usamos el primero
+        if(!dispatchTimers.has(it.caja_id)) dispatchTimers.set(it.caja_id, it.cronometro);
+      }
+    });
+    dispatchTimers.forEach((t, cajaId)=>{
+      const end = new Date(t.endsAt).getTime();
+      const now = Date.now() + serverNowOffsetMs;
+      const remaining = end - now;
+      const key = 'desp-' + cajaId;
+      if(remaining <= 0 && !autoCompleteFired.has(key)){
+        autoCompleteFired.add(key);
+        fetch('/operacion/acond/caja/timer/complete', {
+          method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ caja_id: cajaId })
+        }).then(()=>{ loadData(); })
+          .catch(()=>{ autoCompleteFired.delete(key); });
+      }
+    });
+  }
+
   // ========================= MODAL DETALLE =========================
   // Nueva implementación alineada al markup real (#modal-caja-detalle)
   function openCajaDetalle(id){
-    const caja = cajas.find(c=> String(c.id) === String(id));
-    if(!caja) return;
+    let caja = cajas.find(c=> String(c.id) === String(id));
+    // Si no está en 'cajas' (ensamblaje), intentar construir desde lista para despacho
+    if(!caja){
+      let items = listoDespacho.filter(it => String(it.caja_id) === String(id));
+      if(!items.length){
+        // fallback: quizá el lote quedó pero filtrado; intentar por lote igual a id formateado
+        items = listoDespacho.filter(it => String(it.lote) === String(id));
+      }
+      if(items.length){
+        const tItem = items.find(it=> it.cronometro && (it.cronometro.startsAt || it.cronometro.endsAt));
+        const anyEstado = items.find(it=> it.sub_estado) || {};
+  const estado = /Despachando/i.test(anyEstado.sub_estado||'') ? 'Despachando' : 'Lista para Despacho';
+        caja = {
+          id,
+          codigoCaja: items[0].lote || ('CAJA-'+id),
+          estado,
+          createdAt: null,
+          timer: tItem ? { startsAt: tItem.cronometro.startsAt, endsAt: tItem.cronometro.endsAt, completedAt: tItem.cronometro.completedAt } : null,
+          componentes: items.map(it=> ({ tipo: (it.categoria||'').toLowerCase(), codigo: it.codigo }))
+        };
+      }
+    }
+    if(!caja) return; // nada que mostrar
     const modalWrap = document.getElementById('modal-caja-detalle');
     if(!modalWrap) return;
 
@@ -496,7 +614,7 @@
       if(!caja.timer){
         html = '<div class="text-sm opacity-60 italic">(Sin cronómetro)</div>';
       } else if(caja.timer.completedAt){
-        html = '<div class="badge badge-success badge-sm">Cronómetro Completado</div>';
+  html = '<div class="badge badge-success badge-sm">Cronómetro Listo</div>';
       } else if(caja.timer.startsAt && caja.timer.endsAt){
         const remaining = msRemaining(caja);
         const remTxt = timerDisplay(remaining, caja.timer.completedAt);
@@ -561,7 +679,7 @@
       const start = item.cronometro.startsAt ? new Date(item.cronometro.startsAt).getTime() : null;
       const end = item.cronometro.endsAt ? new Date(item.cronometro.endsAt).getTime() : null;
       if(start && end){
-        if(item.cronometro.completedAt || now >= end){ chrono='Completado'; }
+  if(item.cronometro.completedAt || now >= end){ chrono='Listo'; }
         else {
           const rem=end-now; const sec=Math.max(0,Math.floor(rem/1000)); const m=Math.floor(sec/60); const s=sec%60; chrono=`${m}m ${s}s`;
         }
@@ -586,9 +704,11 @@
       const now = Date.now() + serverNowOffsetMs;
       const end = new Date(timer.endsAt).getTime();
       if(now < end){
-        const remMs = end-now; const sec = Math.max(0, Math.floor(remMs/1000)); const mm=Math.floor(sec/60); const ss=sec%60;
+        const remMs = end-now; const sec = Math.max(0, Math.floor(remMs/1000));
+        const h = Math.floor(sec/3600); const m = Math.floor((sec%3600)/60); const s = sec%60;
+        const hh = String(h).padStart(2,'0'); const mm = String(m).padStart(2,'0'); const ss = String(s).padStart(2,'0');
         const colorClass = sec<=60 ? 'badge-error' : (sec<=300 ? 'badge-warning' : 'badge-info');
-        badgeHTML = `<span class=\"badge ${colorClass} badge-xs font-mono\" data-timer-chrono data-caja-id=\"${safeHTML(group.cajaId)}\">Despachando ${mm}m ${ss.toString().padStart(2,'0')}s</span>`;
+  badgeHTML = `<span class=\"badge ${colorClass} badge-xs font-mono whitespace-nowrap tabular-nums\" data-timer-chrono data-label=\"Despachando\" data-caja-id=\"${safeHTML(group.cajaId)}\">${hh}:${mm}:${ss}</span>`;
         actionsHTML = `<div class=\"flex gap-1\" data-timer-actions data-caja-id=\"${safeHTML(group.cajaId)}\">\n            <button class=\"btn btn-ghost btn-xs\" data-action=\"timer-clear\" data-caja-id=\"${safeHTML(group.cajaId)}\" title=\"Reiniciar\"><span class=\"material-icons text-[14px]\">restart_alt</span></button>\n          </div>`;
       } else {
         badgeHTML = `<span class=\"badge badge-success badge-xs font-mono\">Lista para Despacho</span>`;
@@ -599,7 +719,7 @@
     }
     const categoriaBadges = Object.entries(group.categorias).sort().map(([k,v])=>`<span class=\"badge badge-ghost badge-xs\">${k} x${v}</span>`).join(' ');
     const codes = group.items.slice(0,8).map(it=>`<span class=\"badge badge-neutral badge-xs font-mono\" title=\"${safeHTML(it.codigo)}\">${safeHTML(it.codigo.slice(-6))}</span>`).join(' ');
-    return `<div class=\"card bg-base-100 shadow-sm border border-base-200 p-2\" data-listo-caja=\"${safeHTML(group.lote)}\" data-caja-id=\"${safeHTML(group.cajaId)}\">\n      <div class=\"flex items-start justify-between mb-1\">\n        <span class=\"font-mono text-[10px]\">${safeHTML(group.lote)}</span>\n        <span class=\"badge badge-info badge-xs\">${group.items.length} items</span>\n      </div>\n      <div class=\"text-[10px] flex flex-wrap gap-1 mb-1\">${categoriaBadges||''}</div>\n      <div class=\"text-[10px] grid grid-cols-3 gap-1 mb-1\">${codes}</div>\n      <div class=\"flex items-center justify-between\">\n        <div class=\"text-[10px] opacity-80\">${badgeHTML}</div>\n        ${actionsHTML}\n      </div>\n    </div>`;
+  return `<div class=\"card bg-base-100 shadow-sm border border-base-200 p-2 cursor-pointer hover:border-primary/60 transition\" data-listo-caja=\"${safeHTML(group.lote)}\" data-caja-id=\"${safeHTML(group.cajaId)}\">\n      <div class=\"flex items-start justify-between mb-1 pointer-events-none\">\n        <span class=\"font-mono text-[10px]\">${safeHTML(group.lote)}</span>\n        <span class=\"badge badge-info badge-xs\">${group.items.length} items</span>\n      </div>\n      <div class=\"text-[10px] flex flex-wrap gap-1 mb-1 pointer-events-none\">${categoriaBadges||''}</div>\n      <div class=\"text-[10px] grid grid-cols-3 gap-1 mb-1 pointer-events-none\">${codes}</div>\n      <div class=\"flex items-center justify-between\">\n        <div class=\"text-[10px] opacity-80\">${badgeHTML}</div>\n        ${actionsHTML}\n      </div>\n    </div>`;
   }
   
 
@@ -641,15 +761,23 @@
     else if(action==='complete') endpoint = '/operacion/acond/caja/timer/complete';
     else if(action==='clear') endpoint = '/operacion/acond/caja/timer/clear';
     if(!endpoint) return;
+  // Prevent starting dispatch move here; separate flow ensures Ensamblado first.
     try{
+      // Buscar referencia de caja en ambas colecciones (ensamblaje y despacho)
+      let cajaRef = cajas.find(c=> String(c.id)===String(id));
+      if(!cajaRef){
+        const dispItems = listoDespacho.filter(it=> String(it.caja_id)===String(id));
+        if(dispItems.length){
+          const tIt = dispItems.find(it=> it.cronometro && (it.cronometro.startsAt||it.cronometro.endsAt));
+          cajaRef = { id, timer: tIt ? { durationSec: tIt.cronometro.durationSec } : null };
+        }
+      }
       const payload = { caja_id: id };
       if(action==='start'){
-        let dur = cajas.find(c=> String(c.id)===String(id))?.timer?.durationSec;
+        let dur = cajaRef?.timer?.durationSec;
         if(!Number.isFinite(dur) || dur<=0){
           const sec = askDurationSec();
-          if(sec==null){ // default 30 min si usuario cancela
-            dur = 30*60;
-          } else dur = sec;
+          if(sec==null){ dur = 30*60; } else dur = sec;
         }
         payload.durationSec = dur;
       }
@@ -706,6 +834,11 @@
       if(t.matches('[data-action="timer-start"]')){ const id=t.getAttribute('data-caja-id'); if(id) timerAction(id,'start'); }
       if(t.matches('[data-action="timer-complete"]')){ const id=t.getAttribute('data-caja-id'); if(id) timerAction(id,'complete'); }
       if(t.matches('[data-action="timer-clear"]')){ const id=t.getAttribute('data-caja-id'); if(id) timerAction(id,'clear'); }
+  // botón X dentro del badge (stop-caja-timer)
+  if(t.classList.contains('stop-caja-timer')){ const id=t.getAttribute('data-caja'); if(id) timerAction(id,'clear'); }
+
+      // mover a Lista para Despacho (solo Ensamblado)
+  // (Botón mover-despacho retirado a solicitud del usuario)
 
       // detalle
       if(t.matches('[data-action="detalle"]')){ openCajaDetalle(t.getAttribute('data-caja-id')); }
@@ -714,6 +847,11 @@
       const cardEl = t.closest('.caja-card');
       if(cardEl && !t.closest('button') && cardEl.hasAttribute('data-caja-id')){
         openCajaDetalle(cardEl.getAttribute('data-caja-id'));
+      }
+      // click en tarjeta de Lista para Despacho (vista cards)
+      const listoCajaEl = t.closest('[data-listo-caja]');
+      if(listoCajaEl && !t.closest('button') && listoCajaEl.hasAttribute('data-caja-id')){
+        openCajaDetalle(listoCajaEl.getAttribute('data-caja-id'));
       }
       const rowEl = t.closest('tr[data-caja-id]');
       if(rowEl && !t.closest('button')){
@@ -874,14 +1012,49 @@
     const summary = document.getElementById('despacho-summary');
     const msg = document.getElementById('despacho-msg');
     const confirmBtn = document.getElementById('btn-despacho-confirm');
+  const minInput = document.getElementById('despacho-min');
+  const hrInput = document.getElementById('despacho-hr');
     let lastCajaId = null; let lastRfid = '';
-    function reset(){ lastCajaId=null; lastRfid=''; if(summary){ summary.classList.add('hidden'); summary.innerHTML=''; } if(msg) msg.textContent=''; if(confirmBtn) confirmBtn.disabled=true; if(input) input.value=''; }
+  function reset(){ lastCajaId=null; lastRfid=''; if(summary){ summary.classList.add('hidden'); summary.innerHTML=''; } if(msg) msg.textContent=''; if(confirmBtn) confirmBtn.disabled=true; if(input) input.value=''; if(minInput) { minInput.value=''; } if(hrInput){ hrInput.value=''; } }
+    function updateConfirmState(){
+      const mins = Number(minInput?.value||'0');
+      const hrs = Number(hrInput?.value||'0');
+      const total = hrs*60 + mins;
+      if(confirmBtn){ confirmBtn.disabled = !(lastCajaId && lastRfid && Number.isFinite(total) && total>0); }
+    }
     async function lookup(code){
       if(!code || code.length!==24) return; if(msg) msg.textContent='Buscando caja...';
       try {
         const r = await fetch('/operacion/acond/despacho/lookup',{ method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ rfid: code })});
         const j = await r.json();
         if(!j.ok){ if(msg) msg.textContent = j.error||'Error'; if(confirmBtn) confirmBtn.disabled=true; return; }
+        // Verificar si ya está en Lista para Despacho (o Despachando) para evitar duplicado
+        const yaLista = Array.isArray(listoDespacho) && listoDespacho.some(it => String(it.caja_id) === String(j.caja_id));
+        if(yaLista){
+          lastCajaId = null; // bloquear acción
+          lastRfid = code;
+          if(summary){
+            summary.classList.remove('hidden');
+            summary.innerHTML = `<div class='mb-2'><strong>Caja:</strong> ${j.lote} (ID ${j.caja_id})</div>
+              <div class='text-warning text-xs'>Esta caja ya se encuentra en Lista para Despacho.</div>`;
+          }
+          if(msg) msg.textContent='Caja ya en Lista para Despacho';
+          if(confirmBtn) confirmBtn.disabled=true;
+          return;
+        }
+        // Si la caja NO está completamente Ensamblada, ocultar componentes y bloquear confirmación
+        if(!j.allEnsamblado){
+          lastCajaId = null; // no permitir mover aún
+          lastRfid = code;
+          if(summary){
+            summary.classList.remove('hidden');
+            summary.innerHTML = `<div class='mb-2'><strong>Caja:</strong> ${j.lote} (ID ${j.caja_id})</div>
+              <div class='text-error text-xs'>La caja aún no está completamente Ensamblada. Componentes ocultos.</div>`;
+          }
+          if(msg) msg.textContent='Caja incompleta (Ensamblaje en progreso)';
+          if(confirmBtn) confirmBtn.disabled=true;
+          return;
+        }
         lastCajaId = j.caja_id; lastRfid = code;
         if(summary){
           summary.innerHTML = `<div class='mb-2'><strong>Caja:</strong> ${j.lote} (ID ${j.caja_id})</div>
@@ -890,20 +1063,28 @@
           summary.classList.remove('hidden');
         }
         if(msg) msg.textContent='';
-        if(confirmBtn) confirmBtn.disabled = false;
+        updateConfirmState();
       } catch(e){ if(msg) msg.textContent='Error lookup'; }
     }
     input?.addEventListener('input', ()=>{ const v=input.value.replace(/\s+/g,''); if(v.length===24){ lookup(v); } });
   // Enforce máximo 24
   input?.addEventListener('input', ()=>{ if(input.value.length>24){ input.value = input.value.slice(0,24); } });
     input?.addEventListener('keydown', e=>{ if(e.key==='Enter'){ e.preventDefault(); const v=input.value.trim(); if(v.length===24) lookup(v); }});
+  minInput?.addEventListener('input', updateConfirmState);
+  hrInput?.addEventListener('input', updateConfirmState);
     confirmBtn?.addEventListener('click', async ()=>{
-      if(!lastCajaId || !lastRfid) return; confirmBtn.disabled=true; if(msg) msg.textContent='Marcando...';
+      if(!lastCajaId || !lastRfid) return; 
+  const mins = Number(minInput?.value||'0');
+  const hrs = Number(hrInput?.value||'0');
+  const totalMin = hrs*60 + mins;
+  if(!Number.isFinite(totalMin) || totalMin<=0){ if(msg) msg.textContent='Duración inválida'; return; }
+  const durationSec = Math.round(totalMin*60);
+      confirmBtn.disabled=true; if(msg) msg.textContent='Marcando...';
       try {
-        const r = await fetch('/operacion/acond/despacho/move',{ method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ rfid: lastRfid })});
+        const r = await fetch('/operacion/acond/despacho/move',{ method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ rfid: lastRfid, durationSec })});
         const j = await r.json();
         if(!j.ok){ if(msg) msg.textContent=j.error||'Error'; confirmBtn.disabled=false; return; }
-        if(msg) msg.textContent='Caja marcada lista.';
+  if(msg) msg.textContent='Caja movida a Despachando.';
         await loadData();
         setTimeout(()=>{ try { dialog.close(); } catch{} }, 600);
       } catch(e){ if(msg) msg.textContent='Error moviendo'; confirmBtn.disabled=false; }

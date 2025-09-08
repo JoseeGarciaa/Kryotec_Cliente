@@ -39,6 +39,10 @@
           <div class="flex items-center justify-between"><span class="badge badge-outline badge-xs">TICs para Congelamiento</span> <span id="kb-cong-proc" class="text-sm font-semibold">0</span></div>
           <div class="text-[11px] opacity-60">En proceso</div>
           <div class="flex items-center justify-between mt-2"><span class="badge badge-primary badge-outline badge-xs">Congeladas</span> <span id="kb-cong-done" class="text-sm font-semibold">0</span></div>
+          <div class="mt-2 text-[11px] flex items-center justify-between opacity-70">
+            <span>Cronómetro</span>
+            <span id="kb-cong-timer" class="font-mono">—</span>
+          </div>
         </div>
       </div>
       <div class="card bg-base-100 border shadow-sm">
@@ -46,6 +50,10 @@
           <div class="flex items-center justify-between"><span class="badge badge-outline badge-xs">TICs para Atemperamiento</span> <span id="kb-atem-proc" class="text-sm font-semibold">0</span></div>
           <div class="text-[11px] opacity-60">En proceso</div>
           <div class="flex items-center justify-between mt-2"><span class="badge badge-warning badge-outline badge-xs">Atemperadas</span> <span id="kb-atem-done" class="text-sm font-semibold">0</span></div>
+          <div class="mt-2 text-[11px] flex items-center justify-between opacity-70">
+            <span>Cronómetro</span>
+            <span id="kb-atem-timer" class="font-mono">—</span>
+          </div>
         </div>
       </div>
     </div>
@@ -59,6 +67,10 @@
         <div class="card-body p-4 gap-2">
           <div class="flex items-center justify-between"><span class="badge badge-outline badge-xs">Ensamblaje</span> <span id="kb-ensam-items" class="text-sm font-semibold">0</span></div>
           <div class="text-xs opacity-60">Items en cajas en proceso</div>
+          <div class="mt-2 text-[11px] flex items-center justify-between opacity-70">
+            <span>Cronómetro</span>
+            <span id="kb-ensam-timer" class="font-mono">—</span>
+          </div>
         </div>
       </div>
       <div class="card bg-base-100 border shadow-sm">
@@ -70,58 +82,18 @@
     </div>
   </div>
 
-  <!-- Column: Operación -->
+  <!-- Column: Operación (simplificada) -->
   <div class="flex flex-col border border-secondary/30 bg-secondary/5 rounded-xl overflow-hidden min-h-[220px]">
     <div class="px-4 py-3 bg-base-200/60 border-b font-semibold tracking-wide text-sm">Operación</div>
     <div class="p-3 flex flex-col gap-3 flex-1">
       <div class="card bg-base-100 border shadow-sm">
         <div class="card-body p-4 gap-2">
-          <div class="flex items-center justify-between"><span class="badge badge-outline badge-xs">TIC en tránsito</span> <span id="kb-op-tic" class="text-sm font-semibold">0</span></div>
-          <div class="text-xs opacity-60">Items en operación</div>
-        </div>
-      </div>
-      <div class="card bg-base-100 border shadow-sm">
-        <div class="card-body p-4 gap-2">
-          <div class="flex items-center justify-between"><span class="badge badge-outline badge-xs">VIP en tránsito</span> <span id="kb-op-vip" class="text-sm font-semibold">0</span></div>
-          <div class="text-xs opacity-60">Items en operación</div>
-        </div>
-      </div>
-    </div>
-  </div>
-
-  <!-- Column: Devolución -->
-  <div class="flex flex-col border border-accent/30 bg-accent/5 rounded-xl overflow-hidden min-h-[220px]">
-    <div class="px-4 py-3 bg-base-200/60 border-b font-semibold tracking-wide text-sm">Devolución</div>
-    <div class="p-3 flex flex-col gap-3 flex-1">
-      <div class="card bg-base-100 border shadow-sm">
-        <div class="card-body p-4 gap-2">
-          <div class="flex items-center justify-between"><span class="badge badge-outline badge-xs">TIC pendientes de devolución</span> <span id="kb-dev-tic" class="text-sm font-semibold">0</span></div>
-          <div class="text-xs opacity-60">Items listos para devolver</div>
-        </div>
-      </div>
-      <div class="card bg-base-100 border shadow-sm">
-        <div class="card-body p-4 gap-2">
-          <div class="flex items-center justify-between"><span class="badge badge-outline badge-xs">VIP pendientes</span> <span id="kb-dev-vip" class="text-sm font-semibold">0</span></div>
-          <div class="text-xs opacity-60">Items listos para devolver</div>
-        </div>
-      </div>
-    </div>
-  </div>
-
-  <!-- Column: Inspección (moved below Devolución) -->
-  <div class="flex flex-col border border-warning/30 bg-warning/5 rounded-xl overflow-hidden min-h-[220px]">
-    <div class="px-4 py-3 bg-base-200/60 border-b font-semibold tracking-wide text-sm">Inspección</div>
-    <div class="p-3 flex flex-col gap-3 flex-1">
-      <div class="card bg-base-100 border shadow-sm">
-        <div class="card-body p-4 gap-2">
-          <div class="flex items-center justify-between"><span class="badge badge-outline badge-xs">TIC en inspección</span> <span id="kb-insp-tic" class="text-sm font-semibold">0</span></div>
-          <div class="text-xs opacity-60">Items bajo inspección</div>
-        </div>
-      </div>
-      <div class="card bg-base-100 border shadow-sm">
-        <div class="card-body p-4 gap-2">
-          <div class="flex items-center justify-between"><span class="badge badge-outline badge-xs">VIP en inspección</span> <span id="kb-insp-vip" class="text-sm font-semibold">0</span></div>
-          <div class="text-xs opacity-60">Items bajo inspección</div>
+          <div class="flex items-center justify-between"><span class="badge badge-outline badge-xs">Cajas en tránsito</span> <span id="kb-op-cajas" class="text-sm font-semibold">0</span></div>
+          <div class="text-xs opacity-60">Cajas activas en Operación</div>
+          <div class="mt-2 text-[11px] flex items-center justify-between opacity-70">
+            <span>Cronómetro</span>
+            <span id="kb-op-timer" class="font-mono">—</span>
+          </div>
         </div>
       </div>
     </div>
@@ -132,6 +104,11 @@
   <span class="loading loading-spinner loading-xs hidden" id="kb-spin"></span>
   <span id="kb-status">Actualizado</span>
   <button id="kb-refresh" class="btn btn-ghost btn-xs">Refrescar</button>
+</div>
+
+<div class="mt-8">
+  <h2 class="text-sm font-semibold mb-3 opacity-80">Cronómetros activos</h2>
+  <div id="kb-timers" class="grid gap-4 md:grid-cols-2 xl:grid-cols-3"></div>
 </div>
 
 <script src="/static/js/kanban.js?v=<%= assetVersion %>" defer></script>

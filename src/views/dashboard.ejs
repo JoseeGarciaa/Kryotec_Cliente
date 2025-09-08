@@ -1,7 +1,126 @@
 <% title = title || 'Dashboard' %>
-<div class="card bg-base-200">
-  <div class="card-body">
-    <h2 class="card-title">Bienvenido</h2>
-    <p>Usa el menú para navegar. Ve a <a class="link link-primary" href="/inventario">Inventario</a> para empezar.</p>
-  </div>
+<div id="dash-root" class="space-y-10">
+  <!-- HERO / HEADER -->
+  <section class="relative overflow-hidden rounded-2xl border border-primary/30 bg-gradient-to-br from-primary/25 via-primary/5 to-base-200 p-6 md:p-8">
+    <div class="relative z-10 space-y-4">
+      <div class="flex flex-wrap items-center gap-4">
+        <div class="h-14 w-14 rounded-2xl bg-primary text-base-100 flex items-center justify-center text-2xl shadow-lg shadow-primary/40">⚙️</div>
+        <div>
+          <h1 class="text-2xl md:text-3xl font-bold tracking-tight leading-none">Visión General</h1>
+          <p class="text-sm md:text-base opacity-75">Resumen estratégico rápido. Solo lo esencial y lo crítico.</p>
+        </div>
+        <div class="ms-auto flex flex-wrap gap-3 items-center font-mono text-xs">
+          <span id="dash-clock" class="px-2 py-1 rounded bg-base-300/40">--:--:--</span>
+          <span id="dash-last" class="px-2 py-1 rounded bg-base-300/40">--</span>
+          <button id="dash-refresh" class="btn btn-xs btn-outline">Refrescar</button>
+        </div>
+      </div>
+      <div class="flex flex-wrap gap-2 text-[10px] opacity-60">
+        <span class="inline-flex items-center gap-1"><span class="size-2 rounded-full bg-success"></span> Flujo estable</span>
+        <span class="inline-flex items-center gap-1"><span class="size-2 rounded-full bg-warning"></span> Atención</span>
+        <span class="inline-flex items-center gap-1"><span class="size-2 rounded-full bg-error"></span> Urgente</span>
+      </div>
+    </div>
+    <div class="pointer-events-none absolute -bottom-16 -right-16 w-96 h-96 rounded-full bg-primary/10 blur-3xl"></div>
+  </section>
+
+  <!-- KPI STRIP -->
+  <section class="grid gap-4 md:gap-5 lg:grid-cols-6 sm:grid-cols-3 grid-cols-2" id="dash-kpis">
+    <div class="k-kpi" data-kpi="stock">
+      <div class="k-label">Stock Total</div>
+      <div class="k-value" id="k-stock">–</div>
+      <div class="k-sub" id="k-stock-break">TIC – / VIP – / CUBE –</div>
+    </div>
+    <div class="k-kpi" data-kpi="preproc">
+      <div class="k-label">Pre Acond · Proceso</div>
+      <div class="k-value" id="k-pre-proc">–</div>
+      <div class="k-sub">Activos (Cong + Atem)</div>
+    </div>
+    <div class="k-kpi" data-kpi="prelisto">
+      <div class="k-label">Pre Acond · Listos</div>
+      <div class="k-value" id="k-pre-ready">–</div>
+      <div class="k-sub"><span id="k-pre-pct">0%</span> avance</div>
+    </div>
+    <div class="k-kpi" data-kpi="ensam">
+      <div class="k-label">En Ensamblaje</div>
+      <div class="k-value" id="k-ensam-items">–</div>
+      <div class="k-sub">Items en curso</div>
+    </div>
+    <div class="k-kpi" data-kpi="cajas">
+      <div class="k-label">Cajas Activas</div>
+      <div class="k-value" id="k-cajas">–</div>
+      <div class="k-sub">Total creadas</div>
+    </div>
+    <div class="k-kpi" data-kpi="op">
+      <div class="k-label">Cajas en Operación</div>
+      <div class="k-value" id="k-op-cajas">–</div>
+      <div class="k-sub">En tránsito</div>
+    </div>
+  </section>
+
+  <!-- FLOW BAR -->
+  <section class="space-y-4">
+    <div class="flex items-center justify-between">
+      <h2 class="text-sm font-semibold opacity-80">Flujo Resumido</h2>
+      <span id="dash-status" class="text-[11px] opacity-60 flex items-center gap-2">Listo <span class="loading loading-spinner loading-xs hidden" id="dash-spin"></span></span>
+    </div>
+    <div class="relative p-5 rounded-2xl k-flow-shell overflow-hidden">
+      <div id="flow-chart" class="k-flow flex gap-3 flex-wrap"></div>
+      <div class="absolute inset-0 pointer-events-none k-flow-bg"></div>
+    </div>
+  </section>
+
+  <!-- QUICK LINKS -->
+  <section class="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+    <a class="k-link" href="/operacion/preacond">Pre Acond</a>
+    <a class="k-link" href="/operacion/acond">Acondicionamiento</a>
+    <a class="k-link" href="/operacion/operacion">Operación</a>
+    <a class="k-link" href="/operacion/todas">Kanban Completo</a>
+  </section>
 </div>
+
+<style>
+  /* KPI cards */
+  .k-kpi{position:relative;display:flex;flex-direction:column;gap:.35rem;padding:0.9rem 0.95rem;border:1px solid hsl(var(--b3,210 10% 30%)/.35);background:hsla(var(--b1,210 20% 5%),0.35);backdrop-filter:blur(6px);border-radius:0.9rem;overflow:hidden;}
+  .k-kpi:before{content:"";position:absolute;inset:0;opacity:0;transition:.4s;background:linear-gradient(120deg,var(--fallback-p,royalblue)/.25,transparent);}
+  .k-kpi:hover:before{opacity:1;}
+  .k-label{font-size:10px;letter-spacing:.05em;text-transform:uppercase;opacity:.65;font-weight:600;}
+  .k-value{font-size:1.6rem;line-height:1;font-weight:700;}
+  .k-sub{font-size:10px;opacity:.55;}
+  .k-link{display:flex;align-items:center;justify-content:center;padding:.9rem 1rem;border:1px solid hsl(var(--b3,210 10% 30%)/.4);border-radius:.85rem;font-size:.75rem;text-transform:uppercase;font-weight:600;letter-spacing:.06em;background:linear-gradient(135deg,var(--fallback-p,royalblue)/.18,transparent);backdrop-filter:blur(4px);transition:.25s;}
+  .k-link:hover{border-color:var(--fallback-p,royalblue);color:var(--fallback-p,royalblue);}
+  #flow-bar .seg{position:relative;flex:1;display:flex;align-items:center;justify-content:center;height:42px;font-weight:600;border-radius:.55rem;background:var(--bg,rgba(255,255,255,.04));border:1px solid var(--bd,rgba(255,255,255,.1));overflow:hidden;}
+  #flow-bar .seg small{position:absolute;bottom:3px;right:5px;font-size:9px;opacity:.55;font-weight:500;}
+  #flow-bar .seg[data-state='warn']{--bg:rgba(234,179,8,.15);--bd:rgba(234,179,8,.35);}
+  #flow-bar .seg[data-state='ok']{--bg:rgba(34,197,94,.15);--bd:rgba(34,197,94,.35);}
+  #flow-bar .seg[data-state='crit']{--bg:rgba(239,68,68,.18);--bd:rgba(239,68,68,.45);} 
+  /* New glossy flow chips */
+  .k-flow-shell{background:linear-gradient(145deg,rgba(255,255,255,.04),rgba(255,255,255,.02));border:1px solid hsl(var(--b3,210 10% 30%)/.35);backdrop-filter:blur(10px);}
+  .k-flow-bg:before,.k-flow-bg:after{content:"";position:absolute;border-radius:50%;filter:blur(60px);opacity:.4;mix-blend-mode:plus-lighter;}
+  .k-flow-bg:before{width:340px;height:340px;left:-80px;top:-120px;background:radial-gradient(circle at 30% 30%,rgba(39,67,255,.55),transparent 70%);} 
+  .k-flow-bg:after{width:360px;height:360px;right:-100px;bottom:-140px;background:radial-gradient(circle at 70% 70%,rgba(79,120,255,.6),transparent 65%);} 
+  .k-chip{position:relative;display:flex;flex-direction:column;gap:6px;padding:0.95rem 1rem 0.85rem 1rem;min-width:140px;border-radius:1rem;background:linear-gradient(160deg,var(--c1) 0%,var(--c2) 55%,var(--c3) 100%);color:#fff;isolation:isolate;overflow:hidden;box-shadow:0 4px 18px -4px var(--c2),0 2px 8px -2px var(--c1);}
+  .k-chip:before{content:"";position:absolute;inset:0;background:linear-gradient(120deg,rgba(255,255,255,.35),rgba(255,255,255,.05) 45%,rgba(255,255,255,.15));mix-blend-mode:overlay;opacity:.65;pointer-events:none;}
+  .k-chip:after{content:"";position:absolute;top:-40%;left:-30%;width:160%;height:180%;background:radial-gradient(circle at 30% 30%,rgba(255,255,255,.35),transparent 60%);opacity:.5;mix-blend-mode:soft-light;}
+  .k-chip small{font-size:9px;letter-spacing:.06em;text-transform:uppercase;font-weight:600;opacity:.8;}
+  .k-chip strong{font-size:1.6rem;line-height:1;font-weight:700;font-variant-numeric:tabular-nums;}
+  .k-chip span.meta{font-size:10px;opacity:.8;display:flex;align-items:center;gap:4px;}
+  .k-chip .ring{position:absolute;top:8px;right:8px;width:38px;height:38px;display:grid;place-items:center;}
+  .k-chip .ring svg{width:38px;height:38px;transform:rotate(-90deg);} 
+  .k-chip[data-state='warn']{animation:pulseWarn 3s infinite;} 
+  .k-chip[data-state='crit']{animation:pulseCrit 2.4s infinite;} 
+  @keyframes pulseWarn{0%,100%{box-shadow:0 0 0 0 rgba(234,179,8,.45);}50%{box-shadow:0 0 0 6px rgba(234,179,8,0);}}
+  @keyframes pulseCrit{0%,100%{box-shadow:0 0 0 0 rgba(239,68,68,.55);}50%{box-shadow:0 0 0 8px rgba(239,68,68,0);}}
+  .k-flow-divider{width:36px;height:2px;align-self:center;border-radius:2px;background:linear-gradient(90deg,rgba(255,255,255,.1),rgba(255,255,255,.55),rgba(255,255,255,.1));margin:0 4px;position:relative;overflow:hidden;}
+  .k-flow-divider:before{content:"";position:absolute;inset:0;background:linear-gradient(90deg,transparent,rgba(255,255,255,.8),transparent);animation:shine 2.2s linear infinite;} 
+  @keyframes shine{0%{transform:translateX(-100%);}100%{transform:translateX(100%);}}
+  .k-timer{position:relative;padding:.85rem .9rem;border:1px solid hsl(var(--b3,210 10% 30%)/.4);background:hsla(var(--b1,210 20% 5%),0.4);border-radius:.85rem;display:flex;flex-direction:column;gap:.55rem;font-size:11px;backdrop-filter:blur(4px);} 
+  .k-timer[data-level='crit']{border-color:rgba(239,68,68,.7);box-shadow:0 0 0 1px rgba(239,68,68,.4);} 
+  .k-timer[data-level='warn']{border-color:rgba(234,179,8,.7);box-shadow:0 0 0 1px rgba(234,179,8,.4);} 
+  .k-timer .bar{height:4px;border-radius:3px;background:rgba(255,255,255,.12);overflow:hidden;} 
+  .k-timer .bar span{display:block;height:100%;background:linear-gradient(90deg,var(--fallback-p,royalblue),#4F78FF);transition:width .5s;} 
+  .k-timer[data-level='crit'] .bar span{background:linear-gradient(90deg,#ef4444,#b91c1c);} 
+  .k-timer[data-level='warn'] .bar span{background:linear-gradient(90deg,#eab308,#b45309);} 
+</style>
+
+<script src="/static/js/dashboard.js?v=<%= assetVersion %>" defer></script>

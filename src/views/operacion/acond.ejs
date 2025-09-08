@@ -48,7 +48,6 @@
             <th>CAJA</th>
             <th>NOMBRE</th>
             <th class="hidden lg:table-cell">ESTADO</th>
-            <th>CRONÓMETRO</th>
           </tr>
         </thead>
         <tbody id="cajasTablaBody"></tbody>
@@ -89,7 +88,6 @@
             <th>CAJA</th>
             <th>NOMBRE</th>
             <th class="hidden lg:table-cell">ESTADO</th>
-            <th>CRONÓMETRO</th>
           </tr>
         </thead>
         <tbody id="listoDespachoBody"></tbody>
@@ -166,6 +164,20 @@
   <input id="despacho-scan" type="text" class="grow" placeholder="Listo para escanear..." autocomplete="off" maxlength="24" />
     </label>
     <div id="despacho-summary" class="text-xs mb-4 hidden"></div>
+    <div class="mb-4">
+      <div class="text-xs mb-1 opacity-70">Duración cronómetro (obligatorio)</div>
+      <div class="grid grid-cols-2 gap-3">
+        <label class="form-control">
+          <span class="label-text text-xs">Horas</span>
+          <input id="despacho-hr" type="number" min="0" step="1" placeholder="0" class="input input-bordered input-sm" />
+        </label>
+        <label class="form-control">
+          <span class="label-text text-xs">Minutos</span>
+          <input id="despacho-min" type="number" min="0" step="1" placeholder="30" class="input input-bordered input-sm" />
+        </label>
+      </div>
+      <div id="despacho-timer-hint" class="text-xs opacity-60 mt-1">Ingresa un total &gt; 0 (horas*60 + minutos) para habilitar el botón.</div>
+    </div>
     <div class="flex gap-3 items-center">
       <button id="btn-despacho-confirm" class="btn btn-success btn-sm" disabled>Marcar como Listo</button>
       <span id="despacho-msg" class="text-xs opacity-70"></span>

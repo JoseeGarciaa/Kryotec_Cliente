@@ -28,6 +28,7 @@ router.post('/acond/caja/timer/clear', requireAuth, OperacionController.acondCaj
 router.post('/acond/caja/timer/complete', requireAuth, OperacionController.acondCajaTimerComplete);
 router.post('/acond/despacho/lookup', requireAuth, OperacionController.acondDespachoLookup);
 router.post('/acond/despacho/move', requireAuth, OperacionController.acondDespachoMove);
+router.post('/acond/despacho/move-caja', requireAuth, OperacionController.acondDespachoMoveCaja);
 router.get('/operacion', requireAuth, OperacionController.operacion);
 // Operación phase caja scan / timers (legacy prefixed paths kept for backward compatibility)
 router.get('/operacion/data', requireAuth, OperacionController.operacionData);
@@ -37,6 +38,8 @@ router.post('/operacion/caja/timer/start-bulk', requireAuth, OperacionController
 router.post('/operacion/caja/timer/start', requireAuth, OperacionController.operacionCajaTimerStart);
 router.post('/operacion/caja/timer/clear', requireAuth, OperacionController.operacionCajaTimerClear);
 router.post('/operacion/caja/timer/complete', requireAuth, OperacionController.operacionCajaTimerComplete);
+router.post('/operacion/scan', requireAuth, OperacionController.operacionScan);
+router.post('/operacion/caja/lookup', requireAuth, OperacionController.operacionCajaLookup);
 
 // New concise aliases (so client can call /operacion/data etc.)
 router.get('/data', requireAuth, OperacionController.operacionData);
@@ -46,6 +49,8 @@ router.post('/caja/timer/start-bulk', requireAuth, OperacionController.operacion
 router.post('/caja/timer/start', requireAuth, OperacionController.operacionCajaTimerStart);
 router.post('/caja/timer/clear', requireAuth, OperacionController.operacionCajaTimerClear);
 router.post('/caja/timer/complete', requireAuth, OperacionController.operacionCajaTimerComplete);
+router.post('/scan', requireAuth, OperacionController.operacionScan);
+router.post('/caja/lookup', requireAuth, OperacionController.operacionCajaLookup);
 router.get('/devolucion', requireAuth, OperacionController.devolucion);
 // Devolucion data + confirm
 router.get('/devolucion/data', requireAuth, OperacionController.devolucionData as any);
@@ -53,6 +58,8 @@ router.post('/devolucion/confirm', requireAuth, OperacionController.devolucionCo
 router.post('/devolucion/validate', requireAuth, OperacionController.devolucionValidate as any);
 router.post('/devolucion/ret/validate', requireAuth, OperacionController.devolucionRetValidate as any);
 router.post('/devolucion/ret/confirm', requireAuth, OperacionController.devolucionRetConfirm as any);
+// Devolver caja completa a bodega (reset total)
+router.post('/devolucion/caja/return', requireAuth, OperacionController.devolucionCajaReturn as any);
 router.get('/inspeccion', requireAuth, OperacionController.inspeccion);
 // En bodega
 router.get('/bodega', requireAuth, OperacionController.bodega);

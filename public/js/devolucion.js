@@ -1,239 +1,189 @@
-// Devolución UI placeholder logic
+// Devolución: mostrar cajas en Operación con mismos cronómetros que Operación y botón para devolver a Bodega
 (function(){
   'use strict';
-  const qs = s=>document.querySelector(s);
-  const qsa = s=>Array.from(document.querySelectorAll(s));
+  const qs = (s)=> document.querySelector(s);
+  const grid = qs('#dev-caja-grid');
   const spin = qs('#dev-spin');
-  const pendCount = qs('#dev-pend-count');
-  const pendList = qs('#dev-pend-list');
-  const empty = qs('#dev-empty');
-  const table = qs('#dev-pend-table');
-  const tableBody = qs('#dev-pend-table-body');
-  const searchInput = qs('#dev-search');
-  const btnCards = qs('#dev-view-cards');
-  const btnList = qs('#dev-view-list');
-  const totalBadge = qs('#dev-total');
-  const cntCubes = qs('#dev-count-cubes');
-  const cntVips = qs('#dev-count-vips');
-  const cntTics = qs('#dev-count-tics');
-  const lastUpdate = qs('#dev-last-update');
-  const btnAdd = qs('#dev-btn-add');
-  const btnAddSummary = qs('#dev-btn-add-summary');
+  // Scan UI elements
+  const scanInput = qs('#dev-scan');
+  const scanBtn = qs('#dev-scan-btn');
+  const scanClear = qs('#dev-scan-clear');
+  const scanMsg = qs('#dev-scan-msg');
+  const scanResult = qs('#dev-scan-result');
+  const scanCardBox = qs('#dev-scan-card');
+  const scanExtra = qs('#dev-scan-extra');
   const modal = document.getElementById('dev-modal');
-  const input = qs('#dev-input');
-  const validateBtn = qs('#dev-validate');
-  const confirmBtn = qs('#dev-confirm');
-  const clearBtn = qs('#dev-clear');
-  const selWrap = qs('#dev-selected');
-  const validateMsg = qs('#dev-validate-msg');
-  // Retorno scanning elements
-  const retInput = qs('#ret-input');
-  const retValidate = qs('#ret-validate');
-  const retConfirm = qs('#ret-confirm');
-  const retMsg = qs('#ret-msg');
-  const retSelectedWrap = qs('#ret-selected');
-  let retSelected = new Set();
-  let data = { pendientes: [], stats:{ cubes:0,vips:0,tics:0,total:0 }, serverNow: null };
-  let selected = new Set();
-  let viewMode = localStorage.getItem('devViewMode') || 'cards';
-  let serverOffsetMs = 0; // serverNow - Date.now()
+  const modalBody = qs('#dev-modal-body');
+  const modalTitle = qs('#dev-modal-title');
+  const modalReturn = qs('#dev-modal-return');
+  const modalClose = qs('#dev-modal-close');
+  // Confirm dialog
+  const confirmDlg = qs('#dev-confirm');
+  const confirmYes = qs('#dev-confirm-yes');
+  const confirmNo = qs('#dev-confirm-no');
+  const confirmMsg = qs('#dev-confirm-msg');
+  let confirmCajaId = null; let confirmFromModal = false;
+  let modalCajaId = null;
+  let data = { cajas: [], serverNow: null };
+  let serverOffset = 0; // serverNow - Date.now()
+  let tick = null; let poll = null;
 
-  function updateViewToggle(){
-    if(!pendList) return;
-    const showCards = viewMode==='cards';
-    pendList.classList.toggle('hidden', !showCards);
-    table?.classList.toggle('hidden', showCards);
-    btnCards?.classList.toggle('btn-active', showCards);
-    btnList?.classList.toggle('btn-active', !showCards);
-  }
-
-  function openModal(){ try{ modal.showModal(); }catch{ modal.classList.remove('hidden'); } }
-  function closeModal(){ try{ modal.close(); }catch{ modal.classList.add('hidden'); } }
-
-  function renderPendientes(){
-    if(!pendList) return;
-    const term = (searchInput?.value||'').trim().toLowerCase();
-  const items = term? data.pendientes.filter(p=> p.rfid.toLowerCase().includes(term) || (p.rol||'').toLowerCase().includes(term) || (p.caja||'').toLowerCase().includes(term)) : data.pendientes;
-    if(!items.length){
-      empty?.classList.remove('hidden');
+  function msRemaining(timer){ if(!timer||!timer.endsAt) return 0; return new Date(timer.endsAt).getTime() - (Date.now()+serverOffset); }
+  function timerDisplay(rem){ if(rem<=0) return 'Finalizado'; const s=Math.max(0,Math.floor(rem/1000)); const h=Math.floor(s/3600); const m=Math.floor((s%3600)/60); const sec=s%60; return `${h}:${String(m).padStart(2,'0')}:${String(sec).padStart(2,'0')}`; }
+  function progressPct(timer){ if(!timer||!timer.startsAt||!timer.endsAt) return 0; const start=new Date(timer.startsAt).getTime(); const end=new Date(timer.endsAt).getTime(); const now=Date.now()+serverOffset; if(now<=start) return 0; if(now>=end) return 100; return ((now-start)/(end-start))*100; }
+  function cardHTML(caja){
+    const comps = caja.componentes||[];
+    const vip = comps.filter(x=>x.tipo==='vip');
+    const tics = comps.filter(x=>x.tipo==='tic');
+    const cubes = comps.filter(x=>x.tipo==='cube');
+    const compBadges = [
+      ...vip.map(()=>`<span class='badge badge-info badge-xs font-semibold'>VIP</span>`),
+      ...tics.map(()=>`<span class='badge badge-warning badge-xs font-semibold'>TIC</span>`),
+      ...cubes.map(()=>`<span class='badge badge-accent badge-xs font-semibold'>CUBE</span>`)
+    ].join(' ');
+    const rem = caja.timer? msRemaining(caja.timer):0;
+    const pct = progressPct(caja.timer);
+    const timerTxt = caja.timer? (caja.timer.completedAt? 'Listo' : timerDisplay(rem)) : '';
+    let timerBadge='';
+    if(caja.timer && caja.timer.startsAt && caja.timer.endsAt && !caja.timer.completedAt){
+      timerBadge = `<span class='badge badge-neutral badge-xs flex items-center gap-1' data-dev-caja-timer data-caja='${caja.id}'>
+        <span id='dev-timer-${caja.id}' class='font-mono whitespace-nowrap tabular-nums'>${timerTxt}</span>
+      </span>`;
+    } else if(caja.timer && caja.timer.completedAt){
+      timerBadge = `<span class='badge badge-success badge-xs'>Listo</span>`;
     } else {
-      empty?.classList.add('hidden');
+      timerBadge = `<span class='badge badge-outline badge-xs opacity-60'>Sin cronómetro</span>`;
     }
-    // Render tarjetas
-    if(items.length){
-        if(!pendList.dataset.init){ pendList.classList.add('grid','gap-4','sm:grid-cols-2','md:grid-cols-3','lg:grid-cols-4'); pendList.dataset.init='1'; }
-        pendList.innerHTML = items.map(p=>`<div class=\"border rounded-md p-3 bg-base-200/40 text-xs flex flex-col gap-2\" data-rfid=\"${p.rfid}\" data-role=\"${p.rol}\">
-    <div class="font-mono text-[11px] break-all">${p.rfid}</div>
-    <div class="text-[11px] font-semibold">${p.nombre||''}</div>
-  <div class="text-[10px] opacity-70">${p.caja||''}</div>
-  <div class="text-[10px] opacity-60">${p.sub_estado || p.estado || ''}</div>
-          <div class=\"flex items-center justify-between\">
-            <span class=\"badge badge-outline badge-xs\">${(p.rol||'').toUpperCase()}</span>
-            <button type=\"button\" class=\"btn btn-ghost btn-[6px] btn-xs\" data-add-rfid=\"${p.rfid}\" title=\"Seleccionar\">+</button>
-          </div>
-        </div>`).join('');
-    } else {
-      pendList.innerHTML='';
-    }
-    // Render tabla
-    if(tableBody){
-        tableBody.innerHTML = items.map(p=>{
-          // Esperamos que backend pueda enviar p.nombre, p.caja, p.timer { endsAt, startsAt, completedAt }
-          const nombre = p.nombre||'';
-    const caja = p.caja||p.lote||'';
-  const t = p.timer||{};
-  const estadoTxt = p.sub_estado || p.estado || '';
-    const now = Date.now() + serverOffsetMs;
-          let chronoTxt='-'; let badgeCls='badge-neutral';
-          if(t && t.startsAt && (t.endsAt||t.completedAt)){
-            if(t.completedAt){ chronoTxt='Completado'; badgeCls='badge-success'; }
-            else if(t.endsAt){
-              const end = new Date(t.endsAt).getTime();
-              if(now>=end){ chronoTxt='Finalizado'; badgeCls='badge-warning'; }
-              else { const rem=end-now; const sec=Math.floor(rem/1000); const m=Math.floor(sec/60); const s=sec%60; chronoTxt=`${m}m ${s.toString().padStart(2,'0')}s`; badgeCls = sec<=60? 'badge-error' : (sec<=300?'badge-warning':'badge-info'); }
-            }
-          }
-          return `<tr class="hover" data-rfid="${p.rfid}" data-timer-row>
-            <td class="font-mono text-[11px]">${p.rfid}</td>
-            <td class="hidden md:table-cell text-xs">${nombre}</td>
-            <td class="hidden md:table-cell text-xs">${caja}</td>
-            <td class="hidden lg:table-cell text-[11px]">${estadoTxt}</td>
-            <td class="w-32"><span class="badge ${badgeCls} badge-xs font-mono" data-dev-chrono data-rfid="${p.rfid}">${chronoTxt}</span></td>
-          </tr>`;}).join('');
-    }
-    if(pendCount) pendCount.textContent = `(${items.length} de ${data.pendientes.length} items listos para devolver)`;
-    updateViewToggle();
+    const progress = Math.min(100, Math.max(0, pct));
+  return `<div class='caja-card rounded-lg border border-base-300/40 bg-base-200/10 p-3 flex flex-col gap-2 hover:border-primary/60 transition cursor-pointer' data-caja-id='${caja.id}'>
+      <div class='flex items-center justify-between text-[10px] tracking-wide uppercase opacity-60'><span>Caja</span><span class='font-mono'>${caja.codigoCaja||''}</span></div>
+      <div class='font-semibold text-xs leading-tight break-all pr-2' title='${caja.codigoCaja||''}'>${caja.codigoCaja||''}</div>
+      <div class='flex flex-wrap gap-1 text-[9px] flex-1'>${compBadges || "<span class='badge badge-ghost badge-xs'>Sin items</span>"}</div>
+      <div class='h-1.5 w-full bg-base-300/30 rounded-full overflow-hidden'>
+        <div class='h-full bg-gradient-to-r from-primary via-primary to-primary/70' style='width:${progress.toFixed(1)}%' data-dev-caja-bar='${caja.id}'></div>
+      </div>
+      <div class='flex items-center justify-between text-[10px] font-mono opacity-70'>
+        <span class='inline-flex items-center gap-1'>${timerBadge}</span>
+        <button class='btn btn-ghost btn-[6px] btn-xs text-error' data-return-caja='${caja.id}' title='Devolver a Bodega'>↩</button>
+      </div>
+    </div>`;
   }
-  function renderStats(){
-    if(totalBadge) totalBadge.textContent = String(data.stats.total||0);
-    if(cntCubes) cntCubes.textContent = String(data.stats.cubes||0);
-    if(cntVips) cntVips.textContent = String(data.stats.vips||0);
-    if(cntTics) cntTics.textContent = String(data.stats.tics||0);
-    if(lastUpdate) lastUpdate.textContent = new Date().toLocaleTimeString();
+  function render(){
+    if(!grid) return; const cajas = data.cajas||[];
+    if(!cajas.length){ grid.innerHTML = `<div class='col-span-full py-10 text-center text-xs opacity-60'>Sin cajas en Operación</div>`; return; }
+    grid.innerHTML = cajas.map(c=> cardHTML(c)).join('');
   }
-  function renderSelected(){
-    if(!selWrap) return;
-    selWrap.innerHTML = Array.from(selected).map(r=>`<div class="badge badge-primary badge-sm flex justify-between w-full" data-sel-rfid="${r}"><span class="truncate max-w-[140px]">${r}</span><button type="button" class="ml-2 opacity-70 hover:opacity-100" title="Quitar">×</button></div>`).join('');
-    confirmBtn.disabled = !selected.size;
-  }
-  function renderRetSelected(){
-    if(!retSelectedWrap) return;
-    retSelectedWrap.innerHTML = Array.from(retSelected).map(r=>`<div class="badge badge-success badge-sm" data-ret-rfid="${r}">${r}<button type="button" class="ml-1" data-ret-remove="${r}">×</button></div>`).join('');
-    if(retConfirm) retConfirm.disabled = !retSelected.size;
-  }
-
   async function load(){
-  try { spin?.classList.remove('hidden');
-      const r = await fetch('/operacion/devolucion/data').catch(()=>null);
-  if(r && r.ok){ const j = await r.json(); if(j.ok){ data = j; if(j.serverNow){ serverOffsetMs = new Date(j.serverNow).getTime() - Date.now(); } }}
-      // Fallback dummy if no endpoint yet
-      if(!data || !Array.isArray(data.pendientes)) data = { pendientes: [], stats:{ cubes:0,vips:0,tics:0,total:0 } };
-      renderPendientes(); renderStats();
-      startLocalTick();
-    } finally { spin?.classList.add('hidden'); }
+    try { spin?.classList.remove('hidden');
+      const r = await fetch('/operacion/devolucion/data');
+      const j = await r.json();
+      if(j.ok){ data = j; if(j.serverNow){ serverOffset = new Date(j.serverNow).getTime() - Date.now(); } }
+      else { data = { cajas:[], serverNow:null }; }
+      render(); ensureTick();
+    } catch(e){ console.error('[Devolución] load error', e); }
+    finally { spin?.classList.add('hidden'); }
   }
-
-  // Actualiza cada segundo los cronómetros de tabla y tarjetas
-  let tickInt = null;
-  function startLocalTick(){
-    if(tickInt) return;
-    tickInt = setInterval(()=>{
-      const now = Date.now();
-      data.pendientes.forEach(p=>{
-  const t = p.timer; if(!t) return; // solo lectura
-        const el = document.querySelector(`[data-dev-chrono][data-rfid="${p.rfid}"]`);
-        if(!el) return;
-        let txt='-'; let cls='badge-neutral';
-        if(t.completedAt){ txt='Completado'; cls='badge-success'; }
-        else if(t.endsAt && t.startsAt){
-          const end = new Date(t.endsAt).getTime();
-          if(now>=end){ txt='Finalizado'; cls='badge-warning'; }
-          else { const rem=end-now; const sec=Math.floor(rem/1000); const m=Math.floor(sec/60); const s=sec%60; txt=`${m}m ${s.toString().padStart(2,'0')}s`; cls=sec<=60?'badge-error':(sec<=300?'badge-warning':'badge-info'); }
-        }
-        el.textContent = txt; el.className = `badge ${cls} badge-xs font-mono`;
-      });
-    },1000);
-  }
+  function ensureTick(){ if(tick) return; tick = setInterval(()=>{
+    (data.cajas||[]).forEach(c=>{
+      if(!c.timer) return; const el=document.getElementById('dev-timer-'+c.id); if(!el) return; const rem=msRemaining(c.timer); el.textContent = c.timer.completedAt? 'Listo' : timerDisplay(rem);
+      const bar = document.querySelector(`[data-dev-caja-bar='${c.id}']`); if(bar && c.timer.startsAt && c.timer.endsAt){ const pct = progressPct(c.timer); bar.style.width = Math.min(100,Math.max(0,pct)).toFixed(1)+'%'; }
+    });
+  },1000); }
+  function startPolling(){ if(poll) clearInterval(poll); poll = setInterval(load, 15000); }
 
   document.addEventListener('click', e=>{
-    const t = e.target; if(!(t instanceof HTMLElement)) return;
-  const addBtn = t.closest('[data-add-rfid]');
-  if(addBtn){ const rfid = addBtn.getAttribute('data-add-rfid'); if(rfid){ selected.add(rfid); renderSelected(); } }
-    const sel = t.closest('[data-sel-rfid]');
-    if(sel){ const r = sel.getAttribute('data-sel-rfid'); if(r){ selected.delete(r); renderSelected(); } }
-  const retRem = t.getAttribute('data-ret-remove'); if(retRem){ retSelected.delete(retRem); renderRetSelected(); }
+    const target = e.target instanceof HTMLElement ? e.target : null;
+    const btn = target ? target.closest('[data-return-caja]') : null;
+  if(btn){ const id = btn.getAttribute('data-return-caja'); if(id){ openConfirm(id, false); } }
+  const card = target ? target.closest('.caja-card') : null;
+  if(card && card.getAttribute('data-caja-id')){ openModal(card.getAttribute('data-caja-id')); }
   });
 
-  async function doValidate(){
-    const raw = (input?.value||'').trim();
-    if(!raw){ validateMsg.textContent='Ingresa RFIDs (24 caracteres)'; selected.clear(); renderSelected(); return; }
-    // Normalizar: dividir por espacios/nuevas líneas, truncar cada token a 24 y filtrar exactos de 24
-    let parts = raw.split(/\s+/).filter(Boolean).map(x=> x.slice(0,24));
-    parts = parts.filter(x=> x.length===24);
-    if(!parts.length){ validateMsg.textContent='Ingresa RFIDs válidos (24 caracteres)'; selected.clear(); renderSelected(); return; }
-    const unique = Array.from(new Set(parts));
-    // Reescribir textarea con tokens normalizados (uno por línea) para feedback visual
-    if(input) input.value = unique.join('\n');
-    validateMsg.textContent='Validando...';
+  // ---- Scan / Identificar Caja ----
+  function inferTipo(nombre){ const n=(nombre||'').toLowerCase(); if(n.includes('vip')) return 'vip'; if(n.includes('tic')) return 'tic'; if(n.includes('cube')||n.includes('cubo')) return 'cube'; return 'otro'; }
+  function miniCardHTML(c){
+    return `<div class='text-xs'>
+      <div class='flex items-center justify-between text-[10px] uppercase opacity-60 mb-1'><span>Caja</span><span class='font-mono'>${c.codigoCaja||''}</span></div>
+      <div class='font-semibold text-[11px] break-all mb-2'>${c.codigoCaja||''}</div>
+      <div class='flex flex-wrap gap-1 mb-2'>${(c.componentes||[]).map(it=>{ let cls='badge-ghost'; if(it.tipo==='vip') cls='badge-info'; else if(it.tipo==='tic') cls='badge-warning'; else if(it.tipo==='cube') cls='badge-accent'; return `<span class='badge ${cls} badge-xs'>${(it.tipo||'').toUpperCase()}</span>`; }).join('') || "<span class='badge badge-ghost badge-xs'>Sin items</span>"}</div>
+      <div class='text-[10px] font-mono opacity-70'>${c.timer? (c.timer.completedAt? 'Listo' : 'Cronómetro activo') : 'Sin cronómetro'}</div>
+      <div class='mt-2'><button class='btn btn-xs btn-error btn-outline w-full' data-return-caja='${c.id}'>↩ Devolver a Bodega</button></div>
+    </div>`;
+  }
+  async function lookupCaja(code){
+    if(scanMsg) scanMsg.textContent='Buscando...'; if(scanResult) scanResult.classList.add('hidden');
     try {
-      const r = await fetch('/operacion/devolucion/validate', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ rfids: unique })});
+      const r = await fetch('/operacion/caja/lookup',{ method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ code })});
       const j = await r.json();
-  selected = new Set((j.valid||[]).map(v=> v.rfid));
-      renderSelected();
-      if(validateMsg){
-        const inv = (j.invalid||[]);
-    if(!j.valid?.length) validateMsg.textContent = inv.length? 'Sin RFIDs válidos (deben estar en Operación: Transito/Retorno/Completado)':'Sin coincidencias';
-        else {
-          const resumenInv = inv.slice(0,4).map(x=> x.rfid.split('').slice(-6).join('')).join(', ');
-          validateMsg.textContent = inv.length? `${j.valid.length} válidos · ${inv.length} ignorados`+(inv.length? ` (${resumenInv}${inv.length>4?'…':''})`:'') : `${j.valid.length} válidos`;
-        }
+      if(!j.ok){ if(scanMsg) scanMsg.textContent = j.error || 'No encontrado'; return; }
+      const cajaId = j.caja.id;
+      let caja = (data.cajas||[]).find(c=> String(c.id)===String(cajaId));
+      if(!caja){
+        caja = { id: cajaId, codigoCaja: j.caja.lote, timer: j.caja.timer? { startsAt: j.caja.timer.startsAt, endsAt: j.caja.timer.endsAt, completedAt: j.caja.timer.active===false? j.caja.timer.endsAt:null }: null, componentes: (j.caja.items||[]).map(it=> ({ codigo: it.rfid, tipo: inferTipo(it.nombre_modelo||it.nombre||'') })) };
       }
-    } catch { validateMsg.textContent='Error validando'; }
+      if(scanCardBox) scanCardBox.innerHTML = miniCardHTML(caja);
+      if(scanExtra) scanExtra.textContent = `Items: ${(caja.componentes||[]).length} · ID ${caja.id}`;
+      if(scanResult) scanResult.classList.remove('hidden');
+      if(scanMsg) scanMsg.textContent='';
+    } catch(e){ if(scanMsg) scanMsg.textContent='Error'; }
   }
-  validateBtn?.addEventListener('click', doValidate);
-  input?.addEventListener('keydown', e=>{ if(e.key==='Enter' && (e.ctrlKey||e.metaKey)){ e.preventDefault(); doValidate(); } });
-  clearBtn?.addEventListener('click', ()=>{ selected.clear(); renderSelected(); if(input) input.value=''; validateMsg.textContent=''; input?.focus(); });
-  confirmBtn?.addEventListener('click', async ()=>{
-    if(!selected.size) return; confirmBtn.disabled=true;
-    try {
-      const rfids = Array.from(selected);
-      await fetch('/operacion/devolucion/confirm',{ method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ rfids })});
-      selected.clear(); renderSelected(); if(input) input.value=''; await load();
-      closeModal();
-    } catch{ /* ignore */ } finally { confirmBtn.disabled=false; }
-  });
-  // Retorno validate & confirm
-  async function retDoValidate(){
-    const raw = (retInput?.value||'').trim();
-    if(!raw){ retMsg && (retMsg.textContent='Ingresa RFIDs'); retSelected.clear(); renderRetSelected(); return; }
-    const parts = Array.from(new Set(raw.split(/\s+/).filter(x=> x.length===24)));
-    if(!parts.length){ retMsg && (retMsg.textContent='Sin RFIDs válidos'); retSelected.clear(); renderRetSelected(); return; }
-    retMsg && (retMsg.textContent='Validando...');
-    try {
-      const r = await fetch('/operacion/devolucion/ret/validate',{ method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ rfids: parts })});
-      const j = await r.json();
-      retSelected = new Set((j.valid||[]).map(v=> v.rfid));
-      renderRetSelected();
-      const inv = (j.invalid||[]);
-      if(retMsg) retMsg.textContent = `${retSelected.size} válidos` + (inv.length? ` · ${inv.length} ignorados`:'');
-    } catch { if(retMsg) retMsg.textContent='Error validando'; }
-  }
-  retValidate?.addEventListener('click', retDoValidate);
-  retConfirm?.addEventListener('click', async ()=>{
-    if(!retSelected.size) return; retConfirm.disabled=true; if(retMsg) retMsg.textContent='Confirmando...';
-    try {
-      await fetch('/operacion/devolucion/ret/confirm',{ method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ rfids: Array.from(retSelected) })});
-      retSelected.clear(); renderRetSelected(); if(retInput) retInput.value=''; await load(); if(retMsg) retMsg.textContent='Movidos a Bodega';
-    } catch { if(retMsg) retMsg.textContent='Error confirmando'; }
-    finally { retConfirm.disabled=false; }
-  });
-  btnAdd?.addEventListener('click', ()=>{ openModal(); });
-  btnAddSummary?.addEventListener('click', ()=>{ openModal(); });
-  btnCards?.addEventListener('click', ()=>{ viewMode='cards'; localStorage.setItem('devViewMode','cards'); updateViewToggle(); });
-  btnList?.addEventListener('click', ()=>{ viewMode='list'; localStorage.setItem('devViewMode','list'); updateViewToggle(); });
-  searchInput?.addEventListener('input', ()=>{ renderPendientes(); });
-  modal?.addEventListener('close', ()=>{ selected.clear(); renderSelected(); if(input) input.value=''; validateMsg.textContent=''; });
+  function triggerLookup(){ if(!scanInput) return; const val = (scanInput.value||'').trim(); if(!val){ if(scanMsg) scanMsg.textContent='Ingresa RFID'; return; } if(val.length!==24){ if(scanMsg) scanMsg.textContent='Debe tener 24 caracteres'; return; } lookupCaja(val); }
+  scanBtn?.addEventListener('click', triggerLookup);
+  scanClear?.addEventListener('click', ()=>{ if(scanInput) scanInput.value=''; if(scanMsg) scanMsg.textContent=''; if(scanResult) scanResult.classList.add('hidden'); scanInput?.focus(); });
+  scanInput?.addEventListener('keydown', e=>{ if(e.key==='Enter'){ e.preventDefault(); triggerLookup(); }});
+  // Forzar máximo 24 y auto buscar al completar
+  scanInput?.addEventListener('input', ()=>{ if(!scanInput) return; if(scanInput.value.length>24) scanInput.value = scanInput.value.slice(0,24); if(scanInput.value.length===24){ triggerLookup(); }});
+  scanInput && setTimeout(()=> scanInput.focus(), 500);
 
-  updateViewToggle();
-  load();
+  // ---- Modal ----
+  function openModal(id){
+    const caja = (data.cajas||[]).find(c=> String(c.id)===String(id));
+    if(!caja) return;
+    modalCajaId = caja.id;
+    if(modalTitle) modalTitle.textContent = caja.codigoCaja || 'Caja';
+    if(modalBody){
+      const comps = caja.componentes||[];
+      const timerTxt = caja.timer? (caja.timer.completedAt? 'Listo' : timerDisplay(msRemaining(caja.timer))) : 'Sin cronómetro';
+      const pct = progressPct(caja.timer);
+      modalBody.innerHTML = `
+        <div class='space-y-2'>
+          <div class='text-[11px] font-mono break-all'>${caja.codigoCaja||''}</div>
+          <div class='flex flex-wrap gap-1'>${comps.map(it=>{ let cls='badge-ghost'; if(it.tipo==='vip') cls='badge-info'; else if(it.tipo==='tic') cls='badge-warning'; else if(it.tipo==='cube') cls='badge-accent'; return `<span class='badge ${cls} badge-xs'>${(it.tipo||'').toUpperCase()}</span>`; }).join('') || "<span class='badge badge-ghost badge-xs'>Sin items</span>"}</div>
+          <div class='space-y-1'>
+            <div class='flex items-center justify-between text-[10px] font-mono'><span>Cronómetro</span><span id='dev-modal-timer'>${timerTxt}</span></div>
+            <div class='h-1.5 bg-base-300/30 rounded-full overflow-hidden'><div class='h-full bg-primary' style='width:${pct.toFixed(1)}%' id='dev-modal-bar'></div></div>
+          </div>
+        </div>`;
+    }
+    try { modal.showModal(); } catch { modal.classList.remove('hidden'); }
+  }
+  function updateModalTimer(){ if(!modalCajaId) return; const caja = (data.cajas||[]).find(c=> String(c.id)===String(modalCajaId)); if(!caja||!caja.timer) return; const span=document.getElementById('dev-modal-timer'); const bar=document.getElementById('dev-modal-bar'); if(span){ span.textContent = caja.timer.completedAt? 'Listo' : timerDisplay(msRemaining(caja.timer)); } if(bar && caja.timer.startsAt && caja.timer.endsAt){ bar.style.width = progressPct(caja.timer).toFixed(1)+'%'; } }
+  modalReturn?.addEventListener('click', ()=>{ if(!modalCajaId) return; openConfirm(modalCajaId, true); });
+
+  function openConfirm(id, fromModal){
+    confirmCajaId = id; confirmFromModal = !!fromModal;
+    if(confirmMsg) confirmMsg.textContent = '¿Devolver caja '+id+' a Bodega?';
+    try { confirmDlg.showModal(); } catch { confirmDlg.classList.remove('hidden'); }
+  }
+  function doReturn(){ if(!confirmCajaId) return; const id = confirmCajaId; confirmYes?.setAttribute('disabled','true');
+    fetch('/operacion/devolucion/caja/return',{ method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ caja_id: id })})
+      .then(r=> r.json().catch(()=>({})))
+      .then(()=>{
+        if(confirmFromModal){ modalCajaId=null; try{ modal.close(); }catch{ modal.classList.add('hidden'); } }
+        if(scanInput) scanInput.value='';
+        if(scanMsg) scanMsg.textContent='';
+        if(scanResult) scanResult.classList.add('hidden');
+        if(scanCardBox) scanCardBox.innerHTML='';
+        load();
+      })
+      .finally(()=>{ confirmYes?.removeAttribute('disabled'); confirmCajaId=null; confirmFromModal=false; try{ confirmDlg.close(); }catch{ confirmDlg.classList.add('hidden'); } });
+  }
+  confirmYes?.addEventListener('click', (e)=>{ e.preventDefault(); doReturn(); });
+  confirmNo?.addEventListener('click', (e)=>{ e.preventDefault(); confirmCajaId=null; confirmFromModal=false; try{ confirmDlg.close(); }catch{ confirmDlg.classList.add('hidden'); } });
+  modalClose?.addEventListener('click', ()=>{ modalCajaId=null; try{ modal.close(); }catch{ modal.classList.add('hidden'); } });
+  // también cerrar al backdrop form (native dialog auto cierra)
+
+  load(); startPolling();
+  // Hook modal timer refresh
+  setInterval(updateModalTimer, 1000);
 })();
