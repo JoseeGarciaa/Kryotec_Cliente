@@ -194,20 +194,19 @@
     }
     const pct = Math.min(100, Math.max(0, progress));
     return `<div class='caja-card rounded-lg border border-base-300/40 bg-base-200/10 p-3 flex flex-col gap-2 hover:border-primary/60 transition cursor-pointer' data-caja-id='${safeHTML(c.id)}'>
-      <div class='flex items-center justify-between text-[10px] tracking-wide uppercase opacity-60'>
-        <span>Caja</span><span class='font-mono'>#${safeHTML(c.id)}</span>
-      </div>
-      <div class='font-semibold text-sm leading-tight truncate pr-2' title='${safeHTML(c.codigoCaja||'Caja')}'>${safeHTML(c.codigoCaja||'Caja')}</div>
-      <div class='flex flex-wrap gap-1 text-[9px] flex-1'>${compBadges || "<span class='badge badge-ghost badge-xs'>Sin items</span>"}</div>
-      <div class='timer-progress h-1.5 w-full bg-base-300/30 rounded-full overflow-hidden'>
-        <div class='timer-bar h-full bg-gradient-to-r from-primary via-primary to-primary/70' style='width:${pct.toFixed(1)}%' data-caja-bar='${safeHTML(c.id)}'></div>
-      </div>
-      <div class='flex items-center justify-between text-[10px] font-mono opacity-70'>
-        <span class='inline-flex items-center gap-1' data-timer-text>${timerText}</span>
-        <span class='opacity-50'>restante</span>
-      </div>
-      <div class='mt-1'>${timerBadge}</div>
-    </div>`;
+        <div class='flex items-center justify-between text-[10px] tracking-wide uppercase opacity-60'>
+          <span>Caja</span><span class='font-mono'>#${safeHTML(c.id)}</span>
+        </div>
+        <div class='font-semibold text-sm leading-tight truncate pr-2' title='${safeHTML(c.codigoCaja||'Caja')}'>${safeHTML(c.codigoCaja||'Caja')}</div>
+        <div class='flex flex-wrap gap-1 text-[9px] flex-1'>${compBadges || "<span class='badge badge-ghost badge-xs'>Sin items</span>"}</div>
+        <div class='timer-progress h-1.5 w-full bg-base-300/30 rounded-full overflow-hidden'>
+          <div class='timer-bar h-full bg-gradient-to-r from-primary via-primary to-primary/70' style='width:${pct.toFixed(1)}%' data-caja-bar='${safeHTML(c.id)}'></div>
+        </div>
+        <div class='flex items-center justify-between text-[10px] font-mono opacity-70'>
+          <span class='inline-flex items-center gap-1'>${timerBadge}</span>
+          <span class='opacity-50'>restante</span>
+        </div>
+      </div>`;
   }
 
   // ========================= VIEW TOGGLE =========================
@@ -404,25 +403,22 @@
         const caja = cajas.find(c=> String(c.id) === String(id));
         if(!caja) return;
         const remaining = msRemaining(caja);
-        const small = el.querySelector('[data-timer-text]');
-        if(small){
-          small.textContent = timerDisplay(remaining, caja.timer?.completedAt);
-          // Update badge color semantics similar a preacond (warning/danger thresholds)
-          const badge = small.closest('[data-timer-badge]');
-          if(badge && caja.timer && !caja.timer.completedAt){
-            const remSec = Math.max(0, Math.floor(remaining/1000));
-            badge.classList.remove('badge-info','badge-warning','badge-error','badge-success','badge-neutral');
-            if(caja.timer.completedAt){
-              badge.classList.add('badge-success');
-            } else if(remSec<=0){
-              badge.classList.add('badge-info');
-            } else if(remSec<=60){
-              badge.classList.add('badge-error');
-            } else if(remSec<=300){
-              badge.classList.add('badge-warning');
-            } else {
-              badge.classList.add('badge-neutral');
-            }
+        // Actualizar span de tiempo dentro del badge si existe
+        const tmSpan = el.querySelector(`#tm-caja-${caja.id}`);
+        if(tmSpan){ tmSpan.textContent = timerDisplay(remaining, caja.timer?.completedAt); }
+        // Actualizar clases del badge (si hay cronómetro)
+        const badge = el.querySelector('[data-caja-timer-started]');
+        if(badge && caja.timer && !caja.timer.completedAt){
+          const remSec = Math.max(0, Math.floor(remaining/1000));
+          badge.classList.remove('badge-info','badge-warning','badge-error','badge-success','badge-neutral');
+          if(remSec<=0){
+            badge.classList.add('badge-info');
+          } else if(remSec<=60){
+            badge.classList.add('badge-error');
+          } else if(remSec<=300){
+            badge.classList.add('badge-warning');
+          } else {
+            badge.classList.add('badge-neutral');
           }
         }
         // Progress bar update for pretty card
