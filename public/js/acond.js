@@ -170,7 +170,44 @@
     const remaining = msRemaining(c);
     const timerText = timerDisplay(remaining, c.timer?.completedAt);
     const progress = timerProgressPct(c);
-  return `<div class="card bg-base-100 shadow-sm border border-base-200 mb-3" data-caja-id="${safeHTML(c.id)}">\n      <div class="card-body p-4">\n        <div class="flex justify-between items-start mb-2">\n          <h2 class="card-title text-sm font-semibold">${safeHTML(c.codigoCaja||'Caja')}</h2>\n          ${timerBadgeHTML(c, remaining)}\n        </div>\n        <div class="text-xs space-y-1">\n          <div><span class="font-medium">Estado:</span> ${safeHTML(c.estado||'-')}</div>\n          <div><span class="font-medium">Creado:</span> ${formatDateTime(c.createdAt)}</div>\n          <div><span class="font-medium">Actualizado:</span> ${formatDateTime(c.updatedAt)}</div>\n        </div>\n        <div class="mt-2">\n          <progress class="progress progress-primary w-full" value="${progress}" max="100"></progress>\n          <div class="text-[10px] text-right mt-1" data-timer-text>${timerText}</div>\n        </div>\n        <div class="mt-3 flex gap-2">\n          ${timerControlButtonsHTML(c)}\n        </div>\n      </div>\n    </div>`;
+    // === Pretty legacy style card ===
+    const comps = (c.componentes||[]);
+    const vip = comps.filter(x=>x.tipo==='vip');
+    const tics = comps.filter(x=>x.tipo==='tic');
+    const cubes = comps.filter(x=>x.tipo==='cube');
+    const compBadges = [
+      ...vip.map(()=>`<span class='badge badge-info badge-xs font-semibold'>VIP</span>`),
+      ...tics.map(()=>`<span class='badge badge-warning badge-xs font-semibold'>TIC</span>`),
+      ...cubes.map(()=>`<span class='badge badge-accent badge-xs font-semibold'>CUBE</span>`)
+    ].join(' ');
+    // Timer badge used inside bottom row (not top-right now)
+    let timerBadge='';
+    if(c.timer && c.timer.startsAt && c.timer.endsAt && !c.timer.completedAt){
+      timerBadge = `<span class='badge badge-neutral badge-xs flex items-center gap-1' data-caja-timer-started='${new Date(c.timer.startsAt).getTime()}' data-caja-timer-duration='${Math.round((new Date(c.timer.endsAt).getTime() - new Date(c.timer.startsAt).getTime())/1000)}' data-caja-id='${safeHTML(c.id)}'>
+          <span id='tm-caja-${safeHTML(c.id)}'>${timerText}</span>
+          <button class='btn btn-ghost btn-xs px-1 h-4 shrink-0 stop-caja-timer' data-caja='${safeHTML(c.id)}' title='Cancelar'>✕</button>
+        </span>`;
+    } else if(c.timer && c.timer.completedAt){
+      timerBadge = `<span class='badge badge-success badge-xs'>Completado</span>`;
+    } else {
+      timerBadge = `<span class='badge badge-outline badge-xs opacity-60'>Sin cronómetro</span>`;
+    }
+    const pct = Math.min(100, Math.max(0, progress));
+    return `<div class='caja-card rounded-lg border border-base-300/40 bg-base-200/10 p-3 flex flex-col gap-2 hover:border-primary/60 transition cursor-pointer' data-caja-id='${safeHTML(c.id)}'>
+      <div class='flex items-center justify-between text-[10px] tracking-wide uppercase opacity-60'>
+        <span>Caja</span><span class='font-mono'>#${safeHTML(c.id)}</span>
+      </div>
+      <div class='font-semibold text-sm leading-tight truncate pr-2' title='${safeHTML(c.codigoCaja||'Caja')}'>${safeHTML(c.codigoCaja||'Caja')}</div>
+      <div class='flex flex-wrap gap-1 text-[9px] flex-1'>${compBadges || "<span class='badge badge-ghost badge-xs'>Sin items</span>"}</div>
+      <div class='timer-progress h-1.5 w-full bg-base-300/30 rounded-full overflow-hidden'>
+        <div class='timer-bar h-full bg-gradient-to-r from-primary via-primary to-primary/70' style='width:${pct.toFixed(1)}%' data-caja-bar='${safeHTML(c.id)}'></div>
+      </div>
+      <div class='flex items-center justify-between text-[10px] font-mono opacity-70'>
+        <span class='inline-flex items-center gap-1' data-timer-text>${timerText}</span>
+        <span class='opacity-50'>restante</span>
+      </div>
+      <div class='mt-1'>${timerBadge}</div>
+    </div>`;
   }
 
   // ========================= VIEW TOGGLE =========================
@@ -387,6 +424,15 @@
               badge.classList.add('badge-neutral');
             }
           }
+        }
+        // Progress bar update for pretty card
+        const bar = el.querySelector('[data-caja-bar]');
+        if(bar && caja.timer && caja.timer.startsAt && caja.timer.endsAt){
+          const pct = timerProgressPct(caja);
+          bar.style.width = Math.min(100, Math.max(0, pct)).toFixed(1) + '%';
+          const remSec = Math.max(0, Math.floor(remaining/1000));
+          bar.classList.toggle('bg-error', remSec<=0);
+          bar.classList.toggle('bg-warning', remSec>0 && remSec<=60);
         }
       });
     }, 1000);
