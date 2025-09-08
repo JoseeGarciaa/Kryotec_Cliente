@@ -531,6 +531,38 @@ export const OperacionController = {
     res.json({ ok:true, lote, total: ticsQ.rowCount, tics: ticsQ.rows });
   },
 
+  // Move entire lote (all TICs in estado Pre Acondicionamiento sub_estado Congelado) to Atemperamiento
+  preacondLoteMove: async (req: Request, res: Response) => {
+    const tenant = (req as any).user?.tenant;
+    const { lote, keepLote } = req.body as any;
+    const loteVal = typeof lote === 'string' ? lote.trim() : '';
+    if(!loteVal) return res.status(400).json({ ok:false, error:'Lote requerido' });
+    // Fetch TICs in lote
+    const tics = await withTenant(tenant, (c)=> c.query(
+      `SELECT ic.rfid, ic.sub_estado, ic.estado
+         FROM inventario_credocubes ic
+         JOIN modelos m ON m.modelo_id = ic.modelo_id
+        WHERE ic.lote = $1
+          AND ic.estado = 'Pre Acondicionamiento'
+          AND ic.sub_estado IN ('Congelado','Congelamiento')
+          AND (m.nombre_modelo ILIKE '%tic%')
+        ORDER BY ic.rfid`, [loteVal]));
+    if(!tics.rowCount) return res.status(404).json({ ok:false, error:'Lote sin TICs válidas' });
+    // Only move the ones strictly Congelado
+    const congelados = tics.rows.filter(r=> r.sub_estado === 'Congelado').map(r=> r.rfid);
+    if(!congelados.length) return res.status(400).json({ ok:false, error:'No hay TICs en estado Congelado' });
+    if(keepLote){
+      await withTenant(tenant, (c)=> c.query(
+        `UPDATE inventario_credocubes SET sub_estado = 'Atemperamiento'
+          WHERE rfid = ANY($1::text[])`, [congelados]));
+    } else {
+      await withTenant(tenant, (c)=> c.query(
+        `UPDATE inventario_credocubes SET sub_estado = 'Atemperamiento', lote = NULL
+          WHERE rfid = ANY($1::text[])`, [congelados]));
+    }
+    res.json({ ok:true, moved: congelados, lote: loteVal });
+  },
+
   // Validate RFIDs before moving (registro-like UX)
   preacondValidate: async (req: Request, res: Response) => {
     const tenant = (req as any).user?.tenant;

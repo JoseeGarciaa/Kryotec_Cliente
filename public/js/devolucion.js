@@ -18,6 +18,7 @@
   const cntTics = qs('#dev-count-tics');
   const lastUpdate = qs('#dev-last-update');
   const btnAdd = qs('#dev-btn-add');
+  const btnAddSummary = qs('#dev-btn-add-summary');
   const modal = document.getElementById('dev-modal');
   const input = qs('#dev-input');
   const validateBtn = qs('#dev-validate');
@@ -222,6 +223,7 @@
     finally { retConfirm.disabled=false; }
   });
   btnAdd?.addEventListener('click', ()=>{ openModal(); });
+  btnAddSummary?.addEventListener('click', ()=>{ openModal(); });
   btnCards?.addEventListener('click', ()=>{ viewMode='cards'; localStorage.setItem('devViewMode','cards'); updateViewToggle(); });
   btnList?.addEventListener('click', ()=>{ viewMode='list'; localStorage.setItem('devViewMode','list'); updateViewToggle(); });
   searchInput?.addEventListener('input', ()=>{ renderPendientes(); });

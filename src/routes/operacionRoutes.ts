@@ -11,6 +11,7 @@ router.get('/preacond/data', requireAuth, OperacionController.preacondData);
 router.post('/preacond/scan', requireAuth, OperacionController.preacondScan);
 router.post('/preacond/validate', requireAuth, OperacionController.preacondValidate);
 router.post('/preacond/lote/lookup', requireAuth, OperacionController.preacondLoteLookup);
+router.post('/preacond/lote/move', requireAuth, OperacionController.preacondLoteMove);
 router.post('/preacond/timer/start', requireAuth, OperacionController.preacondTimerStart);
 router.post('/preacond/timer/clear', requireAuth, OperacionController.preacondTimerClear);
 router.post('/preacond/item-timer/start', requireAuth, OperacionController.preacondItemTimerStart);

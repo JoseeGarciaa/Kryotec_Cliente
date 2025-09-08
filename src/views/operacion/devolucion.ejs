@@ -69,7 +69,13 @@
   <div class="rounded-xl border border-success/30 bg-success/5" id="dev-resumen">
     <div class="px-5 py-3 flex items-center justify-between gap-3 flex-wrap border-b border-success/20">
       <div class="flex items-center gap-2 font-semibold">Items Devueltos <span id="dev-total" class="badge badge-success badge-sm">0</span></div>
-      <div class="text-xs opacity-60" id="dev-last-update"></div>
+      <div class="flex items-center gap-3">
+        <div class="text-xs opacity-60" id="dev-last-update"></div>
+        <button id="dev-btn-add-summary" type="button" class="btn btn-primary btn-xs gap-2" title="Agregar items para devolver">
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" class="w-3.5 h-3.5" fill="currentColor"><path d="M11 11V5a1 1 0 1 1 2 0v6h6a1 1 0 1 1 0 2h-6v6a1 1 0 1 1-2 0v-6H5a1 1 0 1 1 0-2h6Z"/></svg>
+          Agregar Items
+        </button>
+      </div>
     </div>
     <div class="p-5 grid md:grid-cols-3 gap-5">
       <div class="rounded-lg p-6 bg-base-200/60 flex flex-col items-center text-center">
