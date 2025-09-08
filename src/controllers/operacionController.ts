@@ -963,7 +963,7 @@ export const OperacionController = {
                JOIN acond_caja_items aci ON aci.caja_id = c.caja_id
                JOIN inventario_credocubes ic ON ic.rfid = aci.rfid
                GROUP BY c.caja_id, c.lote, c.created_at
-               HAVING bool_and(ic.estado='Acondicionamiento' AND ic.sub_estado='Ensamblaje')
+               HAVING bool_and(ic.estado='Acondicionamiento' AND ic.sub_estado IN ('Ensamblaje','Ensamblado'))
              )
              SELECT c.caja_id, c.lote, c.created_at,
                     MAX(m.litraje) AS litraje,
@@ -983,7 +983,7 @@ export const OperacionController = {
              LIMIT 200`));
           cajasRows = cajasQ.rows;
           const itemsQ = await withTenant(tenant, (c) => c.query(
-            `SELECT c.caja_id, aci.rol, ic.rfid, m.litraje
+            `SELECT c.caja_id, aci.rol, ic.rfid, ic.sub_estado, m.litraje
                FROM acond_caja_items aci
                JOIN acond_cajas c ON c.caja_id = aci.caja_id
                JOIN inventario_credocubes ic ON ic.rfid = aci.rfid
@@ -1001,7 +1001,7 @@ export const OperacionController = {
                    JOIN acond_caja_items aci ON aci.caja_id = c.caja_id
                    JOIN inventario_credocubes ic ON ic.rfid = aci.rfid
                   GROUP BY c.caja_id, c.lote, c.created_at
-                  HAVING bool_and(ic.estado='Acondicionamiento' AND ic.sub_estado='Ensamblaje')
+                  HAVING bool_and(ic.estado='Acondicionamiento' AND ic.sub_estado IN ('Ensamblaje','Ensamblado'))
                )
                SELECT c.caja_id, c.lote, c.created_at,
                       COUNT(*) FILTER (WHERE aci.rol='tic') AS tics,
@@ -1019,9 +1019,10 @@ export const OperacionController = {
                 LIMIT 200`));
             cajasRows = cajasQ.rows;
             const itemsQ = await withTenant(tenant, (c) => c.query(
-              `SELECT c.caja_id, aci.rol, aci.rfid
+              `SELECT c.caja_id, aci.rol, aci.rfid, ic.sub_estado
                  FROM acond_caja_items aci
                  JOIN acond_cajas c ON c.caja_id = aci.caja_id
+                 JOIN inventario_credocubes ic ON ic.rfid = aci.rfid
                  WHERE c.caja_id = ANY($1::int[])
                 ORDER BY c.caja_id DESC, CASE aci.rol WHEN 'vip' THEN 0 WHEN 'tic' THEN 1 ELSE 2 END, aci.rfid`, [cajasRows.map(r=>r.caja_id)]));
             cajaItemsRows = itemsQ.rows;
@@ -1047,10 +1048,10 @@ export const OperacionController = {
   const nowIso = nowRes.rows[0]?.now;
   const nowMs = nowIso ? new Date(nowIso).getTime() : Date.now();
   // Map caja items by caja_id for componentes list
-  const componentesPorCaja: Record<string, { tipo:string; codigo:string }[]> = {};
+  const componentesPorCaja: Record<string, { tipo:string; codigo:string; sub_estado?:string }[]> = {};
   for(const it of cajaItemsRows){
     const arr = componentesPorCaja[it.caja_id] || (componentesPorCaja[it.caja_id] = []);
-    arr.push({ tipo: it.rol, codigo: it.rfid });
+    arr.push({ tipo: it.rol, codigo: it.rfid, sub_estado: (it as any).sub_estado });
   }
   const cajasUI = cajasRows.map(r => {
     let startsAt: string | null = r.timer_started_at || null;
@@ -1063,10 +1064,12 @@ export const OperacionController = {
         completedAt = endsAt;
       }
     }
+    const comps = componentesPorCaja[r.caja_id] || [];
+    const allEnsamblado = comps.length>0 && comps.every(cmp=> cmp.sub_estado==='Ensamblado');
     return {
       id: r.caja_id,
       codigoCaja: r.lote || `Caja #${r.caja_id}`,
-      estado: 'Ensamblaje',
+      estado: allEnsamblado ? 'Ensamblado' : 'Ensamblaje',
       createdAt: r.created_at,
       updatedAt: r.created_at,
       timer: startsAt ? { startsAt, endsAt, completedAt } : null,
@@ -1115,14 +1118,14 @@ export const OperacionController = {
     const input = Array.isArray(rfids) ? rfids : (rfids ? [rfids] : []);
     const codes = [...new Set(input.filter((x:any)=>typeof x==='string').map((s:string)=>s.trim()).filter(Boolean))];
     if(!codes.length) return res.status(400).json({ ok:false, error:'Sin RFIDs' });
-    // Limpieza rápida de asignaciones obsoletas (items que ya no están en Ensamblaje)
+  // Limpieza rápida de asignaciones obsoletas (items que ya no están en Ensamblaje/Ensamblado)
     await withTenant(tenant, async (c)=>{
       await c.query(`DELETE FROM acond_caja_items aci
                        WHERE NOT EXISTS (
                          SELECT 1 FROM inventario_credocubes ic
                           WHERE ic.rfid = aci.rfid
                             AND ic.estado='Acondicionamiento'
-                            AND ic.sub_estado='Ensamblaje'
+                            AND ic.sub_estado IN ('Ensamblaje','Ensamblado')
                        )`);
       await c.query(`DELETE FROM acond_cajas c WHERE NOT EXISTS (SELECT 1 FROM acond_caja_items aci WHERE aci.caja_id=c.caja_id)`);
     });
@@ -1180,14 +1183,14 @@ export const OperacionController = {
     const input = Array.isArray(rfids) ? rfids : (rfids ? [rfids] : []);
     const codes = [...new Set(input.filter((x:any)=>typeof x==='string').map((s:string)=>s.trim()).filter(Boolean))];
     if(codes.length !== 8) return res.status(400).json({ ok:false, error:'Se requieren exactamente 8 RFIDs (1 cube, 1 vip, 6 tics)' });
-    // Re-validate using same logic
+  // Re-validate using same logic (include Ensamblado retention)
     await withTenant(tenant, async (c)=>{
       await c.query(`DELETE FROM acond_caja_items aci
                        WHERE NOT EXISTS (
                          SELECT 1 FROM inventario_credocubes ic
                           WHERE ic.rfid = aci.rfid
                             AND ic.estado='Acondicionamiento'
-                            AND ic.sub_estado='Ensamblaje'
+                            AND ic.sub_estado IN ('Ensamblaje','Ensamblado')
                        )`);
       await c.query(`DELETE FROM acond_cajas c WHERE NOT EXISTS (SELECT 1 FROM acond_caja_items aci WHERE aci.caja_id=c.caja_id)`);
     });
@@ -1198,7 +1201,7 @@ export const OperacionController = {
            JOIN acond_caja_items aci ON aci.caja_id = c.caja_id
            JOIN inventario_credocubes ic2 ON ic2.rfid = aci.rfid
           GROUP BY c.caja_id
-         HAVING bool_and(ic2.estado='Acondicionamiento' AND ic2.sub_estado='Ensamblaje')
+         HAVING bool_and(ic2.estado='Acondicionamiento' AND ic2.sub_estado IN ('Ensamblaje','Ensamblado'))
        )
        SELECT ic.rfid, ic.estado, ic.sub_estado, ic.lote, m.nombre_modelo,
               CASE WHEN aci.rfid IS NOT NULL THEN true ELSE false END AS ya_en_caja
@@ -1358,14 +1361,21 @@ export const OperacionController = {
               FROM lote_items li
          LEFT JOIN acond_caja_items aci ON aci.rfid = li.rfid AND aci.caja_id = $2
              WHERE aci.rfid IS NULL`, [lote, cajaId]);
-        // Move all components of the caja from Despachando -> Lista para Despacho
-        const upd = await c.query(
+        // New: transition Ensamblaje -> Ensamblado when timer completes
+        const updEnsam = await c.query(
+          `UPDATE inventario_credocubes ic
+              SET sub_estado='Ensamblado'
+             WHERE ic.rfid IN (SELECT rfid FROM acond_caja_items WHERE caja_id=$1)
+               AND ic.estado='Acondicionamiento'
+               AND ic.sub_estado='Ensamblaje'`, [cajaId]);
+        // Legacy: also complete any that were in Despachando to Lista para Despacho (in case flow used)
+        const updDesp = await c.query(
           `UPDATE inventario_credocubes ic
               SET sub_estado='Lista para Despacho'
              WHERE ic.rfid IN (SELECT rfid FROM acond_caja_items WHERE caja_id=$1)
                AND ic.estado='Acondicionamiento'
                AND ic.sub_estado='Despachando'`, [cajaId]);
-        moved = upd.rowCount || 0;
+        moved = (updEnsam.rowCount||0) + (updDesp.rowCount||0);
         await c.query('COMMIT');
       } catch(e){
         await c.query('ROLLBACK');
@@ -1446,7 +1456,7 @@ export const OperacionController = {
                  JOIN modelos m ON m.modelo_id = ic.modelo_id
             LEFT JOIN acond_caja_items aci2 ON aci2.rfid = ic.rfid
                 WHERE aci2.rfid IS NULL
-                  AND ic.estado='Acondicionamiento' AND ic.sub_estado='Ensamblaje'
+                  AND ic.estado='Acondicionamiento' AND ic.sub_estado IN ('Ensamblaje','Ensamblado')
                   AND (( $1::text IS NULL) OR m.litraje = $2)
                   AND (( $3='tic' AND m.nombre_modelo ILIKE '%tic%') OR ( $3='vip' AND m.nombre_modelo ILIKE '%vip%') OR ( $3='cube' AND (m.nombre_modelo ILIKE '%cube%' OR m.nombre_modelo ILIKE '%cubo%')))
                 LIMIT $4`, [litrajeRef==null?null:String(litrajeRef), litrajeRef, m.rol, m.falta]));
@@ -1463,7 +1473,7 @@ export const OperacionController = {
                    JOIN modelos m ON m.modelo_id = ic.modelo_id
               LEFT JOIN acond_caja_items aci2 ON aci2.rfid = ic.rfid
                   WHERE aci2.rfid IS NULL
-                    AND ic.estado='Acondicionamiento' AND ic.sub_estado='Ensamblaje'
+                    AND ic.estado='Acondicionamiento' AND ic.sub_estado IN ('Ensamblaje','Ensamblado')
                     AND (( $1='tic' AND m.nombre_modelo ILIKE '%tic%') OR ( $1='vip' AND m.nombre_modelo ILIKE '%vip%') OR ( $1='cube' AND (m.nombre_modelo ILIKE '%cube%' OR m.nombre_modelo ILIKE '%cubo%')))
                   LIMIT $2`, [m.rol, m.falta]));
             } else { throw err; }
@@ -1534,7 +1544,7 @@ export const OperacionController = {
                      JOIN modelos m ON m.modelo_id = ic.modelo_id
                 LEFT JOIN acond_caja_items aci2 ON aci2.rfid = ic.rfid
                     WHERE aci2.rfid IS NULL
-                      AND ic.estado='Acondicionamiento' AND ic.sub_estado='Ensamblaje'
+                      AND ic.estado='Acondicionamiento' AND ic.sub_estado IN ('Ensamblaje','Ensamblado')
                       AND (($1::text IS NULL) OR m.litraje = $2)
                       AND (( $3='tic' AND m.nombre_modelo ILIKE '%tic%') OR ( $3='vip' AND m.nombre_modelo ILIKE '%vip%') OR ($3='cube' AND (m.nombre_modelo ILIKE '%cube%' OR m.nombre_modelo ILIKE '%cubo%')))
                     LIMIT $4`, [litrajeRef==null?null:String(litrajeRef), litrajeRef, rol, falta]);
@@ -1549,7 +1559,7 @@ export const OperacionController = {
                      JOIN modelos m ON m.modelo_id = ic.modelo_id
                 LEFT JOIN acond_caja_items aci2 ON aci2.rfid = ic.rfid
                     WHERE aci2.rfid IS NULL
-                      AND ic.estado='Acondicionamiento' AND ic.sub_estado='Ensamblaje'
+                      AND ic.estado='Acondicionamiento' AND ic.sub_estado IN ('Ensamblaje','Ensamblado')
                       AND (( $1='tic' AND m.nombre_modelo ILIKE '%tic%') OR ( $1='vip' AND m.nombre_modelo ILIKE '%vip%') OR ($1='cube' AND (m.nombre_modelo ILIKE '%cube%' OR m.nombre_modelo ILIKE '%cubo%')))
                     LIMIT $2`, [rol, falta]);
               }
@@ -1564,7 +1574,7 @@ export const OperacionController = {
                 SET sub_estado='Lista para Despacho'
                WHERE ic.rfid IN (SELECT rfid FROM acond_caja_items WHERE caja_id=$1)
                  AND ic.estado='Acondicionamiento'
-                 AND ic.sub_estado='Ensamblaje'`, [cajaId]);
+                 AND ic.sub_estado IN ('Ensamblaje','Ensamblado')`, [cajaId]);
           await c.query('COMMIT');
           res.json({ ok:true, caja_id: cajaId, lote, moved: upd.rowCount });
         } catch(e){ await c.query('ROLLBACK'); throw e; }
