@@ -7,7 +7,7 @@
 
   <div class="card border border-base-300/40 shadow-sm bg-base-200/50">
     <div class="card-body pt-5 md:pt-6">
-      <form id="form-filtros" class="grid gap-4 md:gap-5 w-full sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-[280px,200px,auto,auto] items-end">
+      <form id="form-filtros" class="grid gap-4 md:gap-5 w-full sm:grid-cols-2 lg:grid-cols-5 items-end">
         <label class="form-control w-full">
           <span class="label-text text-xs">Buscar</span>
           <input name="q" id="f-q" class="input input-sm input-bordered" placeholder="RFID / nombre / lote" />
@@ -21,23 +21,25 @@
             <option value="cubes">Cubes</option>
           </select>
         </label>
-        <div class="flex gap-3 sm:col-span-2 lg:col-span-1">
+        <div class="flex gap-3 sm:col-span-2 lg:col-span-2 xl:col-span-1">
           <button class="btn btn-primary btn-sm w-full sm:w-auto" type="submit">Filtrar</button>
           <button id="btn-clear" type="button" class="btn btn-ghost btn-sm w-full sm:w-auto">Limpiar</button>
         </div>
-        <div class="hidden lg:block"></div>
+        <div class="lg:col-span-2 hidden xl:block"></div>
       </form>
-
-      <div class="mt-6 overflow-x-auto border border-base-300/40 rounded-xl bg-base-100/60">
+      <!-- Grid (mobile) -->
+      <div id="bodega-cards" class="mt-6 grid gap-3 sm:grid-cols-2 md:hidden"></div>
+      <!-- Tabla (desktop) -->
+      <div class="mt-6 overflow-x-auto border border-base-300/40 rounded-xl bg-base-100/60 hidden md:block">
         <table class="table table-xs sm:table-sm" id="tabla-bodega">
           <thead class="bg-base-200/70 text-xs uppercase tracking-wide">
             <tr>
-              <th class="min-w-[160px]">RFID</th>
+              <th class="min-w-[150px]">RFID</th>
               <th class="min-w-[140px]">Nombre</th>
-              <th class="w-28">Lote</th>
-              <th class="w-32">Categoría</th>
-              <th class="w-32">Sub estado</th>
-              <th class="min-w-[170px]">Ingreso</th>
+              <th class="w-28 hidden lg:table-cell">Lote</th>
+              <th class="w-24">Categoría</th>
+              <th class="w-32 hidden md:table-cell">Sub estado</th>
+              <th class="min-w-[150px] hidden xl:table-cell">Ingreso</th>
             </tr>
           </thead>
           <tbody class="align-top text-sm"></tbody>

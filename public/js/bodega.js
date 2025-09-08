@@ -1,12 +1,35 @@
 // Lógica de la vista Bodega (externo para cumplir CSP)
 (function(){
   const tbody = document.querySelector('#tabla-bodega tbody');
+  const cardsWrap = document.getElementById('bodega-cards');
   if(!tbody) return; // vista no presente
   const infoTotal = document.getElementById('info-total');
   const btnPrev = document.getElementById('btn-prev');
   const btnNext = document.getElementById('btn-next');
   const form = document.getElementById('form-filtros');
   let page = 1; let limit = 50;
+  function renderCards(items){
+    if(!cardsWrap) return;
+    if(!items.length){
+      cardsWrap.innerHTML = '<div class="col-span-full text-center text-xs opacity-60 py-6">Sin items en bodega</div>';
+      return;
+    }
+    cardsWrap.innerHTML = items.map(r=>{
+      const fecha = r.fecha_ingreso ? new Date(r.fecha_ingreso).toLocaleDateString('es-CO',{ day:'2-digit', month:'2-digit', year:'2-digit'}) : '-';
+      return `<div class="rounded-lg border border-base-300/50 bg-base-100/70 p-3 flex flex-col gap-2 shadow-sm">
+        <div class="flex items-center justify-between text-[10px] uppercase tracking-wide opacity-60">
+          <span>${r.categoria}</span><span class="font-mono">${fecha}</span>
+        </div>
+        <code class="block text-[11px] break-all font-mono">${r.rfid}</code>
+        <div class="text-xs font-semibold truncate">${r.nombre_unidad||'-'}</div>
+        <div class="flex items-center justify-between text-[10px] opacity-70">
+          <span>${r.lote||'-'}</span>
+          <span class="badge badge-outline badge-xs">${r.sub_estado||'-'}</span>
+        </div>
+      </div>`;
+    }).join('');
+  }
+
   async function load(){
     const qEl = document.getElementById('f-q');
     const catEl = document.getElementById('f-cat');
@@ -15,6 +38,7 @@
     const params = new URLSearchParams({ page:String(page), limit:String(limit) });
     if(q) params.set('q', q); if(cat) params.set('cat', cat);
   tbody.innerHTML = '<tr><td colspan="6" class="text-center"><span class="loading loading-spinner loading-xs"></span> Cargando...</td></tr>';
+    if(cardsWrap) cardsWrap.innerHTML = '<div class="col-span-full text-center py-6"><span class="loading loading-spinner loading-xs"></span></div>';
     try {
       const res = await fetch('/operacion/bodega/data?'+params.toString());
       const data = await res.json();
@@ -27,18 +51,19 @@
       }
       if(!data.items.length){
         const msg = data.warning ? 'Sin items ('+data.warning+')' : 'Sin items en bodega (estado exacto "En bodega").';
-  tbody.innerHTML = '<tr><td colspan="6" class="text-center text-xs opacity-70">'+msg+'</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="6" class="text-center text-xs opacity-70">'+msg+'</td></tr>';
       } else {
         tbody.innerHTML = data.items.map(r => `
           <tr>
             <td><code class="text-[10px]">${r.rfid}</code></td>
             <td class="text-xs">${r.nombre_unidad||'-'}</td>
-            <td class="text-xs">${r.lote||'-'}</td>
+            <td class="text-xs hidden lg:table-cell">${r.lote||'-'}</td>
             <td><span class="badge badge-outline badge-xs">${r.categoria}</span></td>
-            <td class="text-xs">${r.sub_estado||'-'}</td>
-            <td class="text-[10px]">${r.fecha_ingreso ? new Date(r.fecha_ingreso).toLocaleString('es-CO') : '-'}</td>
+            <td class="text-xs hidden md:table-cell">${r.sub_estado||'-'}</td>
+            <td class="text-[10px] hidden xl:table-cell">${r.fecha_ingreso ? new Date(r.fecha_ingreso).toLocaleString('es-CO') : '-'}</td>
           </tr>`).join('');
       }
+      renderCards(data.items);
       const start = (data.page-1)*data.limit + 1;
       const end = Math.min(data.page*data.limit, data.total);
       if(infoTotal) infoTotal.textContent = data.total ? `${start}-${end} de ${data.total}` : 'Sin resultados';
