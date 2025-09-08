@@ -1304,12 +1304,8 @@ export const OperacionController = {
             VALUES($1, NOW(), $2, true, NOW())
             ON CONFLICT (caja_id) DO UPDATE SET started_at=NOW(), duration_sec=EXCLUDED.duration_sec, active=true, updated_at=NOW()`,
           [cajaId, dur]);
-        // Cambiar estado de los items de la caja a 'Despachando' si estaban en Ensamblaje
-        await c.query(`UPDATE inventario_credocubes ic
-                         SET sub_estado='Despachando'
-                        WHERE ic.rfid IN (SELECT rfid FROM acond_caja_items WHERE caja_id=$1)
-                          AND ic.estado='Acondicionamiento'
-                          AND ic.sub_estado='Ensamblaje'`, [cajaId]);
+  // (Ajuste) Ya no mover automáticamente a 'Despachando' al iniciar cronómetro.
+  // Los items permanecen en 'Ensamblaje' hasta acción explícita posterior.
         await c.query('COMMIT');
       } catch(e){
         await c.query('ROLLBACK');

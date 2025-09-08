@@ -357,6 +357,25 @@
     rfids = []; invalid = []; valid = [];
     chipsBox.innerHTML=''; msg.textContent='';
     btnConfirm.disabled = true;
+  // If opening for congelamiento, force individual mode and hide lote option
+  try {
+    const radiosBox = document.querySelector('#dlg-scan');
+    const loteRadio = radiosBox?.querySelector('input[name="scan-mode"][value="lote"]');
+    const indRadio = radiosBox?.querySelector('input[name="scan-mode"][value="individual"]');
+    if(target==='congelamiento'){
+      if(loteRadio){
+        const wrapper = loteRadio.closest('label');
+        wrapper && wrapper.classList.add('hidden');
+        loteRadio.checked = false;
+      }
+      if(indRadio){ indRadio.checked = true; }
+      scanMode='individual';
+    } else {
+      // ensure lote radio visible again for atemperamiento
+      const wrapper = loteRadio?.closest('label');
+      wrapper && wrapper.classList.remove('hidden');
+    }
+  }catch{}
   // Show keep-lote checkbox only when moving to atemperamiento
   if(keepLoteRow){ keepLoteRow.classList.toggle('hidden', target!=='atemperamiento'); }
   if(chkKeepLote){ chkKeepLote.checked = false; }
