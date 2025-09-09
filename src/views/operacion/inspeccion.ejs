@@ -1,7 +1,52 @@
 <% title = title || 'Operación · Inspección' %>
-<div class="card bg-base-200">
-  <div class="card-body">
-    <div class="text-lg font-semibold">Inspección</div>
-    <div class="opacity-70 text-sm">Pendiente de definir.</div>
+<div class="mb-8 space-y-6">
+  <h1 class="text-2xl font-bold">Inspección</h1>
+
+  <div class="grid gap-6 lg:grid-cols-3">
+    <!-- Listado de cajas -->
+    <div class="lg:col-span-2 rounded-xl border border-base-300/50 bg-base-200/5 p-5">
+      <div class="flex items-center gap-2 mb-4">
+        <span id="insp-spin" class="loading loading-spinner loading-xs hidden"></span>
+        <span class="text-sm opacity-60">Cajas en Inspección (cronómetro hacia adelante).</span>
+      </div>
+      <div id="insp-caja-grid" class="grid gap-4 sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-4"></div>
+    </div>
+
+    <!-- Panel de trabajo: identificar caja y checklist de 6 TICs -->
+    <div class="rounded-xl border border-base-300/50 bg-base-200/5 p-5 flex flex-col gap-4">
+      <h2 class="text-sm font-semibold tracking-wide uppercase opacity-80">Identificar Caja</h2>
+      <div class="form-control">
+        <label class="label py-1"><span class="label-text text-xs opacity-70">Escanea un RFID (24 caracteres)</span></label>
+        <input id="insp-scan" type="text" maxlength="24" class="input input-sm input-bordered font-mono" placeholder="RFID 24" autocomplete="off" />
+      </div>
+      <div class="flex gap-2">
+        <button id="insp-scan-btn" class="btn btn-sm btn-primary flex-1">Buscar caja</button>
+        <button id="insp-scan-clear" class="btn btn-sm">Limpiar</button>
+      </div>
+      <div id="insp-scan-msg" class="text-xs min-h-[18px] font-mono opacity-80"></div>
+      <div id="insp-caja-panel" class="hidden space-y-3">
+        <div class="text-xs opacity-60 uppercase tracking-wide">Caja detectada</div>
+        <div class="border rounded-lg p-3 bg-base-300/10 space-y-2">
+          <div class="flex items-center justify-between text-[11px] font-mono opacity-70"><span>Caja</span><span id="insp-caja-lote">—</span></div>
+          <div class="text-[11px] font-mono opacity-70"><span>Conteo TICs:</span> <span id="insp-caja-tic-count">0</span>/6</div>
+        </div>
+        <div class="space-y-3">
+          <div class="grid grid-cols-3 gap-2">
+            <div class="col-span-3">
+              <label class="label py-1"><span class="label-text text-xs opacity-70">Escanea una TIC (24 caracteres) para habilitar su checklist</span></label>
+              <input id="insp-tic-scan" type="text" maxlength="24" class="input input-sm input-bordered font-mono w-full" placeholder="RFID TIC" autocomplete="off" />
+            </div>
+            <button id="insp-tic-scan-btn" class="btn btn-sm btn-primary">Buscar TIC</button>
+            <button id="insp-tic-scan-clear" class="btn btn-sm">Limpiar</button>
+            <div id="insp-tic-msg" class="text-xs min-h-[18px] font-mono opacity-80 col-span-3"></div>
+          </div>
+
+          <div class="text-xs opacity-80">Escanea cada TIC y marca el checklist:</div>
+          <div id="insp-tic-list" class="space-y-2"></div>
+          <button id="insp-complete" class="btn btn-sm btn-success w-full" disabled>Finalizar y devolver TICs a Bodega</button>
+        </div>
+      </div>
+    </div>
   </div>
+  <script src="/static/js/inspeccion.js?v=<%= assetVersion %>" defer></script>
 </div>

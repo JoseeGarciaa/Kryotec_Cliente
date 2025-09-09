@@ -4,9 +4,10 @@
   const statusEl = document.getElementById('kb-status');
   const btn = document.getElementById('kb-refresh');
   if(!statusEl) return;
-  const metricIds = ['kb-bodega-tics','kb-bodega-vips','kb-bodega-cubes','kb-cong-proc','kb-cong-done','kb-atem-proc','kb-atem-done','kb-ensam-items','kb-ensam-cajas','kb-op-cajas'];
+  const metricIds = ['kb-bodega-tics','kb-bodega-vips','kb-bodega-cubes','kb-cong-proc','kb-cong-done','kb-atem-proc','kb-atem-done','kb-ensam-items','kb-ensam-cajas','kb-op-cajas','kb-insp-cajas','kb-insp-elapsed'];
   let firstLoad = true;
-  let lastTimers = { acond:[], operacion:[], preAcond:[] };
+  let lastTimers = { acond:[], operacion:[], preAcond:[], inspeccion:[] };
+  let serverOffset = 0; // serverNow - Date.now()
   const timersBox = document.getElementById('kb-timers');
   let timerTick=null;
   let autoReload=null; let currentReloadMs=60000;
@@ -26,7 +27,8 @@
       if(!res.ok) throw new Error('HTTP '+res.status);
       const j = await res.json();
       if(!j.ok) throw new Error(j.error||'Respuesta inválida');
-      const d = j.data;
+  const d = j.data;
+  if(d && d.now){ serverOffset = new Date(d.now).getTime() - Date.now(); }
       setNum('kb-bodega-tics', d.enBodega.tics);
       setNum('kb-bodega-vips', d.enBodega.vips);
       setNum('kb-bodega-cubes', d.enBodega.cubes);
@@ -63,6 +65,8 @@
     }
   }
   function fmt(sec){ if(sec==null) return '--:--'; const s=Math.max(0,sec); const h=Math.floor(s/3600); const m=Math.floor((s%3600)/60); const ss=s%60; return `${h}:${String(m).padStart(2,'0')}:${String(ss).padStart(2,'0')}`; }
+  function fmtElapsed(ms){ const s=Math.max(0, Math.floor(ms/1000)); const h=Math.floor(s/3600); const m=Math.floor((s%3600)/60); const ss=s%60; return `${h}:${String(m).padStart(2,'0')}:${String(ss).padStart(2,'0')}`; }
+  function msSinceStart(ts){ return Date.now()+serverOffset - new Date(ts).getTime(); }
   function renderTimers(){ if(!timersBox) return; const rows=[]; const all=[];
   const congSpan = document.getElementById('kb-cong-timer');
   const atemSpan = document.getElementById('kb-atem-timer');
@@ -125,6 +129,18 @@
       opSpan.textContent = soonOp? fmt(soonOp.remaining_sec): '—';
       console.debug('[kanban] op placeholder timers', { op: (lastTimers.operacion||[]).length, acond: (lastTimers.acond||[]).length, chosen: soonOp? soonOp.lote:null });
     }
+    // Inspección: contar cajas y mostrar la de mayor tiempo (elapsed)
+    const inspCnt = (lastTimers.inspeccion||[]).length;
+    const inspCntEl = document.getElementById('kb-insp-cajas'); if(inspCntEl) inspCntEl.textContent = String(inspCnt);
+    const inspSpan = document.getElementById('kb-insp-elapsed');
+    if(inspSpan){
+      if(!inspCnt){ inspSpan.textContent = '—'; }
+      else {
+        const oldest = [...(lastTimers.inspeccion||[])].filter(t=> t.started_at).sort((a,b)=> new Date(a.started_at).getTime() - new Date(b.started_at).getTime())[0];
+        if(oldest){ inspSpan.textContent = fmtElapsed(msSinceStart(oldest.started_at)); inspSpan.setAttribute('data-kb-insp-id', String(oldest.caja_id)); }
+        else { inspSpan.textContent = '—'; inspSpan.removeAttribute('data-kb-insp-id'); }
+      }
+    }
   (lastTimers.operacion||[]).forEach(t=>{ if(t.remaining_sec===0 || t._finishedClient) return; all.push({ t, label:'Caja (Operación)' }); });
   // Nota: No forzamos '—' si no hay timer de grupo, porque ya mostramos fallback de item (evita parpadeo)
     // Order: the timer closest to finishing first (ascending remaining_sec)
@@ -186,6 +202,18 @@
       let soonOp = opTimers.filter(t=> (t.remaining_sec||0)>0).sort((a,b)=> (a.remaining_sec||999999)-(b.remaining_sec||999999))[0];
       if(!soonOp && opTimers.length){ soonOp = opTimers.sort((a,b)=>(a.remaining_sec||999999)-(b.remaining_sec||999999))[0]; }
       opSpan2.textContent = soonOp? fmt(soonOp.remaining_sec): '—';
+    }
+    // Tick Inspección elapsed (update the currently longest one)
+    const inspSpan2 = document.getElementById('kb-insp-elapsed');
+    if(inspSpan2){
+      const timers = (lastTimers.inspeccion||[]);
+      if(!timers.length){ inspSpan2.textContent='—'; inspSpan2.removeAttribute('data-kb-insp-id'); }
+      else {
+        // Re-evaluate oldest in case a new older arrived
+        const oldest = [...timers].filter(t=> t.started_at).sort((a,b)=> new Date(a.started_at).getTime() - new Date(b.started_at).getTime())[0];
+        if(oldest){ inspSpan2.textContent = fmtElapsed(msSinceStart(oldest.started_at)); inspSpan2.setAttribute('data-kb-insp-id', String(oldest.caja_id)); }
+        else { inspSpan2.textContent='—'; inspSpan2.removeAttribute('data-kb-insp-id'); }
+      }
     }
   },1000); }
   btn?.addEventListener('click', load);

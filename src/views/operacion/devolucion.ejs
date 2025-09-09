@@ -4,8 +4,8 @@
   <div class="grid gap-6 lg:grid-cols-3">
     <div class="lg:col-span-2 rounded-xl border border-base-300/50 bg-base-200/5 p-5">
       <div class="flex items-center gap-2 mb-4">
-        <span id="dev-spin" class="loading loading-spinner loading-xs hidden"></span>
-        <span class="text-sm opacity-60">Listado de cajas activas. Usa el botón ↩ para devolver la caja completa a Bodega.</span>
+  <span id="dev-spin" class="loading loading-spinner loading-xs hidden"></span>
+  <span class="text-sm opacity-60">Listado de cajas activas. Procesa la devolución: si el cronómetro tiene &gt;50% restante vuelve a Acondicionamiento (Lista para Despacho); si no, va a Inspección.</span>
       </div>
       <div id="dev-caja-grid" class="grid gap-4 sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-4"></div>
     </div>
@@ -34,7 +34,7 @@
     <h3 class="font-semibold text-sm" id="dev-modal-title">Caja</h3>
     <div id="dev-modal-body" class="space-y-3 text-xs"></div>
     <div class="flex gap-2 pt-2">
-      <button id="dev-modal-return" class="btn btn-error btn-sm flex-1">↩ Devolver a Bodega</button>
+  <button id="dev-modal-return" class="btn btn-primary btn-sm flex-1">➜ Procesar devolución</button>
       <button id="dev-modal-close" class="btn btn-sm">Cerrar</button>
     </div>
   </div>
@@ -42,14 +42,14 @@
     <button>Cerrar</button>
   </form>
 </dialog>
-<!-- Confirmar devolución -->
-<dialog id="dev-confirm" class="modal">
-  <div class="modal-box max-w-xs p-5 space-y-4">
-    <h3 class="font-semibold text-sm">Confirmar devolución</h3>
-    <p id="dev-confirm-msg" class="text-xs opacity-80">¿Devolver caja a Bodega?</p>
-    <div class="flex gap-2 pt-2">
-      <button id="dev-confirm-yes" class="btn btn-error btn-sm flex-1">Sí, devolver</button>
-      <button id="dev-confirm-no" class="btn btn-sm flex-1">Cancelar</button>
+<!-- Diálogo de decisión -->
+<dialog id="dev-decide" class="modal">
+  <div class="modal-box max-w-sm p-5 space-y-3 relative">
+    <button id="dev-decide-close" class="btn btn-xs btn-circle btn-ghost absolute right-3 top-3" title="Cerrar">✕</button>
+    <h3 class="font-semibold text-sm pr-8">Procesar devolución</h3>
+    <p id="dev-decide-msg" class="text-xs opacity-80"></p>
+    <div class="flex gap-2 pt-2" id="dev-decide-actions">
+      <!-- botones dinámicos -->
     </div>
   </div>
   <form method="dialog" class="modal-backdrop">

@@ -55,12 +55,20 @@ router.get('/devolucion', requireAuth, OperacionController.devolucion);
 // Devolucion data + confirm
 router.get('/devolucion/data', requireAuth, OperacionController.devolucionData as any);
 router.post('/devolucion/confirm', requireAuth, OperacionController.devolucionConfirm as any);
+router.post('/devolucion/process', requireAuth, OperacionController.devolucionCajaProcess as any);
+router.post('/devolucion/evaluate', requireAuth, OperacionController.devolucionCajaEvaluate as any);
+router.post('/devolucion/reuse', requireAuth, OperacionController.devolucionCajaReuse as any);
+router.post('/devolucion/to-inspeccion', requireAuth, OperacionController.devolucionCajaToInspeccion as any);
 router.post('/devolucion/validate', requireAuth, OperacionController.devolucionValidate as any);
 router.post('/devolucion/ret/validate', requireAuth, OperacionController.devolucionRetValidate as any);
 router.post('/devolucion/ret/confirm', requireAuth, OperacionController.devolucionRetConfirm as any);
 // Devolver caja completa a bodega (reset total)
 router.post('/devolucion/caja/return', requireAuth, OperacionController.devolucionCajaReturn as any);
 router.get('/inspeccion', requireAuth, OperacionController.inspeccion);
+router.get('/inspeccion/data', requireAuth, OperacionController.inspeccionData as any);
+router.post('/inspeccion/lookup', requireAuth, OperacionController.inspeccionCajaLookup as any);
+router.post('/inspeccion/check', requireAuth, OperacionController.inspeccionTicChecklist as any);
+router.post('/inspeccion/complete', requireAuth, OperacionController.inspeccionCajaComplete as any);
 // En bodega
 router.get('/bodega', requireAuth, OperacionController.bodega);
 router.get('/bodega/data', requireAuth, OperacionController.bodegaData);

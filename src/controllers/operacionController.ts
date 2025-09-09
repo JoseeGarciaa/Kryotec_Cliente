@@ -193,6 +193,28 @@ export const OperacionController = {
           WHERE act.started_at IS NOT NULL
             AND (act.active=true OR (act.active=false AND (act.started_at + COALESCE(act.duration_sec,0) * INTERVAL '1 second') > NOW() - INTERVAL '10 minutes'))`
       ));
+      // Inspección: timers hacia adelante (started_at) por caja actualmente en inspección
+      await withTenant(tenant, async (c)=>{
+        await c.query(`CREATE TABLE IF NOT EXISTS inspeccion_caja_timers (
+           caja_id int PRIMARY KEY REFERENCES acond_cajas(caja_id) ON DELETE CASCADE,
+           started_at timestamptz,
+           active boolean NOT NULL DEFAULT false,
+           updated_at timestamptz NOT NULL DEFAULT NOW()
+        )`);
+      });
+      const inspTimersQ = await withTenant(tenant, (c)=> c.query(
+        `SELECT ict.caja_id, c.lote, ict.started_at, ict.active
+           FROM inspeccion_caja_timers ict
+           JOIN acond_cajas c ON c.caja_id = ict.caja_id
+          WHERE ict.started_at IS NOT NULL
+            AND EXISTS (
+              SELECT 1
+                FROM acond_caja_items aci
+                JOIN inventario_credocubes ic ON ic.rfid = aci.rfid
+               WHERE aci.caja_id = ict.caja_id
+                 AND LOWER(ic.estado) IN ('inspeccion','inspección')
+            )`
+      ));
     function mapTimers(rows:any[]){
         const nowMs = Date.now();
         return rows.map(r=>{
@@ -208,7 +230,8 @@ export const OperacionController = {
       const timers = {
         acond: mapTimers(acondTimersQ.rows as any[]),
         operacion: mapTimers(opTimersQ.rows as any[]),
-        preAcond: [] as any[]
+  preAcond: [] as any[],
+  inspeccion: (inspTimersQ.rows as any[]).map(r=> ({ caja_id: r.caja_id, lote: r.lote, started_at: r.started_at, active: !!r.active }))
       };
       // PreAcond timers (global section timers)
       try {
@@ -464,6 +487,77 @@ export const OperacionController = {
       res.json({ ok:true, devueltos: upd.rowCount });
     } catch(e:any){ res.status(500).json({ ok:false, error: e.message||'Error confirmando retorno' }); }
   },
+  // Nuevo flujo devolución: si resta >50% del cronómetro original de acond, vuelve a Acond (Lista para Despacho) conservando timer; si <=50%, pasa a Inspección.
+  devolucionCajaProcess: async (req: Request, res: Response) => {
+    const tenant = (req as any).user?.tenant;
+    const { caja_id } = req.body as any;
+    const cajaId = Number(caja_id);
+    if(!Number.isFinite(cajaId) || cajaId<=0) return res.status(400).json({ ok:false, error:'caja_id inválido' });
+    try {
+      const nowQ = await withTenant(tenant, (c)=> c.query<{ now:string }>(`SELECT NOW()::timestamptz AS now`));
+      const nowMs = new Date(nowQ.rows[0].now).getTime();
+      const tQ = await withTenant(tenant, (c)=> c.query(`SELECT started_at, duration_sec, active FROM acond_caja_timers WHERE caja_id=$1`, [cajaId]));
+      let remainingRatio = 0; let decide:'inspeccion'|'reuse' = 'inspeccion';
+      if(tQ.rowCount){
+        const t = tQ.rows[0] as any;
+        if(t.started_at && t.duration_sec){
+          const startMs = new Date(t.started_at).getTime();
+          const durMs = Number(t.duration_sec)*1000;
+          const endMs = startMs + durMs;
+          const remMs = Math.max(0, endMs - nowMs);
+          remainingRatio = durMs>0? (remMs/durMs) : 0;
+          decide = remainingRatio>0.5? 'reuse':'inspeccion';
+        }
+      }
+      // Obtener RFIDs de la caja
+      const itemsQ = await withTenant(tenant, (c)=> c.query(`SELECT rfid FROM acond_caja_items WHERE caja_id=$1`, [cajaId]));
+      if(!itemsQ.rowCount) return res.status(404).json({ ok:false, error:'Caja sin items' });
+      const rfids = itemsQ.rows.map((r:any)=> r.rfid);
+      await withTenant(tenant, async (c)=>{
+        await c.query('BEGIN');
+        try {
+          if(decide==='reuse'){
+            await c.query(`UPDATE inventario_credocubes SET estado='Acondicionamiento', sub_estado='Lista para Despacho' WHERE rfid = ANY($1::text[]) AND estado='Operación'`, [rfids]);
+            // No tocamos el timer de acond; se conserva tal cual
+          } else {
+            await c.query(`UPDATE inventario_credocubes SET estado='Inspección', sub_estado=NULL WHERE rfid = ANY($1::text[]) AND estado='Operación'`, [rfids]);
+            // Resetear checklist solo para TICs
+            await c.query(
+              `UPDATE inventario_credocubes ic
+                  SET validacion_limpieza = NULL,
+                      validacion_goteo = NULL,
+                      validacion_desinfeccion = NULL
+                 FROM modelos m
+                WHERE ic.rfid = ANY($1::text[])
+                  AND ic.modelo_id = m.modelo_id
+                  AND m.nombre_modelo ILIKE '%tic%'`, [rfids]
+            );
+            // Cancelar completamente cronómetros asociados a la caja
+            await c.query(`UPDATE acond_caja_timers SET active=false, started_at=NULL, duration_sec=NULL, updated_at=NOW() WHERE caja_id=$1`, [cajaId]);
+            await c.query(`UPDATE operacion_caja_timers SET active=false, started_at=NULL, duration_sec=NULL, updated_at=NOW() WHERE caja_id=$1`, [cajaId]);
+            // Iniciar cronómetro de Inspección (conteo hacia adelante)
+            await c.query(`CREATE TABLE IF NOT EXISTS inspeccion_caja_timers (
+               caja_id int PRIMARY KEY REFERENCES acond_cajas(caja_id) ON DELETE CASCADE,
+               started_at timestamptz,
+               active boolean NOT NULL DEFAULT false,
+               updated_at timestamptz NOT NULL DEFAULT NOW()
+            )`);
+            await c.query(
+              `INSERT INTO inspeccion_caja_timers(caja_id, started_at, active, updated_at)
+                 VALUES ($1, NOW(), true, NOW())
+               ON CONFLICT (caja_id) DO UPDATE
+                 SET started_at = COALESCE(inspeccion_caja_timers.started_at, EXCLUDED.started_at),
+                     active = true,
+                     updated_at = NOW()`,
+              [cajaId]
+            );
+          }
+          await c.query('COMMIT');
+        } catch(e){ await c.query('ROLLBACK'); throw e; }
+      });
+      res.json({ ok:true, action: decide, remaining_ratio: Number(remainingRatio.toFixed(4)) });
+    } catch(e:any){ res.status(500).json({ ok:false, error: e.message||'Error procesando devolución' }); }
+  },
   devolucionValidate: async (req: Request, res: Response) => {
     const tenant = (req as any).user?.tenant;
     const { rfids } = req.body as any;
@@ -492,7 +586,253 @@ export const OperacionController = {
       res.json({ ok:true, valid, invalid });
     } catch(e:any){ res.status(500).json({ ok:false, error: e.message||'Error validando RFIDs' }); }
   },
+  // Evaluar si una caja puede reutilizarse según cronómetro (>50% restante)
+  devolucionCajaEvaluate: async (req: Request, res: Response) => {
+    const tenant = (req as any).user?.tenant;
+    const { caja_id } = req.body as any;
+    const cajaId = Number(caja_id);
+    if(!Number.isFinite(cajaId) || cajaId<=0) return res.status(400).json({ ok:false, error:'caja_id inválido' });
+    try {
+      const nowQ = await withTenant(tenant, (c)=> c.query<{ now:string }>(`SELECT NOW()::timestamptz AS now`));
+      const nowMs = new Date(nowQ.rows[0].now).getTime();
+      const tQ = await withTenant(tenant, (c)=> c.query(`SELECT started_at, duration_sec, active FROM acond_caja_timers WHERE caja_id=$1`, [cajaId]));
+      let reusable=false, remainingRatio=0, secondsRemaining=0, durationSec=0, startsAt:null|string=null, endsAt:null|string=null;
+      if(tQ.rowCount){
+        const t = tQ.rows[0] as any;
+        if(t.started_at && t.duration_sec){
+          const startMs = new Date(t.started_at).getTime();
+          const durMs = Number(t.duration_sec)*1000; durationSec = Number(t.duration_sec)||0; startsAt = t.started_at;
+          const endMs = startMs + durMs; endsAt = new Date(endMs).toISOString();
+          const remMs = Math.max(0, endMs - nowMs); secondsRemaining = Math.floor(remMs/1000);
+          remainingRatio = durMs>0? (remMs/durMs) : 0; reusable = remainingRatio>0.5;
+        }
+      }
+      res.json({ ok:true, reusable, remaining_ratio: Number(remainingRatio.toFixed(4)), seconds_remaining: secondsRemaining, duration_sec: durationSec, starts_at: startsAt, ends_at: endsAt });
+    } catch(e:any){ res.status(500).json({ ok:false, error: e.message||'Error evaluando caja' }); }
+  },
+  // Acción explícita: reutilizar caja (volver a Acond · Lista para Despacho) conservando cronómetro
+  devolucionCajaReuse: async (req: Request, res: Response) => {
+    const tenant = (req as any).user?.tenant;
+    const { caja_id } = req.body as any; const cajaId = Number(caja_id);
+    if(!Number.isFinite(cajaId) || cajaId<=0) return res.status(400).json({ ok:false, error:'caja_id inválido' });
+    try {
+      const itemsQ = await withTenant(tenant, (c)=> c.query(`SELECT rfid FROM acond_caja_items WHERE caja_id=$1`, [cajaId]));
+      if(!itemsQ.rowCount) return res.status(404).json({ ok:false, error:'Caja sin items' });
+      const rfids = itemsQ.rows.map((r:any)=> r.rfid);
+      await withTenant(tenant, async (c)=>{
+        await c.query('BEGIN');
+        try {
+          await c.query(`UPDATE inventario_credocubes SET estado='Acondicionamiento', sub_estado='Lista para Despacho' WHERE rfid = ANY($1::text[]) AND estado='Operación'`, [rfids]);
+          await c.query('COMMIT');
+        } catch(e){ await c.query('ROLLBACK'); throw e; }
+      });
+      res.json({ ok:true });
+    } catch(e:any){ res.status(500).json({ ok:false, error: e.message||'Error reutilizando caja' }); }
+  },
+  // Acción explícita: enviar a Inspección y desactivar cronómetro
+  devolucionCajaToInspeccion: async (req: Request, res: Response) => {
+    const tenant = (req as any).user?.tenant;
+    const { caja_id } = req.body as any; const cajaId = Number(caja_id);
+    if(!Number.isFinite(cajaId) || cajaId<=0) return res.status(400).json({ ok:false, error:'caja_id inválido' });
+    try {
+      const itemsQ = await withTenant(tenant, (c)=> c.query(`SELECT rfid FROM acond_caja_items WHERE caja_id=$1`, [cajaId]));
+      if(!itemsQ.rowCount) return res.status(404).json({ ok:false, error:'Caja sin items' });
+      const rfids = itemsQ.rows.map((r:any)=> r.rfid);
+      await withTenant(tenant, async (c)=>{
+        await c.query('BEGIN');
+        try {
+          await c.query(`UPDATE inventario_credocubes SET estado='Inspección', sub_estado=NULL WHERE rfid = ANY($1::text[]) AND estado='Operación'`, [rfids]);
+          // Resetear checklist solo para TICs
+          await c.query(
+            `UPDATE inventario_credocubes ic
+                SET validacion_limpieza = NULL,
+                    validacion_goteo = NULL,
+                    validacion_desinfeccion = NULL
+               FROM modelos m
+              WHERE ic.rfid = ANY($1::text[])
+                AND ic.modelo_id = m.modelo_id
+                AND m.nombre_modelo ILIKE '%tic%'`, [rfids]
+          );
+          await c.query(`UPDATE acond_caja_timers SET active=false, started_at=NULL, duration_sec=NULL, updated_at=NOW() WHERE caja_id=$1`, [cajaId]);
+          await c.query(`UPDATE operacion_caja_timers SET active=false, started_at=NULL, duration_sec=NULL, updated_at=NOW() WHERE caja_id=$1`, [cajaId]);
+          // Iniciar cronómetro de Inspección (conteo hacia adelante)
+          await c.query(`CREATE TABLE IF NOT EXISTS inspeccion_caja_timers (
+               caja_id int PRIMARY KEY REFERENCES acond_cajas(caja_id) ON DELETE CASCADE,
+               started_at timestamptz,
+               active boolean NOT NULL DEFAULT false,
+               updated_at timestamptz NOT NULL DEFAULT NOW()
+          )`);
+          await c.query(
+            `INSERT INTO inspeccion_caja_timers(caja_id, started_at, active, updated_at)
+               VALUES ($1, NOW(), true, NOW())
+             ON CONFLICT (caja_id) DO UPDATE
+               SET started_at = COALESCE(inspeccion_caja_timers.started_at, EXCLUDED.started_at),
+                   active = true,
+                   updated_at = NOW()`,
+            [cajaId]
+          );
+          await c.query('COMMIT');
+        } catch(e){ await c.query('ROLLBACK'); throw e; }
+      });
+      res.json({ ok:true });
+    } catch(e:any){ res.status(500).json({ ok:false, error: e.message||'Error enviando a Inspección' }); }
+  },
   inspeccion: (_req: Request, res: Response) => res.render('operacion/inspeccion', { title: 'Operación · Inspección' }),
+  inspeccionData: async (req: Request, res: Response) => {
+    const tenant = (req as any).user?.tenant;
+    try {
+      // Traer cajas cuyos items estén en estado 'Inspección'
+      const nowRes = await withTenant(tenant, (c)=> c.query<{ now:string }>(`SELECT NOW()::timestamptz AS now`));
+      const rowsQ = await withTenant(tenant, (c)=> c.query(
+        `SELECT c.caja_id, c.lote,
+                aci.rol,
+                ic.rfid,
+                ic.estado,
+                ic.sub_estado,
+                m.nombre_modelo
+           FROM inventario_credocubes ic
+      LEFT JOIN acond_caja_items aci ON aci.rfid = ic.rfid
+      LEFT JOIN acond_cajas c ON c.caja_id = aci.caja_id
+      LEFT JOIN modelos m ON m.modelo_id = ic.modelo_id
+          WHERE ic.estado='Inspección'
+          ORDER BY c.caja_id NULLS LAST, ic.rfid`));
+      const mapa: Record<string, any> = {};
+      const ids: number[] = [];
+      for(const r of rowsQ.rows as any[]){
+        const id = r.caja_id || 0; // puede venir sin caja si se canceló mapping
+        if(!mapa[id]){
+          mapa[id] = {
+            id,
+            codigoCaja: r.lote || (id? ('CAJA-'+id): '(sin lote)'),
+            componentes: [] as any[],
+            timer: null as null | { startsAt: string }
+          };
+        }
+        mapa[id].componentes.push({ codigo: r.rfid, tipo: r.rol||inferRol(r.nombre_modelo||'') , estado: r.estado, sub_estado: r.sub_estado });
+        if(id && !ids.includes(id)) ids.push(id);
+      }
+      function inferRol(nombre:string){ const n=nombre.toLowerCase(); if(n.includes('vip')) return 'vip'; if(n.includes('tic')) return 'tic'; if(n.includes('cube')||n.includes('cubo')) return 'cube'; return 'otro'; }
+      // Asegurar tabla y timers para cajas activas en Inspección
+      if(ids.length){
+        await withTenant(tenant, async (c)=>{
+          await c.query(`CREATE TABLE IF NOT EXISTS inspeccion_caja_timers (
+             caja_id int PRIMARY KEY REFERENCES acond_cajas(caja_id) ON DELETE CASCADE,
+             started_at timestamptz,
+             active boolean NOT NULL DEFAULT false,
+             updated_at timestamptz NOT NULL DEFAULT NOW()
+          )`);
+          await c.query(
+            `INSERT INTO inspeccion_caja_timers(caja_id, started_at, active, updated_at)
+               SELECT x, NOW(), true, NOW() FROM UNNEST($1::int[]) AS x
+             ON CONFLICT (caja_id) DO NOTHING`, [ids]
+          );
+          // Obtener timers
+          const tQ = await c.query(`SELECT caja_id, started_at, active FROM inspeccion_caja_timers WHERE caja_id = ANY($1::int[])`, [ids]);
+          const tMap = new Map<number, any>(tQ.rows.map((r:any)=> [r.caja_id, r]));
+          for(const id of ids){
+            const g = mapa[id]; if(!g) continue;
+            const t = tMap.get(id); if(t && t.started_at){ g.timer = { startsAt: t.started_at }; }
+          }
+        });
+      }
+      const cajas = Object.values(mapa).filter((c:any)=> (c.componentes||[]).length>0);
+      res.json({ ok:true, serverNow: nowRes.rows[0]?.now, cajas });
+    } catch(e:any){ res.status(500).json({ ok:false, error: e.message||'Error inspección data' }); }
+  },
+  // ==== INSPECCIÓN: flujo de validación TICs ====
+  // 1) Identificar caja por un RFID (de cualquier componente) y devolver TICs de esa caja si está en Inspección
+  inspeccionCajaLookup: async (req: Request, res: Response) => {
+    const tenant = (req as any).user?.tenant;
+    const { rfid } = req.body as any;
+    const code = typeof rfid === 'string' ? rfid.trim() : '';
+    if(code.length !== 24) return res.status(400).json({ ok:false, error:'RFID inválido' });
+    try {
+      const cajaQ = await withTenant(tenant, (c)=> c.query(
+        `SELECT c.caja_id, c.lote
+           FROM acond_caja_items aci
+           JOIN acond_cajas c ON c.caja_id = aci.caja_id
+          WHERE aci.rfid = $1
+          LIMIT 1`, [code]));
+      if(!cajaQ.rowCount) return res.status(404).json({ ok:false, error:'RFID no pertenece a ninguna caja' });
+      const cajaId = cajaQ.rows[0].caja_id; const lote = cajaQ.rows[0].lote;
+      const ticsQ = await withTenant(tenant, (c)=> c.query(
+        `SELECT ic.rfid, ic.estado, ic.sub_estado, ic.validacion_limpieza, ic.validacion_goteo, ic.validacion_desinfeccion
+           FROM acond_caja_items aci
+           JOIN inventario_credocubes ic ON ic.rfid = aci.rfid
+           JOIN modelos m ON m.modelo_id = ic.modelo_id
+          WHERE aci.caja_id = $1
+            AND (m.nombre_modelo ILIKE '%tic%')
+            AND LOWER(ic.estado) IN ('inspeccion','inspección')
+          ORDER BY ic.rfid`, [cajaId]));
+      // Esperamos 6 TICs
+      const tics = ticsQ.rows || [];
+      return res.json({ ok:true, caja:{ id: cajaId, lote }, tics });
+    } catch(e:any){ res.status(500).json({ ok:false, error: e.message||'Error lookup caja inspección' }); }
+  },
+  // 2) (Deprecated to no-op) Actualizar checklist para una TIC — ahora no persiste nada; se mantiene por compatibilidad
+  inspeccionTicChecklist: async (req: Request, res: Response) => {
+    const tenant = (req as any).user?.tenant;
+    const { rfid, field, value } = req.body as any;
+    const code = typeof rfid==='string' ? rfid.trim() : '';
+    const f = typeof field==='string' ? field.toLowerCase() : '';
+    if(code.length!==24 || !['limpieza','goteo','desinfeccion'].includes(f)){
+      return res.status(400).json({ ok:false, error:'Entrada inválida' });
+    }
+    // No persistence: just check that the RFID exists; return ok
+    try {
+      const ex = await withTenant(tenant, (c)=> c.query(`SELECT 1 FROM inventario_credocubes WHERE rfid=$1`, [code]));
+      if(!ex.rowCount) return res.status(404).json({ ok:false, error:'RFID no encontrado' });
+      res.json({ ok:true, persisted:false });
+    } catch(e:any){ res.status(500).json({ ok:false, error: e.message||'Error checklist (no-op)' }); }
+  },
+  // 3) Completar inspección de una caja: validar que se envían 6 TICs confirmadas del conjunto de la caja en Inspección y devolver todo a Bodega
+  inspeccionCajaComplete: async (req: Request, res: Response) => {
+    const tenant = (req as any).user?.tenant;
+    const { caja_id, confirm_rfids } = req.body as any;
+    const cajaId = Number(caja_id);
+    if(!Number.isFinite(cajaId) || cajaId<=0) return res.status(400).json({ ok:false, error:'caja_id inválido' });
+    try {
+      const list = Array.isArray(confirm_rfids) ? confirm_rfids.filter((x:any)=> typeof x==='string' && x.trim().length===24) : [];
+      if(list.length !== 6) return res.status(400).json({ ok:false, error:'Se requieren 6 TICs confirmadas' });
+      // Validate that those 6 RFIDs belong to this caja, son TICs y están en Inspección
+      const ticsQ = await withTenant(tenant, (c)=> c.query(
+        `SELECT ic.rfid
+           FROM acond_caja_items aci
+           JOIN inventario_credocubes ic ON ic.rfid = aci.rfid
+           JOIN modelos m ON m.modelo_id = ic.modelo_id
+          WHERE aci.caja_id = $1
+            AND (m.nombre_modelo ILIKE '%tic%')
+            AND LOWER(ic.estado) IN ('inspeccion','inspección')`, [cajaId]));
+      const set = new Set((ticsQ.rows||[]).map((r:any)=> r.rfid));
+      const allBelong = list.every((r:string)=> set.has(r));
+      if(!allBelong) return res.status(400).json({ ok:false, error:'Alguna TIC no pertenece a la caja o no está en Inspección' });
+      // Con todas las TICs OK: devolver toda la caja (TICs, VIP y CUBE) a En bodega y reiniciar
+      await withTenant(tenant, async (c)=>{
+        await c.query('BEGIN');
+        try {
+          // 1) Obtener todos los RFIDs de la caja (tic/vip/cube)
+          const itemsQ = await c.query(`SELECT rfid FROM acond_caja_items WHERE caja_id=$1`, [cajaId]);
+          if(!itemsQ.rowCount){ await c.query('ROLLBACK'); return res.status(404).json({ ok:false, error:'Caja sin items' }); }
+          const allRfids = itemsQ.rows.map((r:any)=> r.rfid);
+          // 2) Devolver a En bodega y limpiar lote para todos
+          await c.query(`UPDATE inventario_credocubes SET estado='En bodega', sub_estado=NULL, lote=NULL WHERE rfid = ANY($1::text[])`, [allRfids]);
+          // 3) No persistimos checklist; no hay que limpiar columnas de validación
+          // 4) Eliminar/limpiar timers asociados a la caja
+          await c.query(`DELETE FROM inspeccion_caja_timers WHERE caja_id=$1`, [cajaId]);
+          await c.query(`DELETE FROM acond_caja_timers WHERE caja_id=$1`, [cajaId]);
+          await c.query(`DELETE FROM operacion_caja_timers WHERE caja_id=$1`, [cajaId]);
+          // 5) Eliminar asociaciones y la caja: empezar de cero
+          await c.query(`DELETE FROM acond_caja_items WHERE caja_id=$1`, [cajaId]);
+          await c.query(`DELETE FROM acond_cajas WHERE caja_id=$1`, [cajaId]);
+          await c.query('COMMIT');
+          // Responder después del commit con totales
+          return res.json({ ok:true, devueltos: allRfids.length, caja_deleted: true });
+        } catch(e){ await c.query('ROLLBACK'); throw e; }
+      });
+      // Inalcanzable normalmente: si se llega aquí, algo falló en el transaction handler
+      return;
+    } catch(e:any){ res.status(500).json({ ok:false, error: e.message||'Error completando inspección' }); }
+  },
   // Vista: En bodega
   bodega: (_req: Request, res: Response) => res.render('operacion/bodega', { title: 'Operación · En bodega' }),
   // Datos para la vista En bodega

@@ -17,6 +17,11 @@
   const modalTitle = qs('#dev-modal-title');
   const modalReturn = qs('#dev-modal-return');
   const modalClose = qs('#dev-modal-close');
+  // Decide dialog
+  const decideDlg = qs('#dev-decide');
+  const decideMsg = qs('#dev-decide-msg');
+  const decideActions = qs('#dev-decide-actions');
+  const decideClose = qs('#dev-decide-close');
   // Confirm dialog
   const confirmDlg = qs('#dev-confirm');
   const confirmYes = qs('#dev-confirm-yes');
@@ -64,7 +69,7 @@
       </div>
       <div class='flex items-center justify-between text-[10px] font-mono opacity-70'>
         <span class='inline-flex items-center gap-1'>${timerBadge}</span>
-        <button class='btn btn-ghost btn-[6px] btn-xs text-error' data-return-caja='${caja.id}' title='Devolver a Bodega'>↩</button>
+        <button class='btn btn-ghost btn-[6px] btn-xs text-primary' data-process-caja='${caja.id}' title='Procesar devolución'>➜</button>
       </div>
     </div>`;
   }
@@ -93,10 +98,10 @@
 
   document.addEventListener('click', e=>{
     const target = e.target instanceof HTMLElement ? e.target : null;
-    const btn = target ? target.closest('[data-return-caja]') : null;
-  if(btn){ const id = btn.getAttribute('data-return-caja'); if(id){ openConfirm(id, false); } }
-  const card = target ? target.closest('.caja-card') : null;
-  if(card && card.getAttribute('data-caja-id')){ openModal(card.getAttribute('data-caja-id')); }
+    const btn = target ? target.closest('[data-process-caja]') : null;
+    if(btn){ const id = btn.getAttribute('data-process-caja'); if(id){ processCaja(id); } }
+    const card = target ? target.closest('.caja-card') : null;
+    if(card && card.getAttribute('data-caja-id')){ openModal(card.getAttribute('data-caja-id')); }
   });
 
   // ---- Scan / Identificar Caja ----
@@ -106,8 +111,8 @@
       <div class='flex items-center justify-between text-[10px] uppercase opacity-60 mb-1'><span>Caja</span><span class='font-mono'>${c.codigoCaja||''}</span></div>
       <div class='font-semibold text-[11px] break-all mb-2'>${c.codigoCaja||''}</div>
       <div class='flex flex-wrap gap-1 mb-2'>${(c.componentes||[]).map(it=>{ let cls='badge-ghost'; if(it.tipo==='vip') cls='badge-info'; else if(it.tipo==='tic') cls='badge-warning'; else if(it.tipo==='cube') cls='badge-accent'; return `<span class='badge ${cls} badge-xs'>${(it.tipo||'').toUpperCase()}</span>`; }).join('') || "<span class='badge badge-ghost badge-xs'>Sin items</span>"}</div>
-      <div class='text-[10px] font-mono opacity-70'>${c.timer? (c.timer.completedAt? 'Listo' : 'Cronómetro activo') : 'Sin cronómetro'}</div>
-      <div class='mt-2'><button class='btn btn-xs btn-error btn-outline w-full' data-return-caja='${c.id}'>↩ Devolver a Bodega</button></div>
+  <div class='text-[10px] font-mono opacity-70'>${c.timer? (c.timer.completedAt? 'Listo' : 'Cronómetro activo') : 'Sin cronómetro'}</div>
+  <div class='mt-2'><button class='btn btn-xs btn-primary btn-outline w-full' data-process-caja='${c.id}'>➜ Procesar devolución</button></div>
     </div>`;
   }
   async function lookupCaja(code){
@@ -158,28 +163,59 @@
     try { modal.showModal(); } catch { modal.classList.remove('hidden'); }
   }
   function updateModalTimer(){ if(!modalCajaId) return; const caja = (data.cajas||[]).find(c=> String(c.id)===String(modalCajaId)); if(!caja||!caja.timer) return; const span=document.getElementById('dev-modal-timer'); const bar=document.getElementById('dev-modal-bar'); if(span){ span.textContent = caja.timer.completedAt? 'Listo' : timerDisplay(msRemaining(caja.timer)); } if(bar && caja.timer.startsAt && caja.timer.endsAt){ bar.style.width = progressPct(caja.timer).toFixed(1)+'%'; } }
-  modalReturn?.addEventListener('click', ()=>{ if(!modalCajaId) return; openConfirm(modalCajaId, true); });
+  modalReturn?.addEventListener('click', ()=>{ if(!modalCajaId) return; processCaja(modalCajaId); });
+  async function processCaja(id){
+    // 1) evaluar si es reusable (>50% restante)
+    try {
+      if(scanMsg) scanMsg.textContent='Evaluando...';
+      const r = await fetch('/operacion/devolucion/evaluate',{ method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ caja_id: id })});
+      const j = await r.json();
+      if(!j.ok){ if(scanMsg) scanMsg.textContent=j.error||'Error'; return; }
+      const reusable = !!j.reusable;
+      const pct = Math.round((j.remaining_ratio||0)*100);
+      let html = '';
+      if(reusable){
+        decideMsg && (decideMsg.textContent = `Queda ${pct}% del cronómetro. ¿Deseas reutilizar la caja (volver a Acond · Lista para Despacho) o enviarla a Inspección?`);
+        html = `<button class='btn btn-primary btn-sm flex-1' data-act='reuse' data-id='${id}'>Reutilizar</button>
+                <button class='btn btn-outline btn-sm flex-1' data-act='insp' data-id='${id}'>Inspección</button>`;
+      } else {
+        decideMsg && (decideMsg.textContent = `Queda ${pct}% del cronómetro. No es posible reutilizar. ¿Deseas enviarla a Inspección?`);
+        html = `<button class='btn btn-error btn-sm flex-1' data-act='insp' data-id='${id}'>Enviar a Inspección</button>`;
+      }
+      if(decideActions) decideActions.innerHTML = html;
+      try { decideDlg.showModal(); } catch { decideDlg.classList.remove('hidden'); }
+    } catch(e){ if(scanMsg) scanMsg.textContent='Error'; }
+  }
 
-  function openConfirm(id, fromModal){
-    confirmCajaId = id; confirmFromModal = !!fromModal;
-    if(confirmMsg) confirmMsg.textContent = '¿Devolver caja '+id+' a Bodega?';
-    try { confirmDlg.showModal(); } catch { confirmDlg.classList.remove('hidden'); }
-  }
-  function doReturn(){ if(!confirmCajaId) return; const id = confirmCajaId; confirmYes?.setAttribute('disabled','true');
-    fetch('/operacion/devolucion/caja/return',{ method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ caja_id: id })})
-      .then(r=> r.json().catch(()=>({})))
-      .then(()=>{
-        if(confirmFromModal){ modalCajaId=null; try{ modal.close(); }catch{ modal.classList.add('hidden'); } }
-        if(scanInput) scanInput.value='';
-        if(scanMsg) scanMsg.textContent='';
-        if(scanResult) scanResult.classList.add('hidden');
-        if(scanCardBox) scanCardBox.innerHTML='';
+  // Manejar acciones de decisión
+  document.addEventListener('click', async (e)=>{
+    const t = e.target instanceof HTMLElement ? e.target : null;
+    if(!t) return;
+    if(t.closest('#dev-decide-actions [data-act]')){
+      const btn = t.closest('[data-act]');
+      const act = btn.getAttribute('data-act');
+      const id = btn.getAttribute('data-id');
+      if(!id) return;
+      try {
+        if(scanMsg) scanMsg.textContent='Aplicando...';
+        if(act==='reuse'){
+          const r = await fetch('/operacion/devolucion/reuse',{ method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ caja_id: id })});
+          const j = await r.json(); if(!j.ok) throw new Error(j.error||'Error');
+          if(scanMsg) scanMsg.textContent='Caja enviada a Acondicionamiento · Lista para Despacho';
+        } else if(act==='insp'){
+          const r = await fetch('/operacion/devolucion/to-inspeccion',{ method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ caja_id: id })});
+          const j = await r.json(); if(!j.ok) throw new Error(j.error||'Error');
+          if(scanMsg) scanMsg.textContent='Caja enviada a Inspección';
+        }
+        try{ modal.close(); }catch{ modal.classList.add('hidden'); }
+        try{ decideDlg.close(); }catch{ decideDlg.classList.add('hidden'); }
         load();
-      })
-      .finally(()=>{ confirmYes?.removeAttribute('disabled'); confirmCajaId=null; confirmFromModal=false; try{ confirmDlg.close(); }catch{ confirmDlg.classList.add('hidden'); } });
-  }
-  confirmYes?.addEventListener('click', (e)=>{ e.preventDefault(); doReturn(); });
-  confirmNo?.addEventListener('click', (e)=>{ e.preventDefault(); confirmCajaId=null; confirmFromModal=false; try{ confirmDlg.close(); }catch{ confirmDlg.classList.add('hidden'); } });
+      } catch(err){ if(scanMsg) scanMsg.textContent = err.message || 'Error'; }
+    }
+  });
+
+  // Cerrar con X
+  decideClose?.addEventListener('click', (e)=>{ e.preventDefault(); try{ decideDlg.close(); }catch{ decideDlg.classList.add('hidden'); } });
   modalClose?.addEventListener('click', ()=>{ modalCajaId=null; try{ modal.close(); }catch{ modal.classList.add('hidden'); } });
   // también cerrar al backdrop form (native dialog auto cierra)
 
