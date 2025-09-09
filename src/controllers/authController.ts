@@ -75,6 +75,15 @@ export const AuthController = {
     secure: process.env.NODE_ENV === 'production',
     maxAge: 120 * 60 * 1000, // 120 minutos
   });
+  // Redirección según rol
+  const rolLower = (user.rol || '').toLowerCase();
+  // Normalización a nuevos nombres
+  const legacyMap: Record<string,string> = { preacond:'acondicionador', operacion:'operador', bodega:'bodeguero', inspeccion:'inspeccionador', admin:'administrador' };
+  const roleKey = legacyMap[rolLower] || rolLower;
+  if (roleKey === 'acondicionador') return res.redirect('/operacion/preacond');
+  if (roleKey === 'operador') return res.redirect('/operacion/operacion');
+  if (roleKey === 'bodeguero') return res.redirect('/operacion/bodega');
+  if (roleKey === 'inspeccionador') return res.redirect('/operacion/inspeccion');
   res.redirect('/inventario');
     } catch (err: any) {
       console.error(err);
@@ -94,6 +103,13 @@ export const AuthController = {
               secure: process.env.NODE_ENV === 'production',
               maxAge: 120 * 60 * 1000, // 120 minutos
             });
+            const rolLower = (user.rol || '').toLowerCase();
+            const legacyMap: Record<string,string> = { preacond:'acondicionador', operacion:'operador', bodega:'bodeguero', inspeccion:'inspeccionador', admin:'administrador' };
+            const roleKey = legacyMap[rolLower] || rolLower;
+            if (roleKey === 'acondicionador') return res.redirect('/operacion/preacond');
+            if (roleKey === 'operador') return res.redirect('/operacion/operacion');
+            if (roleKey === 'bodeguero') return res.redirect('/operacion/bodega');
+            if (roleKey === 'inspeccionador') return res.redirect('/operacion/inspeccion');
             return res.redirect('/inventario');
           }
         } catch {}

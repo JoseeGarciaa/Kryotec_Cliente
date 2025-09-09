@@ -14,6 +14,7 @@ import { config } from './config';
 import expressStatic from 'express';
 // @ts-ignore types optional
 import expressLayouts from 'express-ejs-layouts';
+import { restrictByRole } from './middleware/roles';
 
 dotenv.config();
 
@@ -53,6 +54,9 @@ app.use((req, res, next) => {
 	// res.locals.user.rol se usa para condicionar navegación (Administración solo admins)
 	next();
 });
+
+// Middleware de restricción por rol (debe ir antes de montar rutas protegidas)
+app.use(restrictByRole);
 
 app.use('/auth', authRoutes);
 app.use('/dashboard', dashboardRoutes);

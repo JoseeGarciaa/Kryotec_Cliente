@@ -54,7 +54,7 @@
                   </div>
                 </td>
                 <td class="text-xs"><%= u.telefono || '-' %></td>
-                <td><span class="badge badge-outline <%= u.rol==='Admin'?'badge-primary':'' %>"><%= u.rol %></span></td>
+                <td><span class="badge badge-outline <%= ['Admin','Administrador'].includes(u.rol)?'badge-primary':'' %>"><%= u.rol %></span></td>
                 <td>
                   <button class="badge border-0 <%= u.activo ? 'badge-success' : 'badge-error' %> cursor-pointer btn-toggle-activo" data-id="<%= u.id %>" data-next="<%= u.activo ? 'false' : 'true' %>">
                     <%= u.activo ? '+ Activo' : 'X Inactivo' %>
@@ -89,8 +89,11 @@
       <input name="telefono" placeholder="Teléfono" class="input input-sm input-bordered w-full" />
       <input name="password" type="password" placeholder="Password (opcional)" class="input input-sm input-bordered w-full" />
       <select name="rol" class="select select-sm select-bordered w-full">
-        <option value="User">User</option>
-        <option value="Admin">Admin</option>
+        <option value="Acondicionador">Acondicionador</option>
+        <option value="Operador">Operador</option>
+        <option value="Bodeguero">Bodeguero</option>
+        <option value="Inspeccionador">Inspeccionador</option>
+        <option value="Administrador">Administrador</option>
       </select>
       <div class="modal-action">
         <button type="submit" class="btn btn-primary btn-sm">Guardar</button>
@@ -109,8 +112,11 @@
       <input name="telefono" placeholder="Teléfono" class="input input-sm input-bordered w-full" />
       <input name="password" type="password" placeholder="Password (dejar vacío para no cambiar)" class="input input-sm input-bordered w-full" />
       <select name="rol" class="select select-sm select-bordered w-full">
-        <option value="User">User</option>
-        <option value="Admin">Admin</option>
+        <option value="Acondicionador">Acondicionador</option>
+        <option value="Operador">Operador</option>
+        <option value="Bodeguero">Bodeguero</option>
+        <option value="Inspeccionador">Inspeccionador</option>
+        <option value="Administrador">Administrador</option>
       </select>
       <select name="activo" class="select select-sm select-bordered w-full">
         <option value="true">Activo</option>

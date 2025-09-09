@@ -2,6 +2,7 @@ import { Request, Response } from 'express';
 import bcrypt from 'bcryptjs';
 import { withTenant } from '../db/pool';
 import { UsersModel } from '../models/User';
+import { ALLOWED_ROLES } from '../middleware/roles';
 
 export const AdminController = {
   // Render principal
@@ -31,7 +32,11 @@ export const AdminController = {
         return res.redirect(`/administracion?error=Correo+ya+existe:+${encodeURIComponent(correoNorm)}`);
       }
       const hashed = password ? await bcrypt.hash(password, 10) : await bcrypt.hash('Cambio123', 10);
-      await withTenant(tenant, (client) => UsersModel.create(client, { nombre: nombre.trim(), correo: correoNorm, telefono, password: hashed, rol: (rol || 'User').trim(), activo: true }));
+      const rolFinal = (() => {
+        const r = (rol || 'Acondicionador').trim();
+        return ALLOWED_ROLES.includes(r) ? r : 'Acondicionador';
+      })();
+      await withTenant(tenant, (client) => UsersModel.create(client, { nombre: nombre.trim(), correo: correoNorm, telefono, password: hashed, rol: rolFinal, activo: true }));
       res.redirect('/administracion?ok=Usuario+creado');
     } catch (e: any) {
       console.error(e);
@@ -63,7 +68,11 @@ export const AdminController = {
         return res.redirect('/administracion?error=Correo+ya+usado');
       }
       const hashed = password ? await bcrypt.hash(password, 10) : null;
-      const updated = await withTenant(tenant, (client) => UsersModel.update(client, id, { nombre: nombre.trim(), correo: correoNorm, telefono, password: hashed, rol: (rol || 'User').trim(), activo: activo === 'true' || activo === true }));
+      const rolFinal = (() => {
+        const r = (rol || 'Acondicionador').trim();
+        return ALLOWED_ROLES.includes(r) ? r : 'Acondicionador';
+      })();
+      const updated = await withTenant(tenant, (client) => UsersModel.update(client, id, { nombre: nombre.trim(), correo: correoNorm, telefono, password: hashed, rol: rolFinal, activo: activo === 'true' || activo === true }));
       if (!updated) return res.redirect('/administracion?error=Usuario+no+existe');
       res.redirect('/administracion?ok=actualizado');
     } catch (e: any) {

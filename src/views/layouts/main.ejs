@@ -29,24 +29,49 @@
         <div class="text-xs opacity-60 px-2 mb-3">Tenant: <%= (user && user.tenant) || '-' %></div>
   <button id="btn-theme-toggle" class="btn k-gradient-btn btn-sm mb-4 text-xs justify-start">Cambiar tema</button>
         <ul class="menu flex-1">
-          <li><a class="<%= currentPath.startsWith('/dashboard') ? 'active' : '' %>" href="/dashboard">Dashboard</a></li>
-          <li><a class="<%= currentPath.startsWith('/registro') ? 'active' : '' %>" href="/registro">Registro</a></li>
-          <li><a class="<%= currentPath.startsWith('/inventario') ? 'active' : '' %>" href="/inventario">Inventario</a></li>
+          <% const roleLowerRaw = (user && (user.rol || '').toLowerCase()) || ''; %>
+          <% const mapLegacy = { preacond:'acondicionador', operacion:'operador', bodega:'bodeguero', inspeccion:'inspeccionador', admin:'administrador' }; %>
+          <% const roleLower = mapLegacy[roleLowerRaw] || roleLowerRaw; %>
+          <% if (!['acondicionador','operador','bodeguero','inspeccionador'].includes(roleLower)) { %>
+            <li><a class="<%= currentPath.startsWith('/dashboard') ? 'active' : '' %>" href="/dashboard">Dashboard</a></li>
+            <li><a class="<%= currentPath.startsWith('/registro') ? 'active' : '' %>" href="/registro">Registro</a></li>
+            <li><a class="<%= currentPath.startsWith('/inventario') ? 'active' : '' %>" href="/inventario">Inventario</a></li>
+          <% } %>
+          <% if (roleLower === 'bodeguero') { %>
+            <li><a class="<%= currentPath.startsWith('/registro') ? 'active' : '' %>" href="/registro">Registro</a></li>
+          <% } %>
           <li>
             <details <%= currentPath.startsWith('/operacion') ? 'open' : '' %>>
               <summary>Operación</summary>
               <ul>
-                <li><a class="<%= currentPath === '/operacion/todas' ? 'active' : '' %>" href="/operacion/todas">Todas las fases</a></li>
-                <li><a class="<%= currentPath === '/operacion/bodega' ? 'active' : '' %>" href="/operacion/bodega">En bodega</a></li>
-                <li><a class="<%= currentPath === '/operacion/preacond' ? 'active' : '' %>" href="/operacion/preacond">Registrar pre acondicionamiento</a></li>
-                <li><a class="<%= currentPath === '/operacion/acond' ? 'active' : '' %>" href="/operacion/acond">Acondicionamiento</a></li>
-                <li><a class="<%= currentPath === '/operacion/operacion' ? 'active' : '' %>" href="/operacion/operacion">Operación</a></li>
-                <li><a class="<%= currentPath === '/operacion/devolucion' ? 'active' : '' %>" href="/operacion/devolucion">Devolución</a></li>
-                <li><a class="<%= currentPath === '/operacion/inspeccion' ? 'active' : '' %>" href="/operacion/inspeccion">Inspección</a></li>
+                <% if (!['acondicionador','operador','bodeguero','inspeccionador'].includes(roleLower)) { %>
+                  <li><a class="<%= currentPath === '/operacion/todas' ? 'active' : '' %>" href="/operacion/todas">Todas las fases</a></li>
+                  <li><a class="<%= currentPath === '/operacion/bodega' ? 'active' : '' %>" href="/operacion/bodega">En bodega</a></li>
+                <% } %>
+                <% if (roleLower === 'bodeguero') { %>
+                  <li><a class="<%= currentPath === '/operacion/bodega' ? 'active' : '' %>" href="/operacion/bodega">En bodega</a></li>
+                <% } %>
+                <% if (roleLower === 'acondicionador' || !['acondicionador','operador','bodeguero','inspeccionador'].includes(roleLower)) { %>
+                  <li><a class="<%= currentPath === '/operacion/preacond' ? 'active' : '' %>" href="/operacion/preacond">Registrar pre acondicionamiento</a></li>
+                  <li><a class="<%= currentPath === '/operacion/acond' ? 'active' : '' %>" href="/operacion/acond">Acondicionamiento</a></li>
+                <% } %>
+                <% if (roleLower === 'operador' || !['acondicionador','operador','bodeguero','inspeccionador'].includes(roleLower)) { %>
+                  <li><a class="<%= currentPath === '/operacion/operacion' ? 'active' : '' %>" href="/operacion/operacion">Operación</a></li>
+                  <% if (roleLower === 'operador') { %>
+                    <li><a class="<%= currentPath === '/operacion/devolucion' ? 'active' : '' %>" href="/operacion/devolucion">Devolución</a></li>
+                  <% } %>
+                <% } %>
+                <% if (roleLower === 'inspeccionador') { %>
+                  <li><a class="<%= currentPath === '/operacion/inspeccion' ? 'active' : '' %>" href="/operacion/inspeccion">Inspección</a></li>
+                <% } %>
+                <% if (!['acondicionador','operador','bodeguero','inspeccionador'].includes(roleLower)) { %>
+                  <li><a class="<%= currentPath === '/operacion/devolucion' ? 'active' : '' %>" href="/operacion/devolucion">Devolución</a></li>
+                  <li><a class="<%= currentPath === '/operacion/inspeccion' ? 'active' : '' %>" href="/operacion/inspeccion">Inspección</a></li>
+                <% } %>
               </ul>
             </details>
           </li>
-          <% if (user && (user.rol === 'Admin' || user.rol === 'admin')) { %>
+          <% if (user && ['Admin','admin','Administrador','administrador'].includes(user.rol)) { %>
             <li><a class="<%= currentPath.startsWith('/administracion') ? 'active' : '' %>" href="/administracion">Administración</a></li>
           <% } %>
         </ul>

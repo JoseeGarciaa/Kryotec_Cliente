@@ -4,7 +4,8 @@ import { Request, Response, NextFunction } from 'express';
 export function requireAdmin(req: Request, res: Response, next: NextFunction) {
   const user = (req as any).user;
   if (!user) return res.redirect('/auth/login');
-  if (user.rol !== 'Admin' && user.rol !== 'admin') {
+  const r = (user.rol || '').toLowerCase();
+  if (!['admin','administrador'].includes(r)) {
     return res.redirect('/dashboard');
   }
   next();
