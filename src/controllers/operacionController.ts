@@ -106,6 +106,26 @@ export const OperacionController = {
           rol text NOT NULL CHECK (rol IN ('cube','vip','tic')),
           PRIMARY KEY (caja_id, rfid)
         )`);
+        // Keep referential integrity and speed lookups
+        await c.query(`CREATE INDEX IF NOT EXISTS acond_caja_items_rfid_idx ON acond_caja_items(rfid)`);
+        await c.query(`DO $$
+        BEGIN
+          -- Ensure referenced column is unique (some tenants may lack the constraint)
+          BEGIN
+            EXECUTE 'CREATE UNIQUE INDEX IF NOT EXISTS inventario_credocubes_rfid_key ON inventario_credocubes(rfid)';
+          EXCEPTION WHEN others THEN
+            -- ignore (could be duplicates present or index already exists differently)
+          END;
+          IF NOT EXISTS (
+            SELECT 1 FROM pg_constraint
+             WHERE conrelid = 'acond_caja_items'::regclass
+               AND conname = 'acond_caja_items_rfid_fkey'
+          ) THEN
+            ALTER TABLE acond_caja_items
+              ADD CONSTRAINT acond_caja_items_rfid_fkey
+              FOREIGN KEY (rfid) REFERENCES inventario_credocubes(rfid) ON DELETE CASCADE;
+          END IF;
+        END $$;`);
       });
       // En bodega counts
       const enBodega = await withTenant(tenant, (c) => c.query(
@@ -235,6 +255,29 @@ export const OperacionController = {
       };
       // PreAcond timers (global section timers)
       try {
+        // Ensure preacond tables live in the tenant schema (migrate from public if they exist there)
+        await withTenant(tenant, (c)=> c.query(`DO $$
+        DECLARE target_schema text := current_schema();
+        BEGIN
+          IF EXISTS (
+            SELECT 1 FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace
+             WHERE c.relname='preacond_item_timers' AND n.nspname='public'
+          ) AND NOT EXISTS (
+            SELECT 1 FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace
+             WHERE c.relname='preacond_item_timers' AND n.nspname=target_schema
+          ) THEN
+            EXECUTE format('ALTER TABLE %I.%I SET SCHEMA %I','public','preacond_item_timers', target_schema);
+          END IF;
+          IF EXISTS (
+            SELECT 1 FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace
+             WHERE c.relname='preacond_timers' AND n.nspname='public'
+          ) AND NOT EXISTS (
+            SELECT 1 FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace
+             WHERE c.relname='preacond_timers' AND n.nspname=target_schema
+          ) THEN
+            EXECUTE format('ALTER TABLE %I.%I SET SCHEMA %I','public','preacond_timers', target_schema);
+          END IF;
+        END $$;`));
         await withTenant(tenant, (c)=> c.query(`CREATE TABLE IF NOT EXISTS preacond_timers (
            section text PRIMARY KEY,
            started_at timestamptz,
@@ -253,6 +296,52 @@ export const OperacionController = {
            updated_at timestamptz NOT NULL DEFAULT NOW(),
            PRIMARY KEY (rfid, section)
         )`));
+        await withTenant(tenant, (c)=> c.query(`CREATE INDEX IF NOT EXISTS preacond_item_timers_rfid_idx ON preacond_item_timers(rfid)`));
+        await withTenant(tenant, (c)=> c.query(`DO $$
+        BEGIN
+          BEGIN
+            EXECUTE 'CREATE UNIQUE INDEX IF NOT EXISTS inventario_credocubes_rfid_key ON inventario_credocubes(rfid)';
+          EXCEPTION WHEN others THEN
+          END;
+          IF NOT EXISTS (
+            SELECT 1 FROM pg_constraint
+             WHERE conrelid = 'preacond_item_timers'::regclass
+               AND conname = 'preacond_item_timers_rfid_fkey'
+          ) THEN
+            ALTER TABLE preacond_item_timers
+              ADD CONSTRAINT preacond_item_timers_rfid_fkey
+              FOREIGN KEY (rfid) REFERENCES inventario_credocubes(rfid) ON DELETE CASCADE;
+          END IF;
+        END $$;`));
+        // Cleanup: remove timers for RFIDs that are no longer in Pre Acondicionamiento (avoid table growth)
+        await withTenant(tenant, (c)=> c.query(
+          `DELETE FROM preacond_item_timers pit
+             WHERE NOT EXISTS (
+               SELECT 1 FROM inventario_credocubes ic
+                WHERE ic.rfid = pit.rfid
+                  AND ic.estado = 'Pre Acondicionamiento'
+                  AND ic.sub_estado IN ('Congelamiento','Congelado','Atemperamiento','Atemperado')
+             )`
+        ));
+        // Cleanup: clear section timer when no TICs remain in the corresponding section/lote
+        await withTenant(tenant, (c)=> c.query(
+          `UPDATE preacond_timers pt
+              SET started_at = NULL,
+                  duration_sec = NULL,
+                  lote = NULL,
+                  active = false,
+                  updated_at = NOW()
+            WHERE NOT EXISTS (
+                    SELECT 1
+                      FROM inventario_credocubes ic
+                      JOIN modelos m ON m.modelo_id = ic.modelo_id
+                     WHERE ic.estado = 'Pre Acondicionamiento'
+                       AND ( (pt.section='congelamiento'   AND ic.sub_estado IN ('Congelamiento','Congelado'))
+                          OR (pt.section='atemperamiento' AND ic.sub_estado IN ('Atemperamiento','Atemperado')) )
+                       AND (pt.lote IS NULL OR ic.lote = pt.lote)
+                       AND m.nombre_modelo ILIKE '%tic%'
+                  )`
+        ));
         const ptQ = await withTenant(tenant, (c)=> c.query(`SELECT section, started_at, duration_sec, active, lote,
             (active=false AND started_at IS NOT NULL AND (started_at + COALESCE(duration_sec,0) * INTERVAL '1 second') <= NOW()) AS finished
            FROM preacond_timers
@@ -902,6 +991,29 @@ export const OperacionController = {
   preacondData: async (req: Request, res: Response) => {
     const tenant = (req as any).user?.tenant;
     // Ensure timers table exists (global per-section timer)
+    // Ensure tables live in tenant schema (migrate from public if needed)
+    await withTenant(tenant, (c) => c.query(`DO $$
+    DECLARE target_schema text := current_schema();
+    BEGIN
+      IF EXISTS (
+        SELECT 1 FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace
+         WHERE c.relname='preacond_item_timers' AND n.nspname='public'
+      ) AND NOT EXISTS (
+        SELECT 1 FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace
+         WHERE c.relname='preacond_item_timers' AND n.nspname=target_schema
+      ) THEN
+        EXECUTE format('ALTER TABLE %I.%I SET SCHEMA %I','public','preacond_item_timers', target_schema);
+      END IF;
+      IF EXISTS (
+        SELECT 1 FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace
+         WHERE c.relname='preacond_timers' AND n.nspname='public'
+      ) AND NOT EXISTS (
+        SELECT 1 FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace
+         WHERE c.relname='preacond_timers' AND n.nspname=target_schema
+      ) THEN
+        EXECUTE format('ALTER TABLE %I.%I SET SCHEMA %I','public','preacond_timers', target_schema);
+      END IF;
+    END $$;`));
     await withTenant(tenant, (c) => c.query(
       `CREATE TABLE IF NOT EXISTS preacond_timers (
          section text PRIMARY KEY,
@@ -923,9 +1035,57 @@ export const OperacionController = {
          updated_at timestamptz NOT NULL DEFAULT NOW(),
          PRIMARY KEY (rfid, section)
        )`));
+    // Helpful index for frequent lookups/deletes
+    await withTenant(tenant, (c) => c.query(`CREATE INDEX IF NOT EXISTS preacond_item_timers_rfid_idx ON preacond_item_timers(rfid)`));
+    await withTenant(tenant, (c) => c.query(`DO $$
+    BEGIN
+      BEGIN
+        EXECUTE 'CREATE UNIQUE INDEX IF NOT EXISTS inventario_credocubes_rfid_key ON inventario_credocubes(rfid)';
+      EXCEPTION WHEN others THEN
+      END;
+      IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+         WHERE conrelid = 'preacond_item_timers'::regclass
+           AND conname = 'preacond_item_timers_rfid_fkey'
+      ) THEN
+        ALTER TABLE preacond_item_timers
+          ADD CONSTRAINT preacond_item_timers_rfid_fkey
+          FOREIGN KEY (rfid) REFERENCES inventario_credocubes(rfid) ON DELETE CASCADE;
+      END IF;
+    END $$;`));
 
     // Try to add missing columns if table existed before
     await withTenant(tenant, (c) => c.query(`ALTER TABLE preacond_timers ADD COLUMN IF NOT EXISTS lote text`));
+
+    // Cleanup: drop rows for RFIDs that are no longer in Pre Acondicionamiento
+    await withTenant(tenant, (c) => c.query(
+      `DELETE FROM preacond_item_timers pit
+         WHERE NOT EXISTS (
+           SELECT 1 FROM inventario_credocubes ic
+            WHERE ic.rfid = pit.rfid
+              AND ic.estado = 'Pre Acondicionamiento'
+              AND ic.sub_estado IN ('Congelamiento','Congelado','Atemperamiento','Atemperado')
+         )`
+    ));
+    // Cleanup: clear section timer if no TICs remain for that section/lote
+    await withTenant(tenant, (c) => c.query(
+      `UPDATE preacond_timers pt
+          SET started_at = NULL,
+              duration_sec = NULL,
+              lote = NULL,
+              active = false,
+              updated_at = NOW()
+        WHERE NOT EXISTS (
+                SELECT 1
+                  FROM inventario_credocubes ic
+                  JOIN modelos m ON m.modelo_id = ic.modelo_id
+                 WHERE ic.estado = 'Pre Acondicionamiento'
+                   AND ( (pt.section='congelamiento'   AND ic.sub_estado IN ('Congelamiento','Congelado'))
+                      OR (pt.section='atemperamiento' AND ic.sub_estado IN ('Atemperamiento','Atemperado')) )
+                   AND (pt.lote IS NULL OR ic.lote = pt.lote)
+                   AND m.nombre_modelo ILIKE '%tic%'
+            )`
+    ));
 
    const rowsCong = await withTenant(tenant, (c) => c.query(
       `SELECT ic.rfid, ic.nombre_unidad, ic.lote, ic.estado, ic.sub_estado,
@@ -1409,11 +1569,8 @@ export const OperacionController = {
            updated_at timestamptz NOT NULL DEFAULT NOW(),
            PRIMARY KEY (rfid, section)
         )`);
-        await c.query(
-          `UPDATE preacond_item_timers
-              SET started_at = NULL, duration_sec = NULL, lote = NULL, active = false, updated_at = NOW()
-            WHERE rfid = $1`, [r]
-        );
+  // Remove any leftover preacond timers for this RFID completely
+  await c.query(`DELETE FROM preacond_item_timers WHERE rfid = $1`, [r]);
         await c.query(
           `UPDATE inventario_credocubes
               SET estado = 'En bodega', sub_estado = NULL, lote = NULL
@@ -1434,6 +1591,23 @@ export const OperacionController = {
     const tenant = (req as any).user?.tenant;
     // Ensure tables for cajas
     await withTenant(tenant, async (c) => {
+       // Migrate from public to tenant schema if needed (avoid duplicates across schemas)
+       await c.query(`DO $$
+       DECLARE target_schema text := current_schema();
+       BEGIN
+         IF EXISTS (SELECT 1 FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE c.relname='acond_cajas' AND n.nspname='public')
+           AND NOT EXISTS (SELECT 1 FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE c.relname='acond_cajas' AND n.nspname=target_schema) THEN
+           EXECUTE format('ALTER TABLE %I.%I SET SCHEMA %I','public','acond_cajas', target_schema);
+         END IF;
+         IF EXISTS (SELECT 1 FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE c.relname='acond_caja_items' AND n.nspname='public')
+           AND NOT EXISTS (SELECT 1 FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE c.relname='acond_caja_items' AND n.nspname=target_schema) THEN
+           EXECUTE format('ALTER TABLE %I.%I SET SCHEMA %I','public','acond_caja_items', target_schema);
+         END IF;
+         IF EXISTS (SELECT 1 FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE c.relname='acond_caja_timers' AND n.nspname='public')
+           AND NOT EXISTS (SELECT 1 FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE c.relname='acond_caja_timers' AND n.nspname=target_schema) THEN
+           EXECUTE format('ALTER TABLE %I.%I SET SCHEMA %I','public','acond_caja_timers', target_schema);
+         END IF;
+       END $$;`);
        await c.query(`CREATE TABLE IF NOT EXISTS acond_cajas (
          caja_id serial PRIMARY KEY,
          lote text NOT NULL,
@@ -1452,6 +1626,24 @@ export const OperacionController = {
           active boolean NOT NULL DEFAULT false,
           updated_at timestamptz NOT NULL DEFAULT NOW()
         )`);
+  // Ensure FK and index to inventario_credocubes
+       await c.query(`CREATE INDEX IF NOT EXISTS acond_caja_items_rfid_idx ON acond_caja_items(rfid)`);
+       await c.query(`DO $$
+       BEGIN
+         BEGIN
+           EXECUTE 'CREATE UNIQUE INDEX IF NOT EXISTS inventario_credocubes_rfid_key ON inventario_credocubes(rfid)';
+         EXCEPTION WHEN others THEN
+         END;
+         IF NOT EXISTS (
+           SELECT 1 FROM pg_constraint
+             WHERE conrelid = 'acond_caja_items'::regclass
+               AND conname = 'acond_caja_items_rfid_fkey'
+         ) THEN
+           ALTER TABLE acond_caja_items
+             ADD CONSTRAINT acond_caja_items_rfid_fkey
+             FOREIGN KEY (rfid) REFERENCES inventario_credocubes(rfid) ON DELETE CASCADE;
+         END IF;
+       END $$;`);
     });
     // Available TICs: Atemperadas (finished pre-acond) and not already in any caja
     const tics = await withTenant(tenant, (c) => c.query(
@@ -1801,6 +1993,23 @@ export const OperacionController = {
         active boolean NOT NULL DEFAULT false,
         updated_at timestamptz NOT NULL DEFAULT NOW()
       )`);
+        await c.query(`CREATE INDEX IF NOT EXISTS acond_caja_items_rfid_idx ON acond_caja_items(rfid)`);
+        await c.query(`DO $$
+        BEGIN
+          BEGIN
+            EXECUTE 'CREATE UNIQUE INDEX IF NOT EXISTS inventario_credocubes_rfid_key ON inventario_credocubes(rfid)';
+          EXCEPTION WHEN others THEN
+          END;
+          IF NOT EXISTS (
+            SELECT 1 FROM pg_constraint
+             WHERE conrelid = 'acond_caja_items'::regclass
+               AND conname = 'acond_caja_items_rfid_fkey'
+          ) THEN
+            ALTER TABLE acond_caja_items
+              ADD CONSTRAINT acond_caja_items_rfid_fkey
+              FOREIGN KEY (rfid) REFERENCES inventario_credocubes(rfid) ON DELETE CASCADE;
+          END IF;
+        END $$;`);
         let rCaja; let retries=0;
         while(true){
           try {
@@ -1823,6 +2032,10 @@ export const OperacionController = {
         }
         // Assign lote & move to Acondicionamiento/Ensamblaje
         await c.query(`UPDATE inventario_credocubes SET estado='Acondicionamiento', sub_estado='Ensamblaje', lote=$1 WHERE rfid = ANY($2::text[])`, [loteNuevo, codes]);
+        // Cleanup: remove any leftover preacond timers for these TICs (they left Pre Acond)
+        if(ticRfids.length){
+          await c.query(`DELETE FROM preacond_item_timers WHERE rfid = ANY($1::text[])`, [ticRfids]);
+        }
         // Insert items
         for(const it of roles){
           await c.query(`INSERT INTO acond_caja_items(caja_id, rfid, rol) VALUES ($1,$2,$3)`, [cajaId, it.rfid, it.rol]);
