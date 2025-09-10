@@ -2283,6 +2283,8 @@ export const OperacionController = {
       } else if(/tic/.test(name)){
         const atemp = (estadoLower==='pre acondicionamiento' && subLower==='atemperado') || subLower==='atemperado';
         if(!atemp){ invalid.push({ rfid:r.rfid, reason:'TIC no Atemperado' }); continue; }
+  // Cap estricto: máximo 6 TICs
+  if(ticCount >= 6){ invalid.push({ rfid:r.rfid, reason:'Máximo 6 TICs' }); continue; }
         ticCount++; valid.push({ rfid:r.rfid, rol:'tic' });
       } else {
         invalid.push({ rfid:r.rfid, reason:'Modelo no permitido' });
@@ -2302,6 +2304,9 @@ export const OperacionController = {
     const input = Array.isArray(rfids) ? rfids : (rfids ? [rfids] : []);
     const codes = [...new Set(input.filter((x:any)=>typeof x==='string').map((s:string)=>s.trim()).filter(Boolean))];
     if(codes.length !== 8) return res.status(400).json({ ok:false, error:'Se requieren exactamente 8 RFIDs (1 cube, 1 vip, 6 tics)' });
+  // Reglas rápidas: no permitir más de 6 TICs en los códigos provistos
+  const maybeTicCount = codes.filter(c => /TIC/i.test(c)).length; // fallback por patrón del modelo no disponible en código; validación real ocurre abajo
+  if(maybeTicCount > 6){ return res.status(400).json({ ok:false, error:'No se permiten más de 6 TICs', message:'No se permiten más de 6 TICs' }); }
   // Re-validate using same logic (include Ensamblado retention)
     await withTenant(tenant, async (c)=>{
       // Igual que en validate: mantener cajas que estén en cualquier sub_estado válido (incluyendo despacho)
@@ -2340,6 +2345,7 @@ export const OperacionController = {
       const subLower = subEstado.toLowerCase();
       if(r.ya_en_caja) return res.status(400).json({ ok:false, error:`${r.rfid} ya está en una caja`, message:`${r.rfid} ya está en una caja` });
       if(/tic/.test(name)){
+  if(ticCount >= 6) return res.status(400).json({ ok:false, error:'No se permiten más de 6 TICs', message:'No se permiten más de 6 TICs' });
         const atemp = (estadoLower==='pre acondicionamiento' && subLower==='atemperado') || subLower==='atemperado';
         if(!atemp) return res.status(400).json({ ok:false, error:`TIC ${r.rfid} no Atemperado`, message:`TIC ${r.rfid} no Atemperado` });
         ticCount++; roles.push({ rfid:r.rfid, rol:'tic', litraje: r.litraje }); litrajes.add(String(r.litraje||''));

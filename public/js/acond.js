@@ -954,6 +954,12 @@
   // Limpiar sets y reconstruir desde roles válidos
   ticSet.clear(); vipSet.clear(); cubeSet.clear();
         roles.forEach(v=>{ if(v.rol==='tic') ticSet.add(v.rfid); else if(v.rol==='vip') vipSet.add(v.rfid); else if(v.rol==='cube') cubeSet.add(v.rfid); });
+        // Cap local: máximo 6 TICs visibles/seleccionables
+        if(ticSet.size > 6){
+          const keep = Array.from(ticSet).slice(0,6);
+          ticSet.clear(); keep.forEach(r=> ticSet.add(r));
+          if(msg) msg.textContent = 'Máximo 6 TICs';
+        }
         renderLists(); updateStatus();
         if(msg) msg.textContent='';
         if(Array.isArray(json.invalid) && json.invalid.length){
@@ -975,7 +981,7 @@
         scanInput.value = raw.slice(i);
       }
     }
-    scanInput?.addEventListener('input', ()=>handleScan(false));
+  scanInput?.addEventListener('input', ()=>handleScan(false));
     scanInput?.addEventListener('keydown', e=>{ if(e.key==='Enter'){ e.preventDefault(); handleScan(true); }});
     horas?.addEventListener('input', updateStatus);
     minutos?.addEventListener('input', updateStatus);
