@@ -56,4 +56,26 @@
     <button>Cancelar</button>
   </form>
 </dialog>
+<!-- Modal: Cronómetro para En bodega · Pendiente a Inspección -->
+<dialog id="dev-pi-timer" class="modal">
+  <div class="modal-box max-w-sm p-5 space-y-3">
+    <h3 class="font-semibold text-sm">Asignar cronómetro (Pendiente a Inspección)</h3>
+    <div class="grid grid-cols-2 gap-2 text-sm">
+      <label class="form-control">
+        <span class="label-text text-xs opacity-70">Horas</span>
+        <input id="dev-pi-hours" type="number" min="0" class="input input-sm input-bordered" placeholder="0" />
+      </label>
+      <label class="form-control">
+        <span class="label-text text-xs opacity-70">Minutos</span>
+        <input id="dev-pi-mins" type="number" min="0" class="input input-sm input-bordered" placeholder="0" />
+      </label>
+    </div>
+    <div class="text-[11px] opacity-70">Se moverá la caja a "En bodega · Pendiente a Inspección" solo al aceptar.</div>
+    <div class="flex gap-2 pt-2">
+      <button id="dev-pi-accept" class="btn btn-sm btn-primary flex-1">Aceptar</button>
+      <button id="dev-pi-cancel" class="btn btn-sm">Cancelar</button>
+    </div>
+  </div>
+  <form method="dialog" class="modal-backdrop"><button>Cancelar</button></form>
+</dialog>
 <script src="/static/js/devolucion.js?v=<%= assetVersion %>" defer></script>

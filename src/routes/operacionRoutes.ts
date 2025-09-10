@@ -58,7 +58,9 @@ router.post('/devolucion/confirm', requireAuth, OperacionController.devolucionCo
 router.post('/devolucion/process', requireAuth, OperacionController.devolucionCajaProcess as any);
 router.post('/devolucion/evaluate', requireAuth, OperacionController.devolucionCajaEvaluate as any);
 router.post('/devolucion/reuse', requireAuth, OperacionController.devolucionCajaReuse as any);
-router.post('/devolucion/to-inspeccion', requireAuth, OperacionController.devolucionCajaToInspeccion as any);
+// Nuevo flujo: enviar a "En bodega · Pendiente a Inspección"
+router.post('/devolucion/to-inspeccion', requireAuth, OperacionController.devolucionCajaToInspeccion as any); // mantener compatibilidad (ya no se usa)
+router.post('/devolucion/to-pend-insp', requireAuth, OperacionController.devolucionCajaToPendInsp as any);
 router.post('/devolucion/validate', requireAuth, OperacionController.devolucionValidate as any);
 router.post('/devolucion/ret/validate', requireAuth, OperacionController.devolucionRetValidate as any);
 router.post('/devolucion/ret/confirm', requireAuth, OperacionController.devolucionRetConfirm as any);
@@ -67,10 +69,16 @@ router.post('/devolucion/caja/return', requireAuth, OperacionController.devoluci
 router.get('/inspeccion', requireAuth, OperacionController.inspeccion);
 router.get('/inspeccion/data', requireAuth, OperacionController.inspeccionData as any);
 router.post('/inspeccion/lookup', requireAuth, OperacionController.inspeccionCajaLookup as any);
+router.post('/inspeccion/pull', requireAuth, OperacionController.inspeccionPullFromPending as any);
 router.post('/inspeccion/check', requireAuth, OperacionController.inspeccionTicChecklist as any);
 router.post('/inspeccion/complete', requireAuth, OperacionController.inspeccionCajaComplete as any);
 // En bodega
 router.get('/bodega', requireAuth, OperacionController.bodega);
 router.get('/bodega/data', requireAuth, OperacionController.bodegaData);
+// En bodega · Pendiente a Inspección (sub vista)
+router.get('/bodega-pend-insp/data', requireAuth, OperacionController.bodegaPendInspData as any);
+// Bodega no puede modificar el cronómetro de "Pendiente a Inspección"
+// router.post('/bodega-pend-insp/timer/start', requireAuth, OperacionController.bodegaPendInspTimerStart as any);
+// Restricción: no se permite limpiar cronómetro ni enviar a Inspección desde Bodega pendiente
 
 export default router;

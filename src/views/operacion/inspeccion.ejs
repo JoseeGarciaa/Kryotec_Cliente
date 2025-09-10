@@ -7,7 +7,7 @@
     <div class="lg:col-span-2 rounded-xl border border-base-300/50 bg-base-200/5 p-5">
       <div class="flex items-center gap-2 mb-4">
         <span id="insp-spin" class="loading loading-spinner loading-xs hidden"></span>
-        <span class="text-sm opacity-60">Cajas en Inspección (cronómetro hacia adelante).</span>
+  <span class="text-sm opacity-60">Cajas en Inspección. Para traer una caja desde Bodega, debe estar "Pendiente a Inspección"; al jalarla se cancela su cronómetro pendiente y se inicia uno nuevo para Inspección.</span>
       </div>
       <div id="insp-caja-grid" class="grid gap-4 sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-4"></div>
     </div>
@@ -50,3 +50,25 @@
   </div>
   <script src="/static/js/inspeccion.js?v=<%= assetVersion %>" defer></script>
 </div>
+<!-- Modal: Cronómetro manual para jalar desde Pendiente a Inspección -->
+<dialog id="insp-pull-modal" class="modal">
+  <div class="modal-box max-w-sm p-5 space-y-3">
+  <h3 class="font-semibold text-sm">Jalar caja y asignar cronómetro de Inspección</h3>
+    <div class="grid grid-cols-2 gap-2 text-sm">
+      <label class="form-control">
+        <span class="label-text text-xs opacity-70">Horas</span>
+        <input id="insp-pull-hours" type="number" min="0" class="input input-sm input-bordered" placeholder="0" />
+      </label>
+      <label class="form-control">
+        <span class="label-text text-xs opacity-70">Minutos</span>
+        <input id="insp-pull-mins" type="number" min="0" class="input input-sm input-bordered" placeholder="0" />
+      </label>
+    </div>
+  <div class="text-[11px] opacity-70">Al aceptar: se cancela el cronómetro de "Pendiente a Inspección" de la caja en Bodega y se inicia un nuevo cronómetro para Inspección.</div>
+    <div class="flex gap-2 pt-2">
+      <button id="insp-pull-accept" class="btn btn-sm btn-primary flex-1">Aceptar</button>
+      <button id="insp-pull-cancel" class="btn btn-sm">Cancelar</button>
+    </div>
+  </div>
+  <form method="dialog" class="modal-backdrop"><button>Cancelar</button></form>
+</dialog>

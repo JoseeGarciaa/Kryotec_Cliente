@@ -8,6 +8,7 @@
 
   function msElapsed(timer){ if(!timer||!timer.startsAt) return 0; return (Date.now()+state.serverOffset) - new Date(timer.startsAt).getTime(); }
   function timerDisplay(ms){ const s=Math.max(0,Math.floor(ms/1000)); const h=Math.floor(s/3600); const m=Math.floor((s%3600)/60); const sec=s%60; return `${h}:${String(m).padStart(2,'0')}:${String(sec).padStart(2,'0')}`; }
+  function msRemaining(timer){ if(!timer||!timer.startsAt||!timer.durationSec) return null; const end = new Date(timer.startsAt).getTime() + timer.durationSec*1000; return end - (Date.now()+state.serverOffset); }
 
   function cardHTML(caja){
     const comps = caja.componentes||[];
@@ -58,7 +59,13 @@
     (state.cajas||[]).forEach(c=>{
       if(!c.timer||!c.timer.startsAt) return;
       const el = document.getElementById('insp-timer-'+c.id);
-      if(el) el.textContent = timerDisplay(msElapsed(c.timer));
+      if(!el) return;
+      if(c.timer && c.timer.durationSec){
+        const rem = Math.max(0, msRemaining(c.timer)||0);
+        el.textContent = '↓ ' + timerDisplay(rem);
+      } else {
+        el.textContent = timerDisplay(msElapsed(c.timer));
+      }
     });
   }, 1000);
   // ---- Scan/Lookup caja ----
@@ -107,6 +114,14 @@
     updateCompleteBtn();
   }
 
+  // Pull modal support
+  const pullDlg = qs('#insp-pull-modal');
+  const pullH = qs('#insp-pull-hours');
+  const pullM = qs('#insp-pull-mins');
+  const pullAccept = qs('#insp-pull-accept');
+  const pullCancel = qs('#insp-pull-cancel');
+  let pullRfid = null;
+
   async function lookupCaja(){
     const code = (scanInput?.value||'').trim();
     if(code.length!==24){ scanMsg && (scanMsg.textContent='RFID inválido'); return; }
@@ -114,15 +129,22 @@
       scanMsg && (scanMsg.textContent='Buscando...');
       const r = await fetch('/operacion/inspeccion/lookup',{ method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ rfid: code })});
       const j = await r.json();
-      if(!j.ok){ scanMsg && (scanMsg.textContent=j.error||'No encontrado'); return; }
-  state.cajaSel = j.caja; state.tics = j.tics||[]; state.ticChecks = new Map(); state.activeTic = null;
-      renderChecklist();
-      scanMsg && (scanMsg.textContent='');
+      if(j.ok){
+        state.cajaSel = j.caja; state.tics = j.tics||[]; state.ticChecks = new Map(); state.activeTic = null;
+        renderChecklist();
+        scanMsg && (scanMsg.textContent='');
+      } else {
+        // Solo permitir jalar si la caja está exactamente Pendiente a Inspección
+        pullRfid = code;
+        try { pullDlg.showModal(); } catch { pullDlg.classList.remove('hidden'); }
+        scanMsg && (scanMsg.textContent='Caja no está en Inspección. Asigna cronómetro para jalarla.');
+      }
     } catch(e){ scanMsg && (scanMsg.textContent='Error'); }
   }
 
   function updateCompleteBtn(){
-    const all = (state.tics||[]).length===6 && (state.tics||[]).every(t=>{
+  // Checklist habilitado solo cuando ya hay caja seleccionada (ya jalada a Inspección)
+  const all = !!state.cajaSel?.id && (state.tics||[]).length===6 && (state.tics||[]).every(t=>{
       const v = state.ticChecks.get(t.rfid) || { limpieza:false, goteo:false, desinfeccion:false };
       return v.limpieza && v.goteo && v.desinfeccion;
     });
@@ -182,4 +204,21 @@
   ticScanBtn?.addEventListener('click', handleTicScan);
   ticScan?.addEventListener('keydown', (e)=>{ if(e.key==='Enter'){ e.preventDefault(); handleTicScan(); }});
   ticScanClear?.addEventListener('click', ()=>{ if(ticScan) ticScan.value=''; state.activeTic=null; renderChecklist(); ticMsg && (ticMsg.textContent=''); ticScan?.focus(); });
+
+  // Pull modal handlers
+  pullAccept?.addEventListener('click', async ()=>{
+    const h = parseInt(pullH?.value||'0',10)||0; const m = parseInt(pullM?.value||'0',10)||0; const sec = h*3600 + m*60;
+    if(!pullRfid || sec<=0){ try{ pullDlg.close(); }catch{ pullDlg.classList.add('hidden'); } scanMsg && (scanMsg.textContent='Debes asignar horas/minutos'); return; }
+    try {
+      const r = await fetch('/operacion/inspeccion/pull',{ method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ rfid: pullRfid, durationSec: sec })});
+      const j = await r.json();
+      if(!j.ok){ scanMsg && (scanMsg.textContent=j.error||'Error'); return; }
+      state.cajaSel = j.caja; state.tics = j.tics||[]; state.ticChecks = new Map(); state.activeTic = null;
+      renderChecklist();
+      await load();
+      scanMsg && (scanMsg.textContent='Caja jalada a Inspección');
+    } catch(e){ scanMsg && (scanMsg.textContent='Error'); }
+    finally { pullRfid=null; pullH && (pullH.value=''); pullM && (pullM.value=''); try{ pullDlg.close(); }catch{ pullDlg.classList.add('hidden'); } }
+  });
+  pullCancel?.addEventListener('click', ()=>{ pullRfid=null; pullH && (pullH.value=''); pullM && (pullM.value=''); try{ pullDlg.close(); }catch{ pullDlg.classList.add('hidden'); } });
 })();

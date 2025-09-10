@@ -29,6 +29,13 @@
   const confirmMsg = qs('#dev-confirm-msg');
   let confirmCajaId = null; let confirmFromModal = false;
   let modalCajaId = null;
+  // PI timer modal (Pendiente a Inspección)
+  const piDlg = qs('#dev-pi-timer');
+  const piHours = qs('#dev-pi-hours');
+  const piMins = qs('#dev-pi-mins');
+  const piAccept = qs('#dev-pi-accept');
+  const piCancel = qs('#dev-pi-cancel');
+  let piCajaId = null;
   let data = { cajas: [], serverNow: null };
   let serverOffset = 0; // serverNow - Date.now()
   let tick = null; let poll = null;
@@ -175,12 +182,12 @@
       const pct = Math.round((j.remaining_ratio||0)*100);
       let html = '';
       if(reusable){
-        decideMsg && (decideMsg.textContent = `Queda ${pct}% del cronómetro. ¿Deseas reutilizar la caja (volver a Acond · Lista para Despacho) o enviarla a Inspección?`);
+  decideMsg && (decideMsg.textContent = `Queda ${pct}% del cronómetro. ¿Deseas reutilizar la caja (volver a Acond · Lista para Despacho) o enviarla a Bodega · Pendiente a Inspección?`);
         html = `<button class='btn btn-primary btn-sm flex-1' data-act='reuse' data-id='${id}'>Reutilizar</button>
-                <button class='btn btn-outline btn-sm flex-1' data-act='insp' data-id='${id}'>Inspección</button>`;
+    <button class='btn btn-outline btn-sm flex-1' data-act='insp' data-id='${id}'>Pendiente a Inspección</button>`;
       } else {
-        decideMsg && (decideMsg.textContent = `Queda ${pct}% del cronómetro. No es posible reutilizar. ¿Deseas enviarla a Inspección?`);
-        html = `<button class='btn btn-error btn-sm flex-1' data-act='insp' data-id='${id}'>Enviar a Inspección</button>`;
+  decideMsg && (decideMsg.textContent = `Queda ${pct}% del cronómetro. No es posible reutilizar. ¿Deseas enviarla a Bodega · Pendiente a Inspección?`);
+  html = `<button class='btn btn-error btn-sm flex-1' data-act='insp' data-id='${id}'>Enviar a Pendiente a Inspección</button>`;
       }
       if(decideActions) decideActions.innerHTML = html;
       try { decideDlg.showModal(); } catch { decideDlg.classList.remove('hidden'); }
@@ -203,16 +210,34 @@
           const j = await r.json(); if(!j.ok) throw new Error(j.error||'Error');
           if(scanMsg) scanMsg.textContent='Caja enviada a Acondicionamiento · Lista para Despacho';
         } else if(act==='insp'){
-          const r = await fetch('/operacion/devolucion/to-inspeccion',{ method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ caja_id: id })});
-          const j = await r.json(); if(!j.ok) throw new Error(j.error||'Error');
-          if(scanMsg) scanMsg.textContent='Caja enviada a Inspección';
+          // Abrir modal para horas/minutos; solo se envía tras Aceptar
+          piCajaId = id;
+          try { piDlg.showModal(); } catch { piDlg.classList.remove('hidden'); }
         }
         try{ modal.close(); }catch{ modal.classList.add('hidden'); }
         try{ decideDlg.close(); }catch{ decideDlg.classList.add('hidden'); }
-        load();
+        // load() se invocará tras aceptar en el modal
       } catch(err){ if(scanMsg) scanMsg.textContent = err.message || 'Error'; }
     }
   });
+
+  // Manejar PI modal
+  piAccept?.addEventListener('click', async ()=>{
+    const h = parseInt(piHours?.value||'0',10)||0; const m = parseInt(piMins?.value||'0',10)||0; const sec = h*3600 + m*60;
+    if(!piCajaId || sec<=0){ // exigir cronómetro positivo
+      try{ piDlg.close(); }catch{ piDlg.classList.add('hidden'); }
+      if(scanMsg) scanMsg.textContent = 'Debes asignar horas o minutos antes de enviar';
+      return;
+    }
+    try {
+      const r = await fetch('/operacion/devolucion/to-pend-insp',{ method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ caja_id: piCajaId, durationSec: sec })});
+      const j = await r.json(); if(!j.ok) throw new Error(j.error||'Error');
+      if(scanMsg) scanMsg.textContent='Caja enviada a Bodega · Pendiente a Inspección';
+      load();
+    } catch(e){ if(scanMsg) scanMsg.textContent = e.message || 'Error'; }
+    finally { piCajaId=null; piHours && (piHours.value=''); piMins && (piMins.value=''); try{ piDlg.close(); }catch{ piDlg.classList.add('hidden'); } }
+  });
+  piCancel?.addEventListener('click', ()=>{ piCajaId=null; piHours && (piHours.value=''); piMins && (piMins.value=''); try{ piDlg.close(); }catch{ piDlg.classList.add('hidden'); } });
 
   // Cerrar con X
   decideClose?.addEventListener('click', (e)=>{ e.preventDefault(); try{ decideDlg.close(); }catch{ decideDlg.classList.add('hidden'); } });

@@ -36,6 +36,7 @@ const ROLE_ACCESS: Record<string, string[]> = {
   ],
   bodeguero: [
     '/operacion/bodega',
+  '/operacion/bodega-pend-insp',
     '/registro',
     '/auth', '/ui/theme', '/static', '/health'
   ],
