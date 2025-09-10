@@ -83,6 +83,15 @@
   const ticScanBtn = qs('#insp-tic-scan-btn');
   const ticScanClear = qs('#insp-tic-scan-clear');
   const ticMsg = qs('#insp-tic-msg');
+  // Add modal controls (Agregar a Inspección)
+  const btnAdd = qs('#insp-btn-add');
+  const addDlg = document.getElementById('insp-modal-add');
+  const addScan = qs('#insp-add-scan');
+  const addH = qs('#insp-add-hours');
+  const addM = qs('#insp-add-mins');
+  const addMsg = qs('#insp-add-msg');
+  const addConfirm = qs('#insp-add-confirm');
+  const addClear = qs('#insp-add-clear');
 
   function renderChecklist(){
     if(!panel||!list) return;
@@ -114,13 +123,8 @@
     updateCompleteBtn();
   }
 
-  // Pull modal support
-  const pullDlg = qs('#insp-pull-modal');
-  const pullH = qs('#insp-pull-hours');
-  const pullM = qs('#insp-pull-mins');
-  const pullAccept = qs('#insp-pull-accept');
-  const pullCancel = qs('#insp-pull-cancel');
-  let pullRfid = null;
+  // Abrir modal Agregar
+  btnAdd?.addEventListener('click', ()=>{ try{ addDlg.showModal(); }catch{ addDlg.classList.remove('hidden'); } addMsg && (addMsg.textContent=''); addConfirm && (addConfirm.disabled=true); addScan && (addScan.value=''); addH && (addH.value=''); addM && (addM.value=''); setTimeout(()=> addScan?.focus(), 200); });
 
   async function lookupCaja(){
     const code = (scanInput?.value||'').trim();
@@ -134,10 +138,8 @@
         renderChecklist();
         scanMsg && (scanMsg.textContent='');
       } else {
-        // Solo permitir jalar si la caja está exactamente Pendiente a Inspección
-        pullRfid = code;
-        try { pullDlg.showModal(); } catch { pullDlg.classList.remove('hidden'); }
-        scanMsg && (scanMsg.textContent='Caja no está en Inspección. Asigna cronómetro para jalarla.');
+        // Mensaje actualizado: ya no existe "Jalar desde Bodega"
+        scanMsg && (scanMsg.textContent='Caja no está en Inspección. Usa el botón "Agregar a Inspección".');
       }
     } catch(e){ scanMsg && (scanMsg.textContent='Error'); }
   }
@@ -205,20 +207,34 @@
   ticScan?.addEventListener('keydown', (e)=>{ if(e.key==='Enter'){ e.preventDefault(); handleTicScan(); }});
   ticScanClear?.addEventListener('click', ()=>{ if(ticScan) ticScan.value=''; state.activeTic=null; renderChecklist(); ticMsg && (ticMsg.textContent=''); ticScan?.focus(); });
 
-  // Pull modal handlers
-  pullAccept?.addEventListener('click', async ()=>{
-    const h = parseInt(pullH?.value||'0',10)||0; const m = parseInt(pullM?.value||'0',10)||0; const sec = h*3600 + m*60;
-    if(!pullRfid || sec<=0){ try{ pullDlg.close(); }catch{ pullDlg.classList.add('hidden'); } scanMsg && (scanMsg.textContent='Debes asignar horas/minutos'); return; }
+  // Validación de inputs del modal
+  function updateAddConfirm(){
+    const code = (addScan?.value||'').trim();
+    const h = parseInt(addH?.value||'0',10)||0; const m = parseInt(addM?.value||'0',10)||0; const sec = h*3600 + m*60;
+    addConfirm && (addConfirm.disabled = !(code.length===24 && sec>0));
+  }
+  addScan?.addEventListener('input', ()=>{ if(addScan.value.length>24) addScan.value = addScan.value.slice(0,24); updateAddConfirm(); });
+  addH?.addEventListener('input', updateAddConfirm);
+  addM?.addEventListener('input', updateAddConfirm);
+  addClear?.addEventListener('click', ()=>{ addScan && (addScan.value=''); addH && (addH.value=''); addM && (addM.value=''); addMsg && (addMsg.textContent=''); updateAddConfirm(); addScan?.focus(); });
+  addScan?.addEventListener('keydown', (e)=>{ if(e.key==='Enter'){ e.preventDefault(); addConfirm?.click(); }});
+
+  // Confirmar Agregar (pull con cronómetro obligatorio)
+  addConfirm?.addEventListener('click', async ()=>{
+    const code = (addScan?.value||'').trim();
+    const h = parseInt(addH?.value||'0',10)||0; const m = parseInt(addM?.value||'0',10)||0; const sec = h*3600 + m*60;
+    if(code.length!==24){ addMsg && (addMsg.textContent='RFID inválido'); return; }
+    if(sec<=0){ addMsg && (addMsg.textContent='Asigna horas/minutos'); return; }
+    addMsg && (addMsg.textContent='Agregando...');
     try {
-      const r = await fetch('/operacion/inspeccion/pull',{ method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ rfid: pullRfid, durationSec: sec })});
+      const r = await fetch('/operacion/inspeccion/pull',{ method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ rfid: code, durationSec: sec })});
       const j = await r.json();
-      if(!j.ok){ scanMsg && (scanMsg.textContent=j.error||'Error'); return; }
+      if(!j.ok){ addMsg && (addMsg.textContent=j.error||'Error'); return; }
       state.cajaSel = j.caja; state.tics = j.tics||[]; state.ticChecks = new Map(); state.activeTic = null;
       renderChecklist();
       await load();
-      scanMsg && (scanMsg.textContent='Caja jalada a Inspección');
-    } catch(e){ scanMsg && (scanMsg.textContent='Error'); }
-    finally { pullRfid=null; pullH && (pullH.value=''); pullM && (pullM.value=''); try{ pullDlg.close(); }catch{ pullDlg.classList.add('hidden'); } }
+      addMsg && (addMsg.textContent='Agregado');
+      try{ addDlg.close(); }catch{ addDlg.classList.add('hidden'); }
+    } catch(e){ addMsg && (addMsg.textContent='Error'); }
   });
-  pullCancel?.addEventListener('click', ()=>{ pullRfid=null; pullH && (pullH.value=''); pullM && (pullM.value=''); try{ pullDlg.close(); }catch{ pullDlg.classList.add('hidden'); } });
 })();

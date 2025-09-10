@@ -1,0 +1,40 @@
+<% title = title || 'Operación · Inspección · Recepción' %>
+<div class="mb-8 space-y-6">
+  <h1 class="text-2xl font-bold">Inspección · Recepción</h1>
+
+  <div class="grid gap-6 lg:grid-cols-3">
+    <!-- Listado de cajas ya en Inspección (contexto) -->
+    <div class="lg:col-span-2 rounded-xl border border-base-300/50 bg-base-200/5 p-5">
+      <div class="flex items-center gap-2 mb-4">
+        <span id="insp-rec-spin" class="loading loading-spinner loading-xs hidden"></span>
+        <span class="text-sm opacity-60">Recibir desde Bodega una caja que esté "Pendiente a Inspección". Aquí solo se jala y se asigna el cronómetro de Inspección; el checklist se hace en la otra vista.</span>
+      </div>
+      <div id="insp-rec-caja-grid" class="grid gap-4 sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-4"></div>
+    </div>
+
+    <!-- Panel: Jalar caja -->
+    <div class="rounded-xl border border-base-300/50 bg-base-200/5 p-5 flex flex-col gap-4">
+      <h2 class="text-sm font-semibold tracking-wide uppercase opacity-80">Jalar desde Bodega</h2>
+      <div class="form-control">
+        <label class="label py-1"><span class="label-text text-xs opacity-70">Escanea un RFID (24 caracteres)</span></label>
+        <input id="insp-rec-scan" type="text" maxlength="24" class="input input-sm input-bordered font-mono" placeholder="RFID 24" autocomplete="off" />
+      </div>
+      <div class="grid grid-cols-2 gap-2">
+        <label class="form-control">
+          <span class="label-text text-xs opacity-70">Horas</span>
+          <input id="insp-rec-hours" type="number" min="0" class="input input-sm input-bordered" placeholder="0" />
+        </label>
+        <label class="form-control">
+          <span class="label-text text-xs opacity-70">Minutos</span>
+          <input id="insp-rec-mins" type="number" min="0" class="input input-sm input-bordered" placeholder="0" />
+        </label>
+      </div>
+      <div class="flex gap-2">
+        <button id="insp-rec-pull" class="btn btn-sm btn-primary flex-1">Jalar a Inspección</button>
+        <button id="insp-rec-clear" class="btn btn-sm">Limpiar</button>
+      </div>
+      <div id="insp-rec-msg" class="text-xs min-h-[18px] font-mono opacity-80"></div>
+    </div>
+  </div>
+</div>
+<script src="/static/js/inspeccion_recepcion.js?v=<%= assetVersion %>" defer></script>
