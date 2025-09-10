@@ -76,6 +76,8 @@
   const panel = qs('#insp-caja-panel');
   const panelLote = qs('#insp-caja-lote');
   const panelCount = qs('#insp-caja-tic-count');
+  const panelComps = qs('#insp-caja-comps');
+  const checklistArea = qs('#insp-checklist-area');
   const list = qs('#insp-tic-list');
   const completeBtn = qs('#insp-complete');
   // TIC scan elements
@@ -92,12 +94,27 @@
   const addMsg = qs('#insp-add-msg');
   const addConfirm = qs('#insp-add-confirm');
   const addClear = qs('#insp-add-clear');
+  const addItems = qs('#insp-add-items');
 
   function renderChecklist(){
     if(!panel||!list) return;
     panel.classList.remove('hidden');
     panelLote && (panelLote.textContent = state.cajaSel?.lote || '—');
     panelCount && (panelCount.textContent = String(state.tics.length||0));
+    // Render componentes si vienen
+    if(panelComps){
+      const comps = state.cajaSel?.componentes || [];
+      panelComps.innerHTML = comps.length
+        ? comps.map(it=>{
+            let cls='badge-ghost'; const t=(it.tipo||'').toLowerCase();
+            if(t==='vip') cls='badge-info'; else if(t==='tic') cls='badge-warning'; else if(t==='cube') cls='badge-accent';
+            const code = it.codigo || it.rfid || '';
+            return `<span class='badge ${cls} badge-xs' title='${code}'>${(t||'').toUpperCase()}</span>`;
+          }).join(' ')
+        : "<span class='badge badge-ghost badge-xs'>Sin items</span>";
+    }
+    // Checklist visible solo si la caja está en Inspección (cuando tics fueron cargadas desde inspección endpoints)
+    if(checklistArea){ checklistArea.classList.toggle('hidden', !(state.tics||[]).length); }
     const active = state.activeTic;
     list.innerHTML = (state.tics||[]).map(t=>{
       const v = state.ticChecks.get(t.rfid) || { limpieza:false, goteo:false, desinfeccion:false };
@@ -134,15 +151,41 @@
       const r = await fetch('/operacion/inspeccion/lookup',{ method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ rfid: code })});
       const j = await r.json();
       if(j.ok){
+        // Caja en Inspección: tenemos TICs; complementar con lista completa de componentes
         state.cajaSel = j.caja; state.tics = j.tics||[]; state.ticChecks = new Map(); state.activeTic = null;
+        try{
+          const r2 = await fetch('/operacion/caja/lookup',{ method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ code })});
+          const j2 = await r2.json();
+          if(j2.ok){
+            const comps = (j2.caja?.items||[]).map(it=>({ codigo: it.rfid, tipo: (it.rol||inferTipo(it.nombre_modelo||'')) }))
+            state.cajaSel = { ...state.cajaSel, componentes: comps };
+          }
+        }catch(_e){}
         renderChecklist();
         scanMsg && (scanMsg.textContent='');
-      } else {
-        // Mensaje actualizado: ya no existe "Jalar desde Bodega"
-        scanMsg && (scanMsg.textContent='Caja no está en Inspección. Usa el botón "Agregar a Inspección".');
+        return;
       }
+      // Si no está en Inspección, mostrar igualmente la composición completa de la caja (vip/tic/cube)
+      // usando el lookup general de operación que devuelve items de la caja
+      try {
+        const r2 = await fetch('/operacion/caja/lookup',{ method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ code })});
+        const j2 = await r2.json();
+        if(j2.ok){
+          const comps = (j2.caja?.items||[]).map(it=>({ codigo: it.rfid, tipo: (it.rol||inferTipo(it.nombre_modelo||'')) }))
+          state.cajaSel = { id: j2.caja.id, lote: j2.caja.lote, componentes: comps };
+          state.tics = []; state.ticChecks = new Map(); state.activeTic = null;
+          renderChecklist();
+          scanMsg && (scanMsg.textContent='Caja no está en Inspección. Usa "Agregar a Inspección" para traerla.');
+          return;
+        }
+      } catch(_e){}
+      // Fallback mensaje si no encontramos caja
+      scanMsg && (scanMsg.textContent=j.error||'Caja no encontrada');
     } catch(e){ scanMsg && (scanMsg.textContent='Error'); }
   }
+
+  // Inferir tipo simple por nombre de modelo (fallback)
+  function inferTipo(nombre){ const n=(nombre||'').toLowerCase(); if(n.includes('vip')) return 'vip'; if(n.includes('tic')) return 'tic'; if(n.includes('cube')||n.includes('cubo')) return 'cube'; return 'otro'; }
 
   function updateCompleteBtn(){
   // Checklist habilitado solo cuando ya hay caja seleccionada (ya jalada a Inspección)
@@ -213,10 +256,28 @@
     const h = parseInt(addH?.value||'0',10)||0; const m = parseInt(addM?.value||'0',10)||0; const sec = h*3600 + m*60;
     addConfirm && (addConfirm.disabled = !(code.length===24 && sec>0));
   }
-  addScan?.addEventListener('input', ()=>{ if(addScan.value.length>24) addScan.value = addScan.value.slice(0,24); updateAddConfirm(); });
+  async function renderAddItems(code){
+    if(!addItems) return;
+    addItems.innerHTML = '';
+    if(code.length!==24){ return; }
+    try{
+      // Only preview if caja is exactly Pendiente a Inspección
+      const r = await fetch('/operacion/inspeccion/pending/preview',{ method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ rfid: code })});
+      const j = await r.json();
+      if(!j.ok){ addItems.innerHTML = ""; addMsg && (addMsg.textContent = j.error||'Caja no está Pendiente a Inspección'); return; }
+      const items = (j.items||[]);
+      addItems.innerHTML = items.map(it=>{
+        const rol = (it.rol||'').toUpperCase();
+        let cls='badge-ghost'; const rl=rol.toLowerCase();
+        if(rl==='vip') cls='badge-info'; else if(rl==='tic') cls='badge-warning'; else if(rl==='cube') cls='badge-accent';
+        return `<span class='badge ${cls} badge-sm font-mono'>${rol} • ${it.rfid}</span>`;
+      }).join(' ');
+    }catch(_e){ /* ignore */ }
+  }
+  addScan?.addEventListener('input', ()=>{ if(addScan.value.length>24) addScan.value = addScan.value.slice(0,24); updateAddConfirm(); renderAddItems((addScan?.value||'').trim()); });
   addH?.addEventListener('input', updateAddConfirm);
   addM?.addEventListener('input', updateAddConfirm);
-  addClear?.addEventListener('click', ()=>{ addScan && (addScan.value=''); addH && (addH.value=''); addM && (addM.value=''); addMsg && (addMsg.textContent=''); updateAddConfirm(); addScan?.focus(); });
+  addClear?.addEventListener('click', ()=>{ addScan && (addScan.value=''); addH && (addH.value=''); addM && (addM.value=''); addMsg && (addMsg.textContent=''); if(addItems) addItems.innerHTML=''; updateAddConfirm(); addScan?.focus(); });
   addScan?.addEventListener('keydown', (e)=>{ if(e.key==='Enter'){ e.preventDefault(); addConfirm?.click(); }});
 
   // Confirmar Agregar (pull con cronómetro obligatorio)
@@ -225,6 +286,12 @@
     const h = parseInt(addH?.value||'0',10)||0; const m = parseInt(addM?.value||'0',10)||0; const sec = h*3600 + m*60;
     if(code.length!==24){ addMsg && (addMsg.textContent='RFID inválido'); return; }
     if(sec<=0){ addMsg && (addMsg.textContent='Asigna horas/minutos'); return; }
+    // Validate eligibility again before pulling
+    try{
+      const r0 = await fetch('/operacion/inspeccion/pending/preview',{ method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ rfid: code })});
+      const j0 = await r0.json();
+      if(!j0.ok){ addMsg && (addMsg.textContent = j0.error||'Caja no está Pendiente a Inspección'); return; }
+    }catch(_e){ addMsg && (addMsg.textContent='Error validando'); return; }
     addMsg && (addMsg.textContent='Agregando...');
     try {
       const r = await fetch('/operacion/inspeccion/pull',{ method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ rfid: code, durationSec: sec })});

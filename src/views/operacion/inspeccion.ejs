@@ -33,7 +33,14 @@
           <div class="flex items-center justify-between text-[11px] font-mono opacity-70"><span>Caja</span><span id="insp-caja-lote">—</span></div>
           <div class="text-[11px] font-mono opacity-70"><span>Conteo TICs:</span> <span id="insp-caja-tic-count">0</span>/6</div>
         </div>
-        <div class="space-y-3">
+        <!-- Componentes de la caja (TIC/VIP/CUBE) mostrados al escanear cualquier RFID -->
+        <div class="space-y-2">
+          <div class="text-xs opacity-80">Componentes de la caja:</div>
+          <div id="insp-caja-comps" class="flex flex-wrap gap-1"></div>
+        </div>
+
+        <!-- Área del checklist de TICs: sólo visible cuando la caja está en Inspección -->
+        <div id="insp-checklist-area" class="space-y-3">
           <div class="grid grid-cols-3 gap-2">
             <div class="col-span-3">
               <label class="label py-1"><span class="label-text text-xs opacity-70">Escanea una TIC (24 caracteres) para habilitar su checklist</span></label>
@@ -66,6 +73,10 @@
       <span class="opacity-60 text-xs">RFID</span>
       <input id="insp-add-scan" type="text" class="grow font-mono" maxlength="24" autocomplete="off" placeholder="Listo para escanear..." />
     </label>
+    <div class="space-y-2 mb-3">
+      <div class="text-xs opacity-80">Items (Pendiente a Inspección)</div>
+      <div id="insp-add-items" class="flex flex-wrap gap-2"></div>
+    </div>
     <div class="grid grid-cols-2 gap-3 mb-3">
       <label class="form-control">
         <span class="label-text text-xs opacity-70">Horas</span>

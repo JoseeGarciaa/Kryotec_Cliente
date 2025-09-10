@@ -162,8 +162,8 @@ export const OperacionController = {
                              FROM acond_caja_items aci
                              JOIN inventario_credocubes ic ON ic.rfid = aci.rfid
                             WHERE aci.caja_id = pit.caja_id
-                              AND ic.estado = 'En bodega'
-                              AND ic.sub_estado = 'Pendiente a Inspección'
+                              AND LOWER(ic.estado) = LOWER('En bodega')
+                              AND ic.sub_estado IN ('Pendiente a Inspección','Pendiente a Inspeccion')
                          )`);
   // Inspección timers: keep only if caja tiene items en estado 'Inspección'
         await c.query(`DELETE FROM inspeccion_caja_timers ict
@@ -932,7 +932,7 @@ export const OperacionController = {
           LIMIT 1`, [code]));
       if(!cajaQ.rowCount) return res.status(404).json({ ok:false, error:'RFID no pertenece a ninguna caja' });
       const cajaId = cajaQ.rows[0].caja_id; const lote = cajaQ.rows[0].lote;
-      const ticsQ = await withTenant(tenant, (c)=> c.query(
+  const ticsQ = await withTenant(tenant, (c)=> c.query(
         `SELECT ic.rfid, ic.estado, ic.sub_estado, ic.validacion_limpieza, ic.validacion_goteo, ic.validacion_desinfeccion
            FROM acond_caja_items aci
            JOIN inventario_credocubes ic ON ic.rfid = aci.rfid
@@ -947,7 +947,7 @@ export const OperacionController = {
           `SELECT COUNT(*)::int AS cnt
              FROM acond_caja_items aci
              JOIN inventario_credocubes ic ON ic.rfid = aci.rfid
-            WHERE aci.caja_id = $1 AND ic.estado='En bodega' AND ic.sub_estado='Pendiente a Inspección'`, [cajaId]));
+       WHERE aci.caja_id = $1 AND LOWER(ic.estado)=LOWER('En bodega') AND ic.sub_estado IN ('Pendiente a Inspección','Pendiente a Inspeccion')`, [cajaId]));
         if(pendQ.rows[0]?.cnt>0){ return res.json({ ok:false, error:'Caja no está en Inspección (Pendiente a Inspección)' }); }
         // No está en Inspección ni en Pendiente a Inspección
         return res.status(400).json({ ok:false, error:'Caja no está en Inspección ni Pendiente a Inspección' });
@@ -980,7 +980,7 @@ export const OperacionController = {
         `SELECT COUNT(*)::int AS cnt
            FROM acond_caja_items aci
            JOIN inventario_credocubes ic ON ic.rfid = aci.rfid
-          WHERE aci.caja_id = $1 AND ic.estado='En bodega' AND ic.sub_estado='Pendiente a Inspección'`, [cajaId]));
+          WHERE aci.caja_id = $1 AND LOWER(ic.estado)=LOWER('En bodega') AND ic.sub_estado IN ('Pendiente a Inspección','Pendiente a Inspeccion')`, [cajaId]));
       if(!pendQ.rowCount || pendQ.rows[0].cnt<=0) return res.status(400).json({ ok:false, error:'La caja no está Pendiente a Inspección' });
 
       await withTenant(tenant, async (c)=>{
@@ -1037,6 +1037,37 @@ export const OperacionController = {
           ORDER BY ic.rfid`, [cajaId]));
       return res.json({ ok:true, caja:{ id: cajaId, lote }, tics: ticsQ.rows||[] });
     } catch(e:any){ res.status(500).json({ ok:false, error: e.message||'Error al jalar caja a Inspección' }); }
+  },
+  // Preview-only: verify a caja (by any component RFID) is exactly 'En bodega · Pendiente a Inspección' and return its items/roles
+  inspeccionPendingPreview: async (req: Request, res: Response) => {
+    const tenant = (req as any).user?.tenant;
+    const { rfid } = req.body as any;
+    const code = typeof rfid === 'string' ? rfid.trim() : '';
+    if(code.length !== 24){ return res.status(400).json({ ok:false, error:'RFID inválido' }); }
+    try{
+      const cajaQ = await withTenant(tenant, (c)=> c.query(
+        `SELECT c.caja_id, c.lote
+           FROM acond_caja_items aci
+           JOIN acond_cajas c ON c.caja_id = aci.caja_id
+          WHERE aci.rfid = $1
+          LIMIT 1`, [code]));
+      if(!cajaQ.rowCount) return res.status(404).json({ ok:false, error:'RFID no pertenece a ninguna caja' });
+      const cajaId = cajaQ.rows[0].caja_id; const lote = cajaQ.rows[0].lote;
+      const pendQ = await withTenant(tenant, (c)=> c.query(
+        `SELECT COUNT(*)::int AS cnt
+           FROM acond_caja_items aci
+           JOIN inventario_credocubes ic ON ic.rfid = aci.rfid
+          WHERE aci.caja_id = $1
+            AND LOWER(ic.estado) = LOWER('En bodega')
+            AND ic.sub_estado IN ('Pendiente a Inspección','Pendiente a Inspeccion')`, [cajaId]));
+      if(!pendQ.rowCount || pendQ.rows[0].cnt<=0){ return res.json({ ok:false, error:'Caja no está Pendiente a Inspección' }); }
+      const itemsQ = await withTenant(tenant, (c)=> c.query(
+        `SELECT aci.rfid, aci.rol
+           FROM acond_caja_items aci
+          WHERE aci.caja_id = $1
+          ORDER BY CASE aci.rol WHEN 'vip' THEN 0 WHEN 'tic' THEN 1 WHEN 'cube' THEN 2 ELSE 3 END, aci.rfid`, [cajaId]));
+      return res.json({ ok:true, caja:{ id: cajaId, lote }, items: itemsQ.rows });
+    } catch(e:any){ res.status(500).json({ ok:false, error: e.message||'Error preview' }); }
   },
   // 2) (Deprecated to no-op) Actualizar checklist para una TIC — ahora no persiste nada; se mantiene por compatibilidad
   inspeccionTicChecklist: async (req: Request, res: Response) => {
@@ -1171,6 +1202,55 @@ export const OperacionController = {
   bodegaPendInspData: async (req: Request, res: Response) => {
     const tenant = (req as any).user?.tenant;
     try {
+      // Ensure base tables exist and rebuild caja associations for items Pendiente a Inspección
+      await withTenant(tenant, async (c) => {
+        // Ensure caja tables
+        await c.query(`CREATE TABLE IF NOT EXISTS acond_cajas (
+           caja_id serial PRIMARY KEY,
+           lote text NOT NULL,
+           created_at timestamptz NOT NULL DEFAULT NOW()
+        )`);
+        await c.query(`CREATE TABLE IF NOT EXISTS acond_caja_items (
+           caja_id int NOT NULL REFERENCES acond_cajas(caja_id) ON DELETE CASCADE,
+           rfid text NOT NULL,
+           rol text NOT NULL CHECK (rol IN ('cube','vip','tic')),
+           PRIMARY KEY (caja_id, rfid)
+        )`);
+        await c.query(`CREATE INDEX IF NOT EXISTS acond_caja_items_rfid_idx ON acond_caja_items(rfid)`);
+        // 1) Ensure there is a caja row for every lote that has at least one item in En bodega · Pendiente a Inspección
+        await c.query(`
+          INSERT INTO acond_cajas(lote)
+          SELECT DISTINCT ic.lote
+            FROM inventario_credocubes ic
+       LEFT JOIN acond_cajas c ON c.lote = ic.lote
+           WHERE LOWER(ic.estado) = LOWER('En bodega')
+             AND ic.sub_estado IN ('Pendiente a Inspección','Pendiente a Inspeccion')
+             AND c.caja_id IS NULL
+             AND ic.lote IS NOT NULL AND ic.lote <> ''
+        `);
+        // 2) Backfill missing item->caja associations for those items
+     await c.query(`
+    INSERT INTO acond_caja_items(caja_id, rfid, rol)
+    SELECT c.caja_id, ic.rfid,
+        CASE WHEN m.nombre_modelo ILIKE '%tic%' THEN 'tic'
+          WHEN m.nombre_modelo ILIKE '%vip%' THEN 'vip'
+          WHEN (m.nombre_modelo ILIKE '%cube%' OR m.nombre_modelo ILIKE '%cubo%') THEN 'cube'
+        END AS rol
+      FROM inventario_credocubes ic
+      JOIN modelos m ON m.modelo_id = ic.modelo_id
+      JOIN acond_cajas c ON c.lote = ic.lote
+    LEFT JOIN acond_caja_items aci ON aci.rfid = ic.rfid AND aci.caja_id = c.caja_id
+     WHERE LOWER(ic.estado) = LOWER('En bodega')
+       AND ic.sub_estado IN ('Pendiente a Inspección','Pendiente a Inspeccion')
+       AND aci.rfid IS NULL
+       AND (
+      m.nombre_modelo ILIKE '%tic%'
+      OR m.nombre_modelo ILIKE '%vip%'
+      OR m.nombre_modelo ILIKE '%cube%'
+      OR m.nombre_modelo ILIKE '%cubo%'
+       )
+     `);
+      });
       // Cajas con al menos un item en estado 'En bodega' y sub_estado 'Pendiente a Inspección'
       const cajasQ = await withTenant(tenant, (c)=> c.query(
         `SELECT c.caja_id, c.lote,
@@ -1181,7 +1261,7 @@ export const OperacionController = {
            JOIN acond_caja_items aci ON aci.caja_id = c.caja_id
            JOIN inventario_credocubes ic ON ic.rfid = aci.rfid
            JOIN modelos m ON m.modelo_id = ic.modelo_id
-          WHERE ic.estado='En bodega' AND ic.sub_estado='Pendiente a Inspección'
+          WHERE LOWER(ic.estado)=LOWER('En bodega') AND ic.sub_estado IN ('Pendiente a Inspección','Pendiente a Inspeccion')
           GROUP BY c.caja_id, c.lote
           ORDER BY c.caja_id DESC
           LIMIT 200`));
@@ -2576,7 +2656,9 @@ export const OperacionController = {
         ok:true,
         caja_id: cajaId,
         lote,
+        // Back-compat: mantener rfids plano; nuevo: incluir rol por componente
         rfids: allEnsamblado ? rows.map(r=>r.rfid) : [],
+        componentes: allEnsamblado ? rows.map(r=> ({ rfid: r.rfid, rol: r.rol })) : [],
         pendientes,
         total,
         allEnsamblado,

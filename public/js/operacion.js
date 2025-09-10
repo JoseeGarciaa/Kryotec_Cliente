@@ -261,7 +261,22 @@
       addRoles = Array.isArray(j.roles)? j.roles.slice(): [];
       if(addSummary) addSummary.classList.remove('hidden');
       if(addItemsWrap){
-        addItemsWrap.innerHTML = addRoles.map(ro=>`<span class='badge badge-outline badge-xs font-mono' data-rfid='${ro.rfid}' data-rol='${ro.rol}'>${ro.rol.toUpperCase()} · ${ro.rfid}</span>`).join('');
+        // Usar nuevo diseño: fila con badge de rol (color) y RFID monoespaciado
+        addItemsWrap.className = 'grid grid-cols-2 gap-1 max-h-40 overflow-auto';
+        const badgeForRol = (rol)=>{
+          rol = String(rol||'').toLowerCase();
+          if(rol==='vip') return 'badge-info';
+          if(rol==='cube') return 'badge-accent';
+          return 'badge-warning'; // tic por defecto
+        };
+        addItemsWrap.innerHTML = addRoles.map(ro=>{
+          const cls = badgeForRol(ro.rol);
+          const label = String(ro.rol||'').toUpperCase();
+          return `<span class='flex items-center justify-between gap-2 px-2 py-1 bg-base-200 rounded' data-rfid='${ro.rfid}' data-rol='${ro.rol}'>
+            <span class='badge ${cls} badge-xs font-semibold uppercase'>${label}</span>
+            <span class='font-mono text-[10px]'>${ro.rfid}</span>
+          </span>`;
+        }).join('');
       }
       if(addMsg){
         if(j.timer && j.timer.endsAt){

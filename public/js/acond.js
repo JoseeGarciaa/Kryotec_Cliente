@@ -1057,8 +1057,28 @@
         }
         lastCajaId = j.caja_id; lastRfid = code;
         if(summary){
+          // Preferir estructura con roles si viene del backend; si no, caer al arreglo plano de rfids
+          const comps = Array.isArray(j.componentes) && j.componentes.length
+            ? j.componentes
+            : (j.rfids||[]).map(rf=> ({ rfid: rf, rol: inferRolFromCode(rf) }));
+          const badgeForRol = (rol)=>{
+            rol = String(rol||'').toLowerCase();
+            if(rol==='vip') return 'badge-info';
+            if(rol==='cube') return 'badge-accent';
+            return 'badge-warning'; // tic por defecto
+          };
+          const listHTML = comps.map(c=>{
+            const cls = badgeForRol(c.rol);
+            const label = (String(c.rol||'').toUpperCase());
+            return `<span class='flex items-center justify-between gap-2 px-2 py-1 bg-base-200 rounded'>
+              <span class='badge ${cls} badge-xs font-semibold uppercase'>${label}</span>
+              <span class='font-mono text-[10px]'>${c.rfid}</span>
+            </span>`;
+          }).join('');
           summary.innerHTML = `<div class='mb-2'><strong>Caja:</strong> ${j.lote} (ID ${j.caja_id})</div>
-            <div class='mb-2'>Componentes (${j.total}):<div class='mt-1 grid grid-cols-2 gap-1 max-h-40 overflow-auto'>${(j.rfids||[]).map(rf=>`<span class='badge badge-ghost badge-xs font-mono'>${rf}</span>`).join('')}</div></div>
+            <div class='mb-2'>Componentes (${j.total}):
+              <div class='mt-1 grid grid-cols-2 gap-1 max-h-40 overflow-auto'>${listHTML}</div>
+            </div>
             <div class='opacity-70'>Pendientes por marcar: ${j.pendientes}</div>`;
           summary.classList.remove('hidden');
         }
@@ -1091,5 +1111,7 @@
     });
     btn.addEventListener('click', ()=>{ try { dialog.showModal(); } catch { dialog.classList.remove('hidden'); } reset(); setTimeout(()=>input?.focus(),50); });
     dialog?.addEventListener('close', reset);
+  // Helper local si backend no envía roles (estimación básica por sufijo del modelo no disponible aquí)
+  function inferRolFromCode(_rf){ return 'tic'; }
   })();
 })();
