@@ -123,7 +123,13 @@
       const dis = enabled ? '' : 'disabled';
       const badge = enabled ? "<span class='badge badge-primary badge-xs'>ACTIVA</span>" : '';
       return `<div class='border rounded-md p-2 ${rowCls}' data-tic-row='${t.rfid}'>
-        <div class='flex items-center justify-between text-[11px] font-mono opacity-70'><span>TIC ${badge}</span><span>${t.rfid}</span></div>
+        <div class='flex items-center justify-between text-[11px] font-mono opacity-70'>
+          <span>TIC ${badge}</span>
+          <span class='flex items-center gap-2'>
+            <button class='btn btn-xs btn-error' data-action='tic-inhabilitar' data-rfid='${t.rfid}' title='Inhabilitar y registrar novedad'>Inhabilitar</button>
+            <span>${t.rfid}</span>
+          </span>
+        </div>
         <div class='flex gap-3 mt-2 text-xs'>
           <label class='flex items-center gap-1 cursor-pointer'>
             <input type='checkbox' data-chk='limpieza' data-rfid='${t.rfid}' ${v.limpieza?'checked':''} ${dis}/> Limpieza
@@ -139,6 +145,16 @@
     }).join('');
     updateCompleteBtn();
   }
+  // Novedad modal
+  const novDlg = document.getElementById('insp-nov-modal');
+  const novRfid = qs('#insp-nov-rfid');
+  const novTipo = qs('#insp-nov-tipo');
+  const novMotivo = qs('#insp-nov-motivo');
+  const novDesc = qs('#insp-nov-desc');
+  const novSev = qs('#insp-nov-severidad');
+  const novInh = qs('#insp-nov-inhabilita');
+  const novMsg = qs('#insp-nov-msg');
+  const novConfirm = qs('#insp-nov-confirm');
 
   // Abrir modal Agregar
   btnAdd?.addEventListener('click', ()=>{ try{ addDlg.showModal(); }catch{ addDlg.classList.remove('hidden'); } addMsg && (addMsg.textContent=''); addConfirm && (addConfirm.disabled=true); addScan && (addScan.value=''); addH && (addH.value=''); addM && (addM.value=''); setTimeout(()=> addScan?.focus(), 200); });
@@ -204,6 +220,59 @@
     if(!fld || !rfid) return;
     const cur = state.ticChecks.get(rfid) || { limpieza:false, goteo:false, desinfeccion:false };
     cur[fld] = !!t.checked; state.ticChecks.set(rfid, cur); updateCompleteBtn();
+  });
+
+  // Open novedad modal
+  document.addEventListener('click', (e)=>{
+    const t = e.target;
+    if(!(t instanceof HTMLElement)) return;
+    if(t.matches('[data-action="tic-inhabilitar"]')){
+      const code = t.getAttribute('data-rfid')||'';
+      if(novRfid) novRfid.textContent = code;
+      if(novMotivo) novMotivo.value = '';
+      if(novDesc) novDesc.value = '';
+      if(novSev) novSev.value = '3';
+      if(novTipo) novTipo.value = 'otro';
+      if(novInh) novInh.checked = true;
+      if(novMsg) novMsg.textContent = '';
+      try{ novDlg.showModal(); }catch{ novDlg.classList.remove('hidden'); }
+    }
+  });
+  // Submit novedad
+  novConfirm?.addEventListener('click', async ()=>{
+    const code = (novRfid?.textContent||'').trim();
+    const body = {
+      rfid: code,
+      tipo: (novTipo?.value||'otro'),
+      motivo: (novMotivo?.value||'').trim(),
+      descripcion: (novDesc?.value||'').trim(),
+      severidad: parseInt(novSev?.value||'3',10)||3,
+      inhabilita: !!(novInh?.checked)
+    };
+    if(!body.motivo){ novMsg && (novMsg.textContent='Motivo requerido'); return; }
+    novConfirm.disabled = true; novMsg && (novMsg.textContent='Guardando...');
+    try{
+      const r = await fetch('/operacion/inspeccion/novedad/inhabilitar',{ method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body) });
+      const j = await r.json();
+      if(!j.ok){ novMsg && (novMsg.textContent=j.error||'Error'); novConfirm.disabled=false; return; }
+      // Remove TIC from list and UI
+      state.tics = (state.tics||[]).filter(t=> t.rfid !== code);
+      state.ticChecks.delete(code);
+      renderChecklist();
+      // If caja auto-retired (VIP/CUBE sent to Bodega), clear panel and refresh grid immediately
+      if(j.auto_returned && state.cajaSel){
+        try{ novDlg.close(); }catch{ novDlg.classList.add('hidden'); }
+        if(panel){ panel.classList.add('hidden'); }
+        state.cajaSel = null; state.tics = []; state.ticChecks.clear(); state.activeTic = null;
+        await load();
+        scanMsg && (scanMsg.textContent = 'Caja retirada: VIP/CUBE devueltos a Bodega');
+        return; // done
+      }
+      // close modal
+      novMsg && (novMsg.textContent='Registrado');
+      try{ novDlg.close(); }catch{ novDlg.classList.add('hidden'); }
+    }catch(_e){ novMsg && (novMsg.textContent='Error'); }
+    finally{ novConfirm.disabled=false; }
   });
 
   completeBtn?.addEventListener('click', async ()=>{

@@ -100,3 +100,50 @@
   </form>
 </dialog>
 
+<!-- Modal: Inhabilitar TIC (Registrar novedad) -->
+<dialog id="insp-nov-modal" class="modal">
+  <div class="modal-box max-w-md">
+    <form method="dialog">
+      <button class="btn btn-sm btn-circle btn-ghost absolute right-2 top-2">✕</button>
+    </form>
+    <h3 class="font-bold text-lg mb-2">Inhabilitar TIC</h3>
+    <div class="text-xs opacity-70 mb-2">RFID:</div>
+    <div id="insp-nov-rfid" class="font-mono text-xs mb-3">—</div>
+    <div class="grid grid-cols-2 gap-3">
+      <label class="form-control">
+        <span class="label-text text-xs opacity-70">Tipo</span>
+        <select id="insp-nov-tipo" class="select select-sm select-bordered">
+          <option value="fisico">Físico</option>
+          <option value="funcional">Funcional</option>
+          <option value="contaminacion">Contaminación</option>
+          <option value="faltante">Faltante</option>
+          <option value="otro" selected>Otro</option>
+        </select>
+      </label>
+      <label class="form-control">
+        <span class="label-text text-xs opacity-70">Severidad (1-5)</span>
+        <input id="insp-nov-severidad" type="number" min="1" max="5" value="3" class="input input-sm input-bordered" />
+      </label>
+    </div>
+    <label class="form-control mt-3">
+      <span class="label-text text-xs opacity-70">Motivo (obligatorio)</span>
+      <input id="insp-nov-motivo" type="text" class="input input-sm input-bordered" placeholder="Resumen corto" />
+    </label>
+    <label class="form-control mt-2">
+      <span class="label-text text-xs opacity-70">Descripción</span>
+      <textarea id="insp-nov-desc" rows="3" class="textarea textarea-sm textarea-bordered" placeholder="Detalle opcional"></textarea>
+    </label>
+    <div class="form-control mt-2">
+      <label class="label cursor-pointer justify-start gap-2">
+        <input id="insp-nov-inhabilita" type="checkbox" class="checkbox checkbox-error checkbox-sm" checked />
+        <span class="label-text text-xs">Marcar pieza como Inhabilitada</span>
+      </label>
+    </div>
+    <div class="flex items-center justify-between mt-3">
+      <span id="insp-nov-msg" class="text-xs opacity-70"></span>
+      <button id="insp-nov-confirm" class="btn btn-error btn-sm">Registrar</button>
+    </div>
+  </div>
+  <form method="dialog" class="modal-backdrop"><button>close</button></form>
+</dialog>
+

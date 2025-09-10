@@ -1133,6 +1133,108 @@ export const OperacionController = {
       return;
     } catch(e:any){ res.status(500).json({ ok:false, error: e.message||'Error completando inspección' }); }
   },
+  // INSPECCIÓN: registrar novedad e inhabilitar pieza
+  inspeccionNovedadInhabilitar: async (req: Request, res: Response) => {
+    const tenant = (req as any).user?.tenant;
+    const user = (req as any).user || {};
+    const { rfid, tipo, motivo, descripcion, severidad, inhabilita } = req.body as any;
+    const code = typeof rfid==='string' ? rfid.trim() : '';
+    if(code.length !== 24) return res.status(400).json({ ok:false, error:'RFID inválido' });
+    const tp = (typeof tipo==='string' ? tipo.toLowerCase() : 'otro');
+    const sv = Number(severidad); const sev = Number.isFinite(sv) ? Math.min(5, Math.max(1, sv)) : 3;
+    const inh = !(inhabilita===false || inhabilita==='false');
+    const mot = (typeof motivo==='string' ? motivo.trim() : '');
+    const desc = (typeof descripcion==='string' ? descripcion.trim() : null);
+    if(!mot) return res.status(400).json({ ok:false, error:'Motivo requerido' });
+    try{
+      const rItem = await withTenant(tenant, (c)=> c.query(`SELECT id FROM inventario_credocubes WHERE rfid=$1`, [code]));
+      if(!rItem.rowCount) return res.status(404).json({ ok:false, error:'RFID no encontrado' });
+      const piezaId = rItem.rows[0].id;
+  let autoReturnedCount = 0;
+  await withTenant(tenant, async (c)=>{
+        await c.query('BEGIN');
+        try{
+          await c.query(`CREATE TABLE IF NOT EXISTS inspeccion_novedades (
+            novedad_id serial PRIMARY KEY,
+            pieza_id integer NOT NULL,
+            rfid text,
+            tipo text NOT NULL CHECK (tipo IN ('fisico','funcional','contaminacion','faltante','otro')),
+            motivo text NOT NULL,
+            descripcion text,
+            severidad smallint NOT NULL DEFAULT 3 CHECK (severidad BETWEEN 1 AND 5),
+            inhabilita boolean NOT NULL DEFAULT true,
+            estado text NOT NULL DEFAULT 'abierta' CHECK (estado IN ('abierta','cerrada')),
+            creado_por text,
+            creado_en timestamptz NOT NULL DEFAULT NOW(),
+            actualizado_en timestamptz NOT NULL DEFAULT NOW(),
+            cerrado_en timestamptz
+          )`);
+          await c.query(`DO $$
+          BEGIN
+            BEGIN
+              EXECUTE 'ALTER TABLE inspeccion_novedades
+                       ADD CONSTRAINT IF NOT EXISTS inspeccion_novedades_pieza_fk
+                       FOREIGN KEY (pieza_id) REFERENCES inventario_credocubes(id) ON DELETE CASCADE';
+            EXCEPTION WHEN others THEN END;
+            BEGIN
+              EXECUTE 'ALTER TABLE inspeccion_novedades
+                       ADD CONSTRAINT IF NOT EXISTS inspeccion_novedades_rfid_fk
+                       FOREIGN KEY (rfid) REFERENCES inventario_credocubes(rfid) ON DELETE SET NULL';
+            EXCEPTION WHEN others THEN END;
+          END$$;`);
+          await c.query(`CREATE OR REPLACE FUNCTION trg_set_actualizado_en() RETURNS trigger AS $$
+          BEGIN NEW.actualizado_en := NOW(); RETURN NEW; END$$ LANGUAGE plpgsql;`);
+          await c.query(`DROP TRIGGER IF EXISTS trg_inspeccion_nov_set_updated ON inspeccion_novedades`);
+          await c.query(`CREATE TRIGGER trg_inspeccion_nov_set_updated
+            BEFORE UPDATE ON inspeccion_novedades FOR EACH ROW EXECUTE FUNCTION trg_set_actualizado_en()`);
+
+          await c.query(`INSERT INTO inspeccion_novedades (pieza_id, rfid, tipo, motivo, descripcion, severidad, inhabilita, creado_por)
+                         VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
+                         [piezaId, code, tp, mot, desc, sev, inh, (user.email||user.name||user.id||'sistema')]);
+          if(inh){
+            await c.query(`UPDATE inventario_credocubes
+                            SET estado='Inhabilitado', sub_estado=NULL, activo=false, lote=NULL
+                          WHERE id=$1`, [piezaId]);
+
+            // If all TICs in this caja are now inhabilitadas, send VIP and CUBE back to En bodega and teardown the caja
+            const cajaQ = await c.query(`SELECT caja_id FROM acond_caja_items WHERE rfid=$1 LIMIT 1`, [code]);
+            if(cajaQ.rowCount){
+              const cajaId = cajaQ.rows[0].caja_id as number;
+              // Count TICs and how many are inactive
+              const agg = await c.query(
+                `SELECT
+                   SUM(CASE WHEN m.nombre_modelo ILIKE '%tic%' THEN 1 ELSE 0 END)::int AS total_tics,
+                   SUM(CASE WHEN m.nombre_modelo ILIKE '%tic%' AND ic.activo = false THEN 1 ELSE 0 END)::int AS inact_tics
+                 FROM acond_caja_items aci
+                 JOIN inventario_credocubes ic ON ic.rfid = aci.rfid
+                 JOIN modelos m ON m.modelo_id = ic.modelo_id
+                WHERE aci.caja_id = $1`, [cajaId]);
+              const totalTics = Number(agg.rows?.[0]?.total_tics||0);
+              const inactTics = Number(agg.rows?.[0]?.inact_tics||0);
+              if(totalTics>0 && inactTics === totalTics){
+                // Fetch VIP & CUBE RFIDs
+                const vc = await c.query(`SELECT rfid FROM acond_caja_items WHERE caja_id=$1 AND rol IN ('vip','cube')`, [cajaId]);
+                const vcrfids = (vc.rows||[]).map((r:any)=> r.rfid);
+                if(vcrfids.length){
+                  await c.query(`UPDATE inventario_credocubes SET estado='En bodega', sub_estado=NULL, lote=NULL WHERE rfid = ANY($1::text[])`, [vcrfids]);
+                  autoReturnedCount = vcrfids.length;
+                }
+                // Clear timers and remove caja + associations
+                await c.query(`DELETE FROM inspeccion_caja_timers WHERE caja_id=$1`, [cajaId]);
+                await c.query(`DELETE FROM pend_insp_caja_timers WHERE caja_id=$1`, [cajaId]);
+                await c.query(`DELETE FROM acond_caja_timers WHERE caja_id=$1`, [cajaId]);
+                await c.query(`DELETE FROM operacion_caja_timers WHERE caja_id=$1`, [cajaId]);
+                await c.query(`DELETE FROM acond_caja_items WHERE caja_id=$1`, [cajaId]);
+                await c.query(`DELETE FROM acond_cajas WHERE caja_id=$1`, [cajaId]);
+              }
+            }
+          }
+          await c.query('COMMIT');
+        }catch(e){ await c.query('ROLLBACK'); throw e; }
+      });
+      return res.json({ ok:true, auto_returned: autoReturnedCount });
+    }catch(e:any){ return res.status(500).json({ ok:false, error: e.message||'Error registrando novedad' }); }
+  },
   // Vista: En bodega
   bodega: (_req: Request, res: Response) => res.render('operacion/bodega', { title: 'Operación · En bodega' }),
   // Datos para la vista En bodega
@@ -1202,6 +1304,10 @@ export const OperacionController = {
   bodegaPendInspData: async (req: Request, res: Response) => {
     const tenant = (req as any).user?.tenant;
     try {
+  // Pagination params (independent from main Bodega list)
+  const page = Math.max(1, parseInt(String(req.query.page||'1'),10)||1);
+  const limit = Math.min(200, Math.max(8, parseInt(String(req.query.limit||'24'),10)||24));
+  const offset = (page-1)*limit;
       // Ensure base tables exist and rebuild caja associations for items Pendiente a Inspección
       await withTenant(tenant, async (c) => {
         // Ensure caja tables
@@ -1251,7 +1357,17 @@ export const OperacionController = {
        )
      `);
       });
-      // Cajas con al menos un item en estado 'En bodega' y sub_estado 'Pendiente a Inspección'
+      // Count total cajas en 'En bodega · Pendiente a Inspección'
+      const totalQ = await withTenant(tenant, (c)=> c.query(
+        `SELECT COUNT(DISTINCT c.caja_id)::int AS total
+           FROM acond_cajas c
+           JOIN acond_caja_items aci ON aci.caja_id = c.caja_id
+           JOIN inventario_credocubes ic ON ic.rfid = aci.rfid
+          WHERE LOWER(ic.estado)=LOWER('En bodega')
+            AND ic.sub_estado IN ('Pendiente a Inspección','Pendiente a Inspeccion')`
+      ));
+      const total = totalQ.rows[0]?.total || 0;
+      // Cajas con al menos un item en estado 'En bodega' y sub_estado 'Pendiente a Inspección' (paginado)
       const cajasQ = await withTenant(tenant, (c)=> c.query(
         `SELECT c.caja_id, c.lote,
                 COUNT(*) FILTER (WHERE m.nombre_modelo ILIKE '%tic%') AS tics,
@@ -1264,7 +1380,7 @@ export const OperacionController = {
           WHERE LOWER(ic.estado)=LOWER('En bodega') AND ic.sub_estado IN ('Pendiente a Inspección','Pendiente a Inspeccion')
           GROUP BY c.caja_id, c.lote
           ORDER BY c.caja_id DESC
-          LIMIT 200`));
+          LIMIT $1 OFFSET $2`, [limit, offset]));
       const ids = cajasQ.rows.map((r:any)=> r.caja_id);
       let itemsRows:any[] = [];
       if(ids.length){
@@ -1304,7 +1420,7 @@ export const OperacionController = {
           timer
         };
       });
-      res.json({ ok:true, serverNow: nowIso, cajas });
+  res.json({ ok:true, serverNow: nowIso, cajas, page, limit, total });
     } catch(e:any){ res.status(500).json({ ok:false, error: e.message||'Error data pendiente inspección' }); }
   },
   bodegaPendInspTimerStart: async (req: Request, res: Response) => {
@@ -1483,7 +1599,8 @@ export const OperacionController = {
        JOIN modelos m ON m.modelo_id = ic.modelo_id
        LEFT JOIN preacond_item_timers pit
          ON pit.rfid = ic.rfid AND pit.section = 'congelamiento'
-     WHERE ic.estado = 'Pre Acondicionamiento' AND ic.sub_estado IN ('Congelamiento','Congelado')
+  WHERE ic.estado = 'Pre Acondicionamiento' AND ic.sub_estado IN ('Congelamiento','Congelado')
+    AND ic.activo = true
          AND (m.nombre_modelo ILIKE '%tic%')
        ORDER BY ic.id DESC
        LIMIT 500`));
@@ -1494,7 +1611,8 @@ export const OperacionController = {
        JOIN modelos m ON m.modelo_id = ic.modelo_id
        LEFT JOIN preacond_item_timers pit
          ON pit.rfid = ic.rfid AND pit.section = 'atemperamiento'
-     WHERE ic.estado = 'Pre Acondicionamiento' AND ic.sub_estado IN ('Atemperamiento','Atemperado')
+  WHERE ic.estado = 'Pre Acondicionamiento' AND ic.sub_estado IN ('Atemperamiento','Atemperado')
+    AND ic.activo = true
          AND (m.nombre_modelo ILIKE '%tic%')
        ORDER BY ic.id DESC
        LIMIT 500`));
@@ -1519,7 +1637,7 @@ export const OperacionController = {
 
     // Fetch current state for provided RFIDs
     const found = await withTenant(tenant, (c) => c.query(
-      `SELECT ic.rfid, ic.estado, ic.sub_estado, m.nombre_modelo
+      `SELECT ic.rfid, ic.estado, ic.sub_estado, ic.activo, m.nombre_modelo
          FROM inventario_credocubes ic
          JOIN modelos m ON m.modelo_id = ic.modelo_id
         WHERE ic.rfid = ANY($1::text[])`, [codes]));
@@ -1536,6 +1654,10 @@ export const OperacionController = {
         continue;
       }
       const cur = (found.rows as any[]).find(r => r.rfid === code);
+      if (cur?.activo === false) {
+        rejects.push({ rfid: code, reason: 'Item inhabilitado (activo=false)' });
+        continue;
+      }
       if (t === 'atemperamiento') {
         if (cur?.estado === 'Pre Acondicionamiento' && cur?.sub_estado === 'Congelado') {
           accept.push(code);
@@ -1556,31 +1678,34 @@ export const OperacionController = {
 
   if (accept.length) {
       if (t === 'congelamiento') {
-        await withTenant(tenant, (c) => c.query(
+  await withTenant(tenant, (c) => c.query(
           `UPDATE inventario_credocubes ic
         SET estado = 'Pre Acondicionamiento', sub_estado = 'Congelamiento'
             FROM modelos m
            WHERE ic.modelo_id = m.modelo_id
              AND ic.rfid = ANY($1::text[])
+       AND ic.activo = true
              AND (m.nombre_modelo ILIKE '%tic%')`, [accept]));
       } else {
         const preserve = !!keepLote; // if true, do not clear lote
         if(preserve){
-          await withTenant(tenant, (c) => c.query(
+    await withTenant(tenant, (c) => c.query(
             `UPDATE inventario_credocubes ic
           SET estado = 'Pre Acondicionamiento', sub_estado = 'Atemperamiento'
               FROM modelos m
              WHERE ic.modelo_id = m.modelo_id
                AND ic.rfid = ANY($1::text[])
+      AND ic.activo = true
                AND (m.nombre_modelo ILIKE '%tic%')
                AND ic.estado = 'Pre Acondicionamiento' AND ic.sub_estado = 'Congelado'`, [accept]));
         } else {
-          await withTenant(tenant, (c) => c.query(
+    await withTenant(tenant, (c) => c.query(
             `UPDATE inventario_credocubes ic
           SET estado = 'Pre Acondicionamiento', sub_estado = 'Atemperamiento', lote = NULL
               FROM modelos m
              WHERE ic.modelo_id = m.modelo_id
                AND ic.rfid = ANY($1::text[])
+      AND ic.activo = true
                AND (m.nombre_modelo ILIKE '%tic%')
                AND ic.estado = 'Pre Acondicionamiento' AND ic.sub_estado = 'Congelado'`, [accept]));
         }
@@ -1663,7 +1788,7 @@ export const OperacionController = {
     }
 
     const found = await withTenant(tenant, (c) => c.query(
-      `SELECT ic.rfid, ic.estado, ic.sub_estado, m.nombre_modelo
+      `SELECT ic.rfid, ic.estado, ic.sub_estado, ic.activo, m.nombre_modelo
          FROM inventario_credocubes ic
          JOIN modelos m ON m.modelo_id = ic.modelo_id
         WHERE ic.rfid = ANY($1::text[])`, [codes]));
@@ -1674,7 +1799,8 @@ export const OperacionController = {
 
     for(const code of codes){
       const r = rows.find(x => x.rfid === code);
-      if(!r){ invalid.push({ rfid: code, reason: 'No existe' }); continue; }
+  if(!r){ invalid.push({ rfid: code, reason: 'No existe' }); continue; }
+  if(r.activo === false){ invalid.push({ rfid: code, reason: 'Item inhabilitado (activo=false)' }); continue; }
       if(!/tic/i.test(r.nombre_modelo || '')){ invalid.push({ rfid: code, reason: 'No es TIC' }); continue; }
       if(t === 'atemperamiento'){
         if(r.estado === 'Pre Acondicionamiento' && r.sub_estado === 'Congelado') {
@@ -2035,7 +2161,7 @@ export const OperacionController = {
        END $$;`);
     });
     // Available TICs: Atemperadas (finished pre-acond) and not already in any caja
-    const tics = await withTenant(tenant, (c) => c.query(
+  const tics = await withTenant(tenant, (c) => c.query(
       `SELECT ic.rfid, ic.nombre_unidad, ic.lote, ic.estado, ic.sub_estado
          FROM inventario_credocubes ic
          JOIN modelos m ON m.modelo_id = ic.modelo_id
@@ -2043,28 +2169,31 @@ export const OperacionController = {
         WHERE aci.rfid IS NULL
           AND ic.estado = 'Pre Acondicionamiento'
           AND ic.sub_estado = 'Atemperado'
+      AND ic.activo = true
           AND (m.nombre_modelo ILIKE '%tic%')
         ORDER BY ic.id DESC
         LIMIT 500`));
     // Available CUBEs
-    const cubes = await withTenant(tenant, (c) => c.query(
+  const cubes = await withTenant(tenant, (c) => c.query(
       `SELECT ic.rfid, ic.nombre_unidad, ic.lote, ic.estado, ic.sub_estado
          FROM inventario_credocubes ic
          JOIN modelos m ON m.modelo_id = ic.modelo_id
     LEFT JOIN acond_caja_items aci ON aci.rfid = ic.rfid
         WHERE aci.rfid IS NULL
           AND ic.estado = 'En bodega'
+      AND ic.activo = true
           AND (m.nombre_modelo ILIKE '%cube%')
         ORDER BY ic.id DESC
         LIMIT 200`));
     // Available VIPs
-    const vips = await withTenant(tenant, (c) => c.query(
+  const vips = await withTenant(tenant, (c) => c.query(
       `SELECT ic.rfid, ic.nombre_unidad, ic.lote, ic.estado, ic.sub_estado
          FROM inventario_credocubes ic
          JOIN modelos m ON m.modelo_id = ic.modelo_id
     LEFT JOIN acond_caja_items aci ON aci.rfid = ic.rfid
         WHERE aci.rfid IS NULL
           AND ic.estado = 'En bodega'
+      AND ic.activo = true
           AND (m.nombre_modelo ILIKE '%vip%')
         ORDER BY ic.id DESC
         LIMIT 200`));
@@ -2249,7 +2378,7 @@ export const OperacionController = {
       await c.query(`DELETE FROM acond_cajas c WHERE NOT EXISTS (SELECT 1 FROM acond_caja_items aci WHERE aci.caja_id=c.caja_id)`);
     });
     const rows = await withTenant(tenant, (c)=> c.query(
-      `SELECT ic.rfid, ic.estado, ic.sub_estado, m.nombre_modelo,
+      `SELECT ic.rfid, ic.estado, ic.sub_estado, ic.activo, m.nombre_modelo,
               EXISTS(SELECT 1 FROM acond_caja_items aci WHERE aci.rfid=ic.rfid) AS ya_en_caja
          FROM inventario_credocubes ic
          JOIN modelos m ON m.modelo_id = ic.modelo_id
@@ -2269,10 +2398,11 @@ export const OperacionController = {
       const estadoLower = estado.toLowerCase();
       const subLower = subEstado.toLowerCase();
       const name=(r.nombre_modelo||'').toLowerCase();
-      if(r.ya_en_caja){ invalid.push({ rfid: r.rfid, reason: 'Ya en una caja' }); continue; }
+  if(r.ya_en_caja){ invalid.push({ rfid: r.rfid, reason: 'Ya en una caja' }); continue; }
+  if(r.activo === false){ invalid.push({ rfid:r.rfid, reason:'Item inhabilitado (activo=false)' }); continue; }
       if(/cube/.test(name)){
         if(haveCube){ invalid.push({ rfid:r.rfid, reason:'Más de un CUBE' }); continue; }
-        const enBodega = estadoLower==='en bodega' || subLower==='en bodega';
+  const enBodega = estadoLower==='en bodega' || subLower==='en bodega';
         if(!enBodega){ invalid.push({ rfid:r.rfid, reason:'CUBE no En bodega' }); continue; }
         haveCube=true; valid.push({ rfid:r.rfid, rol:'cube' });
       } else if(/vip/.test(name)){
@@ -2328,7 +2458,7 @@ export const OperacionController = {
           GROUP BY c.caja_id
          HAVING bool_and(ic2.estado='Acondicionamiento' AND ic2.sub_estado IN ('Ensamblaje','Ensamblado'))
        )
-       SELECT ic.rfid, ic.estado, ic.sub_estado, ic.lote, m.nombre_modelo,
+  SELECT ic.rfid, ic.estado, ic.sub_estado, ic.lote, ic.activo, m.nombre_modelo,
               CASE WHEN aci.rfid IS NOT NULL THEN true ELSE false END AS ya_en_caja
          FROM inventario_credocubes ic
          JOIN modelos m ON m.modelo_id = ic.modelo_id
@@ -2343,7 +2473,8 @@ export const OperacionController = {
       const subEstado = (r.sub_estado||'').trim();
       const estadoLower = estado.toLowerCase();
       const subLower = subEstado.toLowerCase();
-      if(r.ya_en_caja) return res.status(400).json({ ok:false, error:`${r.rfid} ya está en una caja`, message:`${r.rfid} ya está en una caja` });
+  if(r.ya_en_caja) return res.status(400).json({ ok:false, error:`${r.rfid} ya está en una caja`, message:`${r.rfid} ya está en una caja` });
+  if(r.activo === false) return res.status(400).json({ ok:false, error:`${r.rfid} está inhabilitado (activo=false)`, message:`${r.rfid} está inhabilitado (activo=false)` });
       if(/tic/.test(name)){
   if(ticCount >= 6) return res.status(400).json({ ok:false, error:'No se permiten más de 6 TICs', message:'No se permiten más de 6 TICs' });
         const atemp = (estadoLower==='pre acondicionamiento' && subLower==='atemperado') || subLower==='atemperado';

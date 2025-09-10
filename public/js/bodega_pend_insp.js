@@ -2,8 +2,11 @@
   'use strict';
   const grid = document.getElementById('pend-insp-grid');
   const reloadBtn = document.getElementById('pend-insp-reload');
+  const piInfo = document.getElementById('pi-info-total');
+  const btnPrev = document.getElementById('pi-btn-prev');
+  const btnNext = document.getElementById('pi-btn-next');
   if(!grid) return;
-  let data = { cajas:[], serverNow:null }; let serverOffset=0; let tick=null;
+  let data = { cajas:[], serverNow:null, page:1, limit:24, total:0 }; let serverOffset=0; let tick=null; let page=1; let limit=24;
 
   function msRemaining(timer){ if(!timer||!timer.endsAt) return 0; return new Date(timer.endsAt).getTime() - (Date.now()+serverOffset); }
   function fmt(rem){ if(rem<=0) return 'Finalizado'; const s=Math.max(0,Math.floor(rem/1000)); const h=Math.floor(s/3600); const m=Math.floor((s%3600)/60); const sec=s%60; return `${h}:${String(m).padStart(2,'0')}:${String(sec).padStart(2,'0')}`; }
@@ -22,11 +25,28 @@
   <!-- Bodega no puede cambiar ni cancelar el cronómetro -->
     </div>`;
   }
-  function render(){ if(!grid) return; const cajas = data.cajas||[]; grid.innerHTML = cajas.length? cajas.map(cardHTML).join('') : `<div class='col-span-full text-xs opacity-60 text-center py-6'>Sin cajas pendientes</div>`; }
-  async function load(){ try{ const r=await fetch('/operacion/bodega-pend-insp/data'); const j = await r.json(); if(j.ok){ data=j; if(j.serverNow){ serverOffset=new Date(j.serverNow).getTime()-Date.now(); } render(); ensureTick(); } }catch(e){ console.error('pend insp load',e); } }
+  function render(){
+    if(!grid) return; const cajas = data.cajas||[];
+    grid.innerHTML = cajas.length? cajas.map(cardHTML).join('') : `<div class='col-span-full text-xs opacity-60 text-center py-6'>Sin cajas pendientes</div>`;
+    const start = ((data.page||1)-1)*(data.limit||limit) + 1;
+    const end = Math.min((data.page||1)*(data.limit||limit), data.total||0);
+    if(piInfo) piInfo.textContent = (data.total||0) ? `${start}-${end} de ${data.total}` : 'Sin resultados';
+    if(btnPrev) btnPrev.disabled = (data.page||1) <= 1;
+    if(btnNext) btnNext.disabled = (end >= (data.total||0));
+  }
+  async function load(){
+    try{
+      const params = new URLSearchParams({ page:String(page), limit:String(limit) });
+      const r=await fetch('/operacion/bodega-pend-insp/data?'+params.toString());
+      const j = await r.json();
+      if(j.ok){ data=j; if(j.serverNow){ serverOffset=new Date(j.serverNow).getTime()-Date.now(); } render(); ensureTick(); }
+    }catch(e){ console.error('pend insp load',e); }
+  }
   function ensureTick(){ if(tick) return; tick=setInterval(()=>{ (data.cajas||[]).forEach(c=>{ if(!c.timer) return; const el=document.getElementById('pi-timer-'+c.id); if(el) el.textContent=c.timer.completedAt? 'Listo' : fmt(msRemaining(c.timer)); const bar=document.querySelector(`[data-pi-bar='${c.id}']`); if(bar&&c.timer.startsAt&&c.timer.endsAt){ bar.style.width=pct(c.timer).toFixed(1)+'%'; } }); },1000); }
 
   // No actions: timers son de solo lectura aquí
   reloadBtn && reloadBtn.addEventListener('click', load);
+  btnPrev && btnPrev.addEventListener('click', ()=>{ if(page>1){ page--; load(); } });
+  btnNext && btnNext.addEventListener('click', ()=>{ page++; load(); });
   load();
 })();
