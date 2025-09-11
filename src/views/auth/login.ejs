@@ -13,13 +13,11 @@
       <!-- Encabezado con logo y tema -->
       <div class="flex items-center justify-between mb-8">
         <div class="flex items-center gap-3">
-          <div class="w-10 h-10 rounded-xl bg-primary-600 flex items-center justify-center shadow-md">
-            <!-- Icono hoja -->
-            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="w-5 h-5 text-white">
-              <path d="M15 7c-4.418 0-8 3.582-8 8 0 1.657.5 3.19 1.356 4.457M15 7c1.657 0 3 1.343 3 3 0 4.418-3.582 8-8 8M15 7c0-1.657-1.343-3-3-3-4.418 0-8 3.582-8 8 0 1.657 1.343 3 3 3 4.418 0 8-3.582 8-8Z" stroke-linecap="round" stroke-linejoin="round"/>
-            </svg>
+          <div class="w-10 h-10 rounded-xl bg-yellow-300 dark:bg-yellow-400 flex items-center justify-center shadow-md">
+            <!-- Favicon dentro del cuadrito -->
+            <img src="/static/images/favicon.png" alt="KryoSense" class="w-5 h-5 object-contain" />
           </div>
-          <span class="text-xl font-bold text-light-text dark:text-dark-text">KryotecSense</span>
+          <span class="text-xl font-bold text-light-text dark:text-dark-text">KryoSense</span>
         </div>
   <button type="button" id="toggle-theme-btn" class="w-9 h-9 grid place-items-center rounded-full border border-white/20 bg-white/10 hover:bg-white/15 backdrop-blur text-primary-600 dark:text-primary-300" aria-label="Cambiar tema">
           <!-- Icono sol -->
@@ -34,13 +32,10 @@
         </button>
       </div>
 
-      <!-- Mensaje de bienvenida -->
+      <!-- Encabezado simplificado -->
       <div class="text-center mb-10">
-        <h1 class="text-4xl font-extrabold leading-tight text-light-text dark:text-dark-text">
-          Bienvenido de Vuelta,
-          <span class="block text-primary-600 dark:text-primary-400">Por favor inicia sesión</span>
-        </h1>
-        <p class="mt-2 text-light-text/70 dark:text-dark-text/70">en tu cuenta.</p>
+        <h1 class="text-3xl font-bold tracking-tight text-light-text dark:text-dark-text">Inicia sesión</h1>
+        <p class="mt-2 text-sm text-light-text/70 dark:text-dark-text/70">Accede a tu cuenta de KryoSense</p>
       </div>
 
       <!-- Errores -->

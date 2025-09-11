@@ -42,7 +42,7 @@ export const RegistroController = {
         : [];
     // normalize: trim, filter 24-length, unique
     const rfidsArr = Array.from(new Set(
-      rawList.map((r) => String(r || '').trim()).filter((r) => r.length === 24)
+      rawList.map((r) => String(r || '').trim().toUpperCase()).filter((r) => r.length === 24)
     ));
     if (!modeloIdNum || rfidsArr.length === 0) {
       // Rebuild modelosByTipo for re-render
@@ -69,26 +69,16 @@ export const RegistroController = {
         selectedTipo = normTipo(meta.rows[0].tipo) as string;
         const categoria = meta.rows[0].tipo || null;
 
-        // Pre-check duplicates
+        // Pre-check duplicates y filtrar los existentes
         const dupCheck = await c.query<{ rfid: string }>(
           'SELECT rfid FROM inventario_credocubes WHERE rfid = ANY($1::text[])',
           [rfidsArr]
         );
-        if (dupCheck.rowCount && dupCheck.rowCount > 0) {
-          const dups = dupCheck.rows.map((r) => r.rfid);
-          // Build modelos again for re-render
-          const modelosRes = await c.query<ModeloRow>('SELECT modelo_id, nombre_modelo, tipo FROM modelos ORDER BY nombre_modelo');
-          const byTipo: Record<string, Array<{ id: number; name: string }>> = { TIC: [], VIP: [], Cube: [], Otros: [] } as any;
-          for (const m of modelosRes.rows) {
-            const key = normTipo(m.tipo);
-            (byTipo[key] = byTipo[key] || []).push({ id: m.modelo_id, name: m.nombre_modelo });
-          }
-          duplicatePayload = { dups, modelosByTipo: byTipo };
-          return; // stop inserts
-        }
+        const existing = new Set((dupCheck.rows || []).map(r => r.rfid));
+        const toInsert = rfidsArr.filter(r => !existing.has(r));
 
-        // No duplicates: proceed to insert
-        for (const rfid of rfidsArr) {
+        // Insertar solo los no existentes
+        for (const rfid of toInsert) {
           await c.query(
             `INSERT INTO inventario_credocubes 
                (modelo_id, nombre_unidad, rfid, lote, estado, sub_estado, categoria, fecha_ingreso, fecha_vencimiento)
@@ -96,19 +86,8 @@ export const RegistroController = {
             [modeloIdNum, nombre, rfid, categoria]
           );
         }
+        // Si algunos eran duplicados, redirigir igual (operación idempotente)
       });
-  if (duplicatePayload !== null) {
-        const payload: DuplicatePayload = duplicatePayload;
-        return res.status(200).render('registro/index', {
-          title: 'Registro de Items',
-          error: 'Uno o más RFID ya existen',
-          modelosByTipo: payload.modelosByTipo,
-          rfids: rfidsArr,
-          selectedTipo,
-          selectedModelo: modeloIdNum,
-          dups: payload.dups,
-        });
-      }
       return res.redirect('/inventario');
     } catch (e: any) {
       console.error(e);

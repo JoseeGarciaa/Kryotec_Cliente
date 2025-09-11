@@ -13,7 +13,7 @@
   initialModelo = dataEl.dataset.selectedModelo || '';
   let dupRfids = [];
   try { dupRfids = JSON.parse(dataEl.dataset.dups || '[]'); } catch { dupRfids = []; }
-  let validationDone = dupRfids.length > 0; // server-provided dups imply validated; will update on live checks
+  let validationDone = dupRfids.length > 0; // legacy: but los vamos a filtrar
 
   const tipoEl = document.getElementById('tipo');
   const litrajeEl = document.getElementById('litraje');
@@ -36,9 +36,8 @@
     // Update count and submit button
     countEl.textContent = String(rfids.length);
     submitBtn.textContent = `+ Registrar ${rfids.length} Item(s)`;
-    const hasDups = rfids.some(r => dupRfids.includes(r));
-    submitBtn.disabled = !(modeloIdEl.value && rfids.length > 0) || hasDups;
-    if(dupMsg){ dupMsg.textContent = hasDups ? 'Elimine los RFIDs marcados como repetidos para poder registrar.' : ''; }
+    submitBtn.disabled = !(modeloIdEl.value && rfids.length > 0);
+    if(dupMsg){ dupMsg.textContent = ''; }
 
     // Hidden inputs for POST
     rfidContainer.innerHTML = rfids
@@ -48,11 +47,9 @@
     // Visual chips list with remove buttons
     if(rfidList){
       rfidList.innerHTML = rfids.map((r,i)=>{
-        const isDup = dupRfids.includes(r);
-        const chipCls = isDup ? 'badge badge-error gap-2' : 'badge badge-outline gap-2';
-        const status = isDup ? '<span class="text-[10px] text-error mt-1">repetido</span>' : (validationDone ? '<span class="text-[10px] text-success mt-1">ok</span>' : '');
+        const status = validationDone ? '<span class="text-[10px] text-success mt-1">ok</span>' : '';
         return `<div class="inline-flex flex-col items-center">
-                  <span class="${chipCls}">${r}<button type="button" class="btn btn-ghost btn-xs" data-remove="${i}">✕</button></span>
+                  <span class="badge badge-outline gap-2">${r}<button type="button" class="btn btn-ghost btn-xs" data-remove="${i}">✕</button></span>
                   ${status}
                 </div>`;
       }).join('');
@@ -75,7 +72,13 @@
       });
       const data = await res.json();
       dupRfids = Array.isArray(data.dups) ? data.dups : [];
+      if(dupRfids.length){
+        // Filtrar repetidos automáticamente
+        rfids = rfids.filter(r => !dupRfids.includes(r));
+      }
       validationDone = true;
+      // limpiar estado de dups (ya removidos)
+      dupRfids = [];
       renderRFIDs();
     }catch{
       // keep previous state on error
@@ -100,14 +103,24 @@
     }
   }
 
-  function addRFIDIfValid(code){
-    if(code && code.length === 24 && !rfids.includes(code)){
-      rfids.push(code);
-      renderRFIDs();
-  // validate in background
-  validateRfids();
-      return true;
-    }
+  // Valida contra servidor y solo agrega si NO existe
+  async function handleScannedCode(rawCode){
+    const code = String(rawCode || '').toUpperCase();
+    if(!(code && code.length === 24)) return false;
+    if(rfids.includes(code)) return false;
+    try{
+      const res = await fetch('/registro/validate', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ rfids: [code] })
+      });
+      const data = await res.json();
+      const isDup = Array.isArray(data.dups) && data.dups.map(String).map(s=>s.toUpperCase()).includes(code);
+      if(!isDup){
+        rfids.push(code);
+        renderRFIDs();
+        return true;
+      }
+    }catch{}
     return false;
   }
 
@@ -158,8 +171,8 @@
     // Some scanners add CR/LF or TAB; already removed by \s
     while(v.length >= 24){
       const chunk = v.slice(0,24);
-      const added = addRFIDIfValid(chunk);
-      if(added){ /* validated later */ }
+      // validar en background y agregar solo si procede
+      handleScannedCode(chunk);
       v = v.slice(24);
     }
     // Return remaining buffer to keep in the input
@@ -186,10 +199,8 @@
   // Submit guard (requires explicit button click and passes validations)
   form.addEventListener('submit', (e)=>{
     if(!allowExplicitSubmit){ e.preventDefault(); return; }
-    const hasDups = rfids.some(r => dupRfids.includes(r));
-    if(!(modeloIdEl.value && rfids.length > 0) || hasDups){
+    if(!(modeloIdEl.value && rfids.length > 0)){
       e.preventDefault();
-      if(dupMsg && hasDups){ dupMsg.textContent = 'Elimine los RFIDs marcados como repetidos para poder registrar.'; }
     }
     // Reset flag immediately after handling to avoid unintended resubmits
     allowExplicitSubmit = false;
@@ -234,6 +245,11 @@
       scanEl.placeholder = 'Listo para escanear...';
     }
 
+  // Si el servidor envió duplicados detectados, filtrarlos desde el inicio
+  if(dupRfids.length){
+    rfids = rfids.filter(r => !dupRfids.includes(r));
+    dupRfids = [];
+  }
   renderRFIDs();
   if(rfids.length){ validateRfids(); }
     tipoEl.focus();
