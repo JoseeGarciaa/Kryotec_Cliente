@@ -143,15 +143,14 @@ export const InventarioController = {
     const id = Number((req.params as any).id);
     if(!Number.isFinite(id) || id<=0) return res.status(400).json({ ok:false, error:'id inválido' });
     try {
-      // Soft delete: mark as Eliminado, deactivate, clear lote/sub_estado
+      // Hard delete: elimina el registro de la base de datos
       await withTenant(tenant, (c)=> c.query(
-        `UPDATE inventario_credocubes
-            SET estado='Eliminado', sub_estado=NULL, activo=false, lote=NULL
-          WHERE id=$1`, [id]
+        `DELETE FROM inventario_credocubes WHERE id=$1`, [id]
       ));
       return res.redirect('/inventario');
     } catch(e:any){
-      return res.status(500).send('Error eliminando');
+      // Redirige con mensaje de error en vez de enviar error crudo
+      return res.redirect('/inventario?error=eliminar');
     }
   },
 

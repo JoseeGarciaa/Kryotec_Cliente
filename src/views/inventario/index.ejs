@@ -1,3 +1,8 @@
+<% if (typeof error !== 'undefined' && error === 'eliminar') { %>
+  <div class="alert alert-error mb-4">
+    <span>Ocurrió un error al eliminar el registro.</span>
+  </div>
+<% } %>
 <% title = 'Inventario' %>
 
 <div class="mb-2">
@@ -57,29 +62,23 @@
               <td class="whitespace-nowrap">
                 <div class="join">
                   <!-- Editar -->
-                  <button type="button" class="btn btn-ghost btn-xs join-item" title="Editar" aria-label="Editar"
-                          data-action="inv-edit"
-                          data-id="<%= i.id %>"
-                          data-nombre="<%- (i.nombre_unidad||'').replace(/\"/g,'&quot;') %>"
-                          data-lote="<%- (i.lote||'').replace(/\"/g,'&quot;') %>"
-                          data-estado="<%- (i.estado||'').replace(/\"/g,'&quot;') %>"
-                          data-sub="<%- (i.sub_estado||'').replace(/\"/g,'&quot;') %>">
+      <button type="button" class="btn btn-ghost btn-xs join-item" title="Editar" aria-label="Editar"
+        data-action="inv-edit"
+        data-id="<%= i.id %>"
+        data-modelo_id="<%= i.modelo_id %>"
+        data-rfid="<%- (i.rfid||'').replace(/\"/g,'&quot;') %>"
+        data-nombre="<%- (i.nombre_unidad||'').replace(/\"/g,'&quot;') %>"
+        data-lote="<%- (i.lote||'').replace(/\"/g,'&quot;') %>"
+        data-estado="<%- (i.estado||'').replace(/\"/g,'&quot;') %>"
+        data-sub="<%- (i.sub_estado||'').replace(/\"/g,'&quot;') %>">
                     <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                       <path d="M12 20h9"/>
                       <path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4 12.5-12.5z"/>
                     </svg>
                     <span class="sr-only">Editar</span>
                   </button>
-                  <!-- Inspeccionar -->
-                  <a class="btn btn-ghost btn-xs join-item" title="Inspeccionar" aria-label="Inspeccionar" href="/operacion/inspeccion">
-                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                      <path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7-11-7-11-7z"/>
-                      <circle cx="12" cy="12" r="3"/>
-                    </svg>
-                    <span class="sr-only">Inspeccionar</span>
-                  </a>
                   <!-- Eliminar -->
-                  <form method="post" action="/inventario/<%= i.id %>/delete" onsubmit="return confirm('¿Eliminar este item?');" class="join-item">
+                  <form method="post" action="/inventario/<%= i.id %>/delete" class="join-item inv-delete-form">
                     <button class="btn btn-ghost btn-xs text-error" title="Eliminar" aria-label="Eliminar">
                       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                         <polyline points="3 6 5 6 21 6"/>
@@ -122,28 +121,38 @@
     <form id="inv-edit-form" method="post" action="/inventario/0/update" class="space-y-3">
       <div class="grid grid-cols-2 gap-3">
         <label class="form-control">
+          <span class="label-text text-xs opacity-70">Modelo ID</span>
+          <input id="inv-edit-modelo_id" name="modelo_id" type="text" class="input input-sm input-bordered" readonly />
+        </label>
+        <label class="form-control">
+          <span class="label-text text-xs opacity-70">RFID</span>
+          <input id="inv-edit-rfid" name="rfid" type="text" class="input input-sm input-bordered" readonly />
+        </label>
+      </div>
+      <div class="grid grid-cols-2 gap-3">
+        <label class="form-control">
           <span class="label-text text-xs opacity-70">Nombre unidad</span>
-          <input id="inv-edit-nombre" name="nombre_unidad" type="text" class="input input-sm input-bordered" />
+          <input id="inv-edit-nombre" name="nombre_unidad" type="text" class="input input-sm input-bordered" autocomplete="off" />
         </label>
         <label class="form-control">
           <span class="label-text text-xs opacity-70">Lote</span>
-          <input id="inv-edit-lote" name="lote" type="text" class="input input-sm input-bordered" />
+          <input id="inv-edit-lote" name="lote" type="text" class="input input-sm input-bordered" autocomplete="off" />
         </label>
       </div>
       <div class="grid grid-cols-2 gap-3">
         <label class="form-control">
           <span class="label-text text-xs opacity-70">Estado</span>
-          <input id="inv-edit-estado" name="estado" type="text" class="input input-sm input-bordered" />
+          <input id="inv-edit-estado" name="estado" type="text" class="input input-sm input-bordered" autocomplete="off" />
         </label>
         <label class="form-control">
           <span class="label-text text-xs opacity-70">Sub-estado</span>
-          <input id="inv-edit-sub" name="sub_estado" type="text" class="input input-sm input-bordered" />
+          <input id="inv-edit-sub" name="sub_estado" type="text" class="input input-sm input-bordered" autocomplete="off" />
         </label>
       </div>
       <div class="flex items-center justify-between mt-2">
         <span id="inv-edit-msg" class="text-xs opacity-70"></span>
         <div class="join">
-          <button type="button" class="btn btn-ghost btn-sm join-item" onclick="document.getElementById('inv-edit-modal').close()">Cancelar</button>
+          <button type="button" class="btn btn-ghost btn-sm join-item" id="inv-edit-cancel">Cancelar</button>
           <button type="submit" class="btn btn-primary btn-sm join-item">Guardar</button>
         </div>
       </div>
@@ -152,30 +161,4 @@
   <form method="dialog" class="modal-backdrop"><button>close</button></form>
 </dialog>
 
-<script>
-  (function(){
-    const modal = document.getElementById('inv-edit-modal');
-    const form = document.getElementById('inv-edit-form');
-    const fNombre = document.getElementById('inv-edit-nombre');
-    const fLote = document.getElementById('inv-edit-lote');
-    const fEstado = document.getElementById('inv-edit-estado');
-    const fSub = document.getElementById('inv-edit-sub');
-    document.addEventListener('click', (e)=>{
-      const t = e.target;
-      if(!(t instanceof HTMLElement)) return;
-      if(t.matches('[data-action="inv-edit"]')){
-        const id = t.getAttribute('data-id');
-        const nombre = t.getAttribute('data-nombre')||'';
-        const lote = t.getAttribute('data-lote')||'';
-        const estado = t.getAttribute('data-estado')||'';
-        const sub = t.getAttribute('data-sub')||'';
-        if(form){ form.action = `/inventario/${id}/update`; }
-        if(fNombre) fNombre.value = nombre;
-        if(fLote) fLote.value = lote;
-        if(fEstado) fEstado.value = estado;
-        if(fSub) fSub.value = sub;
-        try{ modal.showModal(); }catch{ modal.classList.remove('hidden'); }
-      }
-    });
-  })();
-</script>
+<script src="/static/js/inventario.js?v=<%= assetVersion %>"></script>
