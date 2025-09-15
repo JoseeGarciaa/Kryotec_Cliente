@@ -79,6 +79,7 @@
   const panelComps = qs('#insp-caja-comps');
   const checklistArea = qs('#insp-checklist-area');
   const list = qs('#insp-tic-list');
+  const compList = qs('#insp-comp-list');
   const completeBtn = qs('#insp-complete');
   // Bulk check controls
   const checkAllBtn = qs('#insp-check-all');
@@ -146,6 +147,36 @@
         </div>
       </div>`;
     }).join('');
+
+    // Render VIP/CUBE components checklist (always enabled, no activation required)
+    if(compList){
+      const comps = (state.cajaSel?.componentes||[]).filter(it=> (it.tipo==='vip' || it.tipo==='cube'));
+      compList.innerHTML = comps.length ? comps.map(it=>{
+        const v = state.ticChecks.get(it.codigo) || { limpieza:false, goteo:false, desinfeccion:false };
+        const label = (it.tipo||'').toUpperCase();
+        let chipCls = 'badge-ghost'; if(it.tipo==='vip') chipCls='badge-info'; else if(it.tipo==='cube') chipCls='badge-accent';
+        return `<div class='border rounded-md p-2 bg-base-100 border-base-300/40' data-comp-row='${it.codigo}'>
+          <div class='flex items-center justify-between text-[11px] font-mono opacity-70'>
+            <span>${label} <span class='badge ${chipCls} badge-xs ml-1'>${label}</span></span>
+            <span class='flex items-center gap-2'>
+              <button class='btn btn-xs btn-error' data-action='tic-inhabilitar' data-rfid='${it.codigo}' title='Inhabilitar y registrar novedad'>Inhabilitar</button>
+              <span>${it.codigo}</span>
+            </span>
+          </div>
+          <div class='flex gap-3 mt-2 text-xs'>
+            <label class='flex items-center gap-1 cursor-pointer'>
+              <input type='checkbox' data-chk='limpieza' data-rfid='${it.codigo}' ${v.limpieza?'checked':''}/> Limpieza
+            </label>
+            <label class='flex items-center gap-1 cursor-pointer'>
+              <input type='checkbox' data-chk='goteo' data-rfid='${it.codigo}' ${v.goteo?'checked':''}/> Goteo
+            </label>
+            <label class='flex items-center gap-1 cursor-pointer'>
+              <input type='checkbox' data-chk='desinfeccion' data-rfid='${it.codigo}' ${v.desinfeccion?'checked':''}/> Desinfección
+            </label>
+          </div>
+        </div>`;
+      }).join('') : "<div class='text-xs opacity-60'>No hay VIP/CUBE asociados</div>";
+    }
     updateCompleteBtn();
   }
   // Novedad modal
@@ -207,25 +238,32 @@
   function inferTipo(nombre){ const n=(nombre||'').toLowerCase(); if(n.includes('vip')) return 'vip'; if(n.includes('tic')) return 'tic'; if(n.includes('cube')||n.includes('cubo')) return 'cube'; return 'otro'; }
 
   function updateCompleteBtn(){
-  // Checklist habilitado solo cuando ya hay caja seleccionada (ya jalada a Inspección)
-  const all = !!state.cajaSel?.id && (state.tics||[]).length===6 && (state.tics||[]).every(t=>{
+    // Checklist habilitado solo cuando ya hay caja seleccionada (ya jalada a Inspección)
+    const ticsOk = (state.tics||[]).length===6 && (state.tics||[]).every(t=>{
       const v = state.ticChecks.get(t.rfid) || { limpieza:false, goteo:false, desinfeccion:false };
       return v.limpieza && v.goteo && v.desinfeccion;
     });
+    // VIP/CUBE checks (si existen)
+    const comps = (state.cajaSel?.componentes||[]).filter(it=> (it.tipo==='vip' || it.tipo==='cube'));
+    const compsOk = comps.every(it=>{
+      const v = state.ticChecks.get(it.codigo) || { limpieza:false, goteo:false, desinfeccion:false };
+      return v.limpieza && v.goteo && v.desinfeccion;
+    });
+    const all = !!state.cajaSel?.id && ticsOk && compsOk;
     if(completeBtn) completeBtn.disabled = !all;
   }
 
   // Bulk actions: mark/unmark all checks for all TICs
   checkAllBtn?.addEventListener('click', ()=>{
-    (state.tics||[]).forEach(t=>{
-      state.ticChecks.set(t.rfid, { limpieza:true, goteo:true, desinfeccion:true });
-    });
+    (state.tics||[]).forEach(t=>{ state.ticChecks.set(t.rfid, { limpieza:true, goteo:true, desinfeccion:true }); });
+    const comps = (state.cajaSel?.componentes||[]).filter(it=> (it.tipo==='vip' || it.tipo==='cube'));
+    comps.forEach(it=>{ state.ticChecks.set(it.codigo, { limpieza:true, goteo:true, desinfeccion:true }); });
     renderChecklist();
   });
   uncheckAllBtn?.addEventListener('click', ()=>{
-    (state.tics||[]).forEach(t=>{
-      state.ticChecks.set(t.rfid, { limpieza:false, goteo:false, desinfeccion:false });
-    });
+    (state.tics||[]).forEach(t=>{ state.ticChecks.set(t.rfid, { limpieza:false, goteo:false, desinfeccion:false }); });
+    const comps = (state.cajaSel?.componentes||[]).filter(it=> (it.tipo==='vip' || it.tipo==='cube'));
+    comps.forEach(it=>{ state.ticChecks.set(it.codigo, { limpieza:false, goteo:false, desinfeccion:false }); });
     renderChecklist();
   });
 
@@ -255,7 +293,7 @@
       try{ novDlg.showModal(); }catch{ novDlg.classList.remove('hidden'); }
     }
   });
-  // Submit novedad
+  // Submit novedad (aplica para TIC/VIP/CUBE)
   novConfirm?.addEventListener('click', async ()=>{
     const code = (novRfid?.textContent||'').trim();
     const body = {
@@ -272,8 +310,15 @@
       const r = await fetch('/operacion/inspeccion/novedad/inhabilitar',{ method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body) });
       const j = await r.json();
       if(!j.ok){ novMsg && (novMsg.textContent=j.error||'Error'); novConfirm.disabled=false; return; }
-      // Remove TIC from list and UI
+      // Remove piece from UI (TIC/VIP/CUBE)
+      const beforeTicLen = (state.tics||[]).length;
       state.tics = (state.tics||[]).filter(t=> t.rfid !== code);
+      if(beforeTicLen===state.tics.length){
+        // not a TIC; try removing from componentes
+        if(state.cajaSel && Array.isArray(state.cajaSel.componentes)){
+          state.cajaSel.componentes = state.cajaSel.componentes.filter((it)=> (it.codigo!==code));
+        }
+      }
       state.ticChecks.delete(code);
       renderChecklist();
       // If caja auto-retired (VIP/CUBE sent to Bodega), clear panel and refresh grid immediately

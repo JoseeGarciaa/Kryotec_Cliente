@@ -39,7 +39,7 @@
           <div id="insp-caja-comps" class="flex flex-wrap gap-1"></div>
         </div>
 
-        <!-- Área del checklist de TICs: sólo visible cuando la caja está en Inspección -->
+  <!-- Área del checklist de TICs y componentes VIP/CUBE: sólo visible cuando la caja está en Inspección -->
         <div id="insp-checklist-area" class="space-y-3">
           <div class="flex items-center justify-end gap-2">
             <button id="insp-check-all" type="button" class="btn btn-ghost btn-xs">Marcar todo</button>
@@ -57,7 +57,12 @@
 
           <div class="text-xs opacity-80">Escanea cada TIC y marca el checklist:</div>
           <div id="insp-tic-list" class="space-y-2"></div>
-          <button id="insp-complete" class="btn btn-sm btn-success w-full" disabled>Finalizar y devolver TICs a Bodega</button>
+
+          <div class="divider my-2"></div>
+          <div class="text-xs opacity-80">Componentes de la caja (VIP / CUBE):</div>
+          <div id="insp-comp-list" class="space-y-2"></div>
+
+          <button id="insp-complete" class="btn btn-sm btn-success w-full" disabled>Finalizar y devolver caja a Bodega</button>
         </div>
       </div>
     </div>
