@@ -16,10 +16,10 @@
     const tics = comps.filter(x=>x.tipo==='tic');
     const cubes = comps.filter(x=>x.tipo==='cube');
     const compBadges = [
-      ...vip.map(()=>`<span class='badge badge-info badge-xs font-semibold'>VIP</span>`),
-      ...tics.map(()=>`<span class='badge badge-warning badge-xs font-semibold'>TIC</span>`),
-      ...cubes.map(()=>`<span class='badge badge-accent badge-xs font-semibold'>CUBE</span>`)
-    ].join(' ');
+      vip.length ? `<span class='badge badge-info badge-xs font-semibold' title='VIPs'>VIP × ${vip.length}</span>` : '',
+      tics.length ? `<span class='badge badge-warning badge-xs font-semibold' title='TICs'>TIC × ${tics.length}</span>` : '',
+      cubes.length ? `<span class='badge badge-accent badge-xs font-semibold' title='CUBEs'>CUBE × ${cubes.length}</span>` : ''
+    ].filter(Boolean).join(' ');
     const timerHtml = caja.timer && caja.timer.startsAt
       ? `<span class='badge badge-neutral badge-xs font-mono' data-insp-timer='${caja.id}' id='insp-timer-${caja.id}'>${timerDisplay(msElapsed(caja.timer))}</span>`
       : `<span class='badge badge-outline badge-xs opacity-70'>Sin cronómetro</span>`;
@@ -80,6 +80,9 @@
   const checklistArea = qs('#insp-checklist-area');
   const list = qs('#insp-tic-list');
   const completeBtn = qs('#insp-complete');
+  // Bulk check controls
+  const checkAllBtn = qs('#insp-check-all');
+  const uncheckAllBtn = qs('#insp-uncheck-all');
   // TIC scan elements
   const ticScan = qs('#insp-tic-scan');
   const ticScanBtn = qs('#insp-tic-scan-btn');
@@ -211,6 +214,20 @@
     });
     if(completeBtn) completeBtn.disabled = !all;
   }
+
+  // Bulk actions: mark/unmark all checks for all TICs
+  checkAllBtn?.addEventListener('click', ()=>{
+    (state.tics||[]).forEach(t=>{
+      state.ticChecks.set(t.rfid, { limpieza:true, goteo:true, desinfeccion:true });
+    });
+    renderChecklist();
+  });
+  uncheckAllBtn?.addEventListener('click', ()=>{
+    (state.tics||[]).forEach(t=>{
+      state.ticChecks.set(t.rfid, { limpieza:false, goteo:false, desinfeccion:false });
+    });
+    renderChecklist();
+  });
 
   document.addEventListener('change', async (e)=>{
     const t = e.target;
