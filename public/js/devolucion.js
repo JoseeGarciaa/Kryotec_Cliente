@@ -82,7 +82,7 @@
   }
   function render(){
     if(!grid) return; const cajas = data.cajas||[];
-    if(!cajas.length){ grid.innerHTML = `<div class='col-span-full py-10 text-center text-xs opacity-60'>Sin cajas en Operación</div>`; return; }
+    if(!cajas.length){ grid.innerHTML = `<div class='col-span-full py-10 text-center text-xs opacity-60'>Sin cajas elegibles (Operación · Tránsito)</div>`; return; }
     grid.innerHTML = cajas.map(c=> cardHTML(c)).join('');
   }
   async function load(){
@@ -122,6 +122,13 @@
   <div class='mt-2'><button class='btn btn-xs btn-primary btn-outline w-full' data-process-caja='${c.id}'>➜ Procesar devolución</button></div>
     </div>`;
   }
+  function clearScanUI(msg){
+    if(scanInput) scanInput.value='';
+    if(scanCardBox) scanCardBox.innerHTML='';
+    if(scanExtra) scanExtra.textContent='';
+    if(scanResult) scanResult.classList.add('hidden');
+    if(typeof msg==='string' && scanMsg) scanMsg.textContent = msg; else if(scanMsg) scanMsg.textContent='';
+  }
   async function lookupCaja(code){
     if(scanMsg) scanMsg.textContent='Buscando...'; if(scanResult) scanResult.classList.add('hidden');
     try {
@@ -132,6 +139,13 @@
       let caja = (data.cajas||[]).find(c=> String(c.id)===String(cajaId));
       if(!caja){
         caja = { id: cajaId, codigoCaja: j.caja.lote, timer: j.caja.timer? { startsAt: j.caja.timer.startsAt, endsAt: j.caja.timer.endsAt, completedAt: j.caja.timer.active===false? j.caja.timer.endsAt:null }: null, componentes: (j.caja.items||[]).map(it=> ({ codigo: it.rfid, tipo: inferTipo(it.nombre_modelo||it.nombre||'') })) };
+      }
+      // Elegibilidad estricta: todos los items en Operación · Transito
+      const items = (j.caja.items||[]);
+      const eligible = items.length>0 && items.every(it=> it.estado==='Operación' && it.sub_estado==='Transito');
+      if(!eligible){
+        clearScanUI('Caja no elegible: requiere Operación · Transito');
+        return;
       }
       if(scanCardBox) scanCardBox.innerHTML = miniCardHTML(caja);
       if(scanExtra) scanExtra.textContent = `Items: ${(caja.componentes||[]).length} · ID ${caja.id}`;
@@ -177,7 +191,7 @@
       if(scanMsg) scanMsg.textContent='Evaluando...';
       const r = await fetch('/operacion/devolucion/evaluate',{ method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ caja_id: id })});
       const j = await r.json();
-      if(!j.ok){ if(scanMsg) scanMsg.textContent=j.error||'Error'; return; }
+  if(!j.ok){ if(scanMsg) scanMsg.textContent=j.error||'No elegible'; if(scanResult) scanResult.classList.add('hidden'); return; }
       const reusable = !!j.reusable;
       const pct = Math.round((j.remaining_ratio||0)*100);
       let html = '';
@@ -209,6 +223,8 @@
           const r = await fetch('/operacion/devolucion/reuse',{ method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ caja_id: id })});
           const j = await r.json(); if(!j.ok) throw new Error(j.error||'Error');
           if(scanMsg) scanMsg.textContent='Caja enviada a Acondicionamiento · Lista para Despacho';
+          await load();
+          clearScanUI('');
         } else if(act==='insp'){
           // Abrir modal para horas/minutos; solo se envía tras Aceptar
           piCajaId = id;
@@ -233,7 +249,9 @@
       const r = await fetch('/operacion/devolucion/to-pend-insp',{ method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ caja_id: piCajaId, durationSec: sec })});
       const j = await r.json(); if(!j.ok) throw new Error(j.error||'Error');
       if(scanMsg) scanMsg.textContent='Caja enviada a Bodega · Pendiente a Inspección';
-      load();
+      // refrescar inmediatamente la lista para que desaparezca y limpiar panel derecho
+      await load();
+      clearScanUI('');
     } catch(e){ if(scanMsg) scanMsg.textContent = e.message || 'Error'; }
     finally { piCajaId=null; piHours && (piHours.value=''); piMins && (piMins.value=''); try{ piDlg.close(); }catch{ piDlg.classList.add('hidden'); } }
   });

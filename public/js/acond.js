@@ -45,6 +45,9 @@
   let totalComponentCount = 0;
   let listoFilteredCount = 0; // nuevos contadores filtrado lista despacho
   let listoTotalCount = 0;
+  // Focus by caja when scanning a single RFID
+  let focusEnsCajaId = null;   // string|number|null
+  let focusListoCajaId = null; // string|number|null
 
   // ========================= UTILITIES =========================
   function qs(selector){ return document.querySelector(selector); }
@@ -58,6 +61,21 @@
     const end = new Date(caja.timer.endsAt).getTime();
     const serverNow = Date.now() + serverNowOffsetMs;
     return end - serverNow;
+  }
+  // Parse 24-char RFID chunks (supports raw gun bursts and mixed separators)
+  function parseRfids(raw){
+    const s = String(raw||'').toUpperCase().replace(/\s+/g,'');
+    const out = [];
+    for(let i=0;i+24<=s.length;i+=24){ out.push(s.slice(i,i+24)); }
+    const rx=/[A-Z0-9]{24}/g; let m; while((m=rx.exec(s))){ const c=m[0]; if(!out.includes(c)) out.push(c); }
+    return out;
+  }
+  function ensureTableWhenMulti(isMulti){
+    if(isMulti && viewMode !== 'table'){
+      viewMode = 'table';
+      try { localStorage.setItem('acondViewMode','table'); } catch {}
+      updateViewVisibility();
+    }
   }
 
   // ========================= INITIAL RENDER HELPERS =========================
@@ -102,8 +120,19 @@
       if(!listoDespacho || listoDespacho.length===0){
         renderListoEmpty();
       } else {
-  const filterValue = (qs(sel.filtroListoInput)?.value || '').trim().toLowerCase();
-  const filtered = filterValue ? listoDespacho.filter(i => (i.codigo||'').toLowerCase().includes(filterValue) || (i.nombre||'').toLowerCase().includes(filterValue) || (i.lote||'').toLowerCase().includes(filterValue)) : listoDespacho;
+  const raw = (qs(sel.filtroListoInput)?.value || '');
+  const firstRfid = parseRfids(raw)[0] || '';
+  const filterValue = raw.trim().toLowerCase();
+  // If a single RFID is scanned, derive caja_id and show the whole caja group
+  if(firstRfid){
+    const hit = listoDespacho.find(i => String(i.codigo||'').toUpperCase() === firstRfid);
+    focusListoCajaId = hit ? (hit.caja_id || hit.cajaId || hit.cajaID) : null;
+  } else {
+    focusListoCajaId = null;
+  }
+  const filtered = focusListoCajaId != null
+    ? listoDespacho.filter(i => String(i.caja_id||i.cajaId||i.cajaID) === String(focusListoCajaId))
+    : (filterValue ? listoDespacho.filter(i => (i.codigo||'').toLowerCase().includes(filterValue) || (i.nombre||'').toLowerCase().includes(filterValue) || (i.lote||'').toLowerCase().includes(filterValue)) : listoDespacho);
   listoTotalCount = listoDespacho.length;
   listoFilteredCount = filtered.length;
   const rows = filtered.map(item => {
@@ -124,8 +153,12 @@
       if(!listoDespacho || listoDespacho.length===0){
   grid.innerHTML = '<div class="col-span-full py-10 text-center text-sm opacity-60">No hay cajas</div>';
       } else {
-  const filterValue = (qs(sel.filtroListoInput)?.value || '').trim().toLowerCase();
-  const filtered = filterValue ? listoDespacho.filter(i => (i.codigo||'').toLowerCase().includes(filterValue) || (i.nombre||'').toLowerCase().includes(filterValue) || (i.lote||'').toLowerCase().includes(filterValue)) : listoDespacho;
+  const raw = (qs(sel.filtroListoInput)?.value || '');
+  const firstRfid = parseRfids(raw)[0] || '';
+  const filterValue = raw.trim().toLowerCase();
+  const filtered = focusListoCajaId != null
+    ? listoDespacho.filter(i => String(i.caja_id||i.cajaId||i.cajaID) === String(focusListoCajaId))
+    : (filterValue ? listoDespacho.filter(i => (i.codigo||'').toLowerCase().includes(filterValue) || (i.nombre||'').toLowerCase().includes(filterValue) || (i.lote||'').toLowerCase().includes(filterValue)) : listoDespacho);
   // Agrupar por caja_id para evitar colisión cuando dos cajas comparten mismo lote
   const groupsMap = new Map();
   filtered.forEach(it=>{
@@ -166,12 +199,30 @@
   if(!contCards || !contTableBody) return;
 
     // Filter (client-side) by text if filter input present
-    const filterValue = (qs(sel.filtroInput)?.value || '').trim().toLowerCase();
-  const filtered = filterValue ? cajas.filter(c => (c.codigoCaja||'').toLowerCase().includes(filterValue) ) : cajas.slice();
+  const raw = (qs(sel.filtroInput)?.value || '');
+  const firstRfid = parseRfids(raw)[0] || '';
+  const filterValue = raw.trim().toLowerCase();
+  // Determine caja focus by RFID of any component
+  if(firstRfid){
+    const hit = cajas.find(c => (c.componentes||[]).some(cc => String(cc.codigo||'').toUpperCase() === firstRfid));
+    focusEnsCajaId = hit ? hit.id : null;
+  } else {
+    focusEnsCajaId = null;
+  }
+  const filtered = focusEnsCajaId != null
+    ? cajas.filter(c => String(c.id) === String(focusEnsCajaId))
+    : (filterValue ? cajas.filter(c => (c.codigoCaja||'').toLowerCase().includes(filterValue) || (c.componentes||[]).some(cc => String(cc.codigo||'').toLowerCase().includes(filterValue))) : cajas.slice());
 
   // Contar componentes totales y filtrados
   totalComponentCount = cajas.reduce((acc,c)=> acc + ((c.componentes||[]).length || 0), 0);
-  lastFilteredComponentCount = filtered.reduce((acc,c)=> acc + ((c.componentes||[]).length || 0), 0);
+  if(focusEnsCajaId != null){
+    lastFilteredComponentCount = filtered.reduce((acc,c)=> acc + ((c.componentes||[]).length || 0), 0);
+  } else if(filterValue){
+    lastFilteredComponentCount = filtered.reduce((acc,c)=> acc + (c.componentes||[]).filter(cc => String(cc.codigo||'').toLowerCase().includes(filterValue)).length, 0);
+    if(lastFilteredComponentCount===0){ lastFilteredComponentCount = filtered.reduce((acc,c)=> acc + ((c.componentes||[]).length||0), 0); }
+  } else {
+    lastFilteredComponentCount = filtered.reduce((acc,c)=> acc + ((c.componentes||[]).length || 0), 0);
+  }
 
     // Cards view
   contCards.innerHTML = filtered.map(c => cajaCardHTML(c)).join('');
@@ -181,7 +232,8 @@
 
   // Table rows (una fila por componente para evitar agrupado de RFIDs)
   const tableRows = [];
-  filtered.forEach(c => { tableRows.push(...cajaRowsHTML(c)); });
+  const compFilterSet = null; // when focusing by caja, show all its components; otherwise fallback by text below
+  filtered.forEach(c => { tableRows.push(...cajaRowsHTML(c, compFilterSet, focusEnsCajaId==null ? filterValue : null)); });
   if(tableRows.length){
     contTableBody.innerHTML = tableRows.join('');
   } else {
@@ -266,7 +318,7 @@
     if(btnText) btnText.classList.toggle('btn-active', !showCards);
   }
 
-  function cajaRowsHTML(c){
+  function cajaRowsHTML(c, set /* Set<string> | null */, fallbackTextFilter /* string | null */){
     const remaining = msRemaining(c);
     const progress = timerProgressPct(c);
     const timerText = timerDisplay(remaining, c.timer?.completedAt);
@@ -275,7 +327,11 @@
   // Vista simplificada: sin cronómetro por componente/caja en tabla de Ensamblaje
   return [ `<tr class="hover" data-caja-id="${safeHTML(c.id)}">\n        <td class="text-sm font-mono">${safeHTML(c.codigoCaja||'')}</td>\n        <td class="text-sm opacity-60">(sin items)</td>\n        <td class="text-sm">${safeHTML(c.estado||'')}</td>\n      </tr>` ];
     }
-    return comps.map(cc => {
+    return comps.filter(cc => {
+      if(set && set.size){ return set.has(String(cc.codigo||'').toUpperCase()); }
+      if(fallbackTextFilter){ return String(cc.codigo||'').toLowerCase().includes(fallbackTextFilter); }
+      return true;
+    }).map(cc => {
   // Fila sin columna de cronómetro (solo caja, componente y estado)
   return `<tr class="hover" data-caja-id="${safeHTML(c.id)}">\n        <td class="text-sm font-mono">${safeHTML(c.codigoCaja||'')}</td>\n        <td class="text-sm flex flex-col leading-tight">\n          <span class="uppercase tracking-wide">${safeHTML(cc.tipo||cc.nombre||'')}</span>\n          <span class="font-mono text-xs opacity-40">${safeHTML(cc.codigo)}</span>\n        </td>\n        <td class="text-sm">${safeHTML(c.estado||'')}</td>\n      </tr>`;
     });
@@ -358,6 +414,7 @@
   // ========================= FILTER =========================
   function applyFilter(){
     renderCajas();
+    updateCounts();
   }
 
   // ========================= POLLING + DATA LOAD =========================
@@ -801,9 +858,20 @@
 
     // Filtro
   const filtro = qs(sel.filtroInput);
-  if(filtro){ filtro.addEventListener('input', ()=>{ applyFilter(); updateCounts(); }); }
   const filtroListo = qs(sel.filtroListoInput);
-  if(filtroListo){ filtroListo.addEventListener('input', ()=>{ renderListo(); updateCounts(); }); }
+  let _fltTimerEns = 0, _fltTimerListo = 0;
+  function scheduleEns(){ if(_fltTimerEns){ clearTimeout(_fltTimerEns); } _fltTimerEns = setTimeout(()=>{ _fltTimerEns=0; applyFilter(); }, 120); }
+  function scheduleListo(){ if(_fltTimerListo){ clearTimeout(_fltTimerListo); } _fltTimerListo = setTimeout(()=>{ _fltTimerListo=0; renderListo(); updateCounts(); }, 120); }
+  if(filtro){
+    filtro.addEventListener('input', scheduleEns);
+    filtro.addEventListener('paste', (e)=>{ const t=e.clipboardData?.getData('text')||''; if(t){ e.preventDefault(); filtro.value = (filtro.value||'') + t; scheduleEns(); } });
+    filtro.addEventListener('keydown', (e)=>{ const k=e.key||e.code; if(k==='Enter'||k==='NumpadEnter'){ e.preventDefault(); scheduleEns(); } });
+  }
+  if(filtroListo){
+    filtroListo.addEventListener('input', scheduleListo);
+    filtroListo.addEventListener('paste', (e)=>{ const t=e.clipboardData?.getData('text')||''; if(t){ e.preventDefault(); filtroListo.value = (filtroListo.value||'') + t; scheduleListo(); } });
+    filtroListo.addEventListener('keydown', (e)=>{ const k=e.key||e.code; if(k==='Enter'||k==='NumpadEnter'){ e.preventDefault(); scheduleListo(); } });
+  }
 
     // Scan form
     const form = qs(sel.scanForm);

@@ -474,27 +474,27 @@ export const OperacionController = {
         )`));
       // Traer NOW() server para offset
       const nowRes = await withTenant(tenant, (c)=> c.query<{ now:string }>(`SELECT NOW()::timestamptz AS now`));
-      // Items en Operación / Transito con su caja y timer de caja
+   // Solo cajas elegibles: items en Operación y sub_estado exactamente 'Transito'
    const pendQ = await withTenant(tenant, (c)=> c.query(
-  `SELECT ic.rfid,
+     `SELECT ic.rfid,
        m.nombre_modelo,
-    ic.estado,
-    ic.sub_estado,
+       ic.estado,
+       ic.sub_estado,
        CASE WHEN m.nombre_modelo ILIKE '%tic%' THEN 'tic'
          WHEN m.nombre_modelo ILIKE '%vip%' THEN 'vip'
          WHEN (m.nombre_modelo ILIKE '%cube%' OR m.nombre_modelo ILIKE '%cubo%') THEN 'cube'
          ELSE 'otro' END AS rol,
        c.caja_id,
        c.lote AS caja_lote,
-                act.started_at AS caja_started_at,
-                act.duration_sec AS caja_duration_sec,
-                act.active AS caja_active
+       act.started_at AS caja_started_at,
+       act.duration_sec AS caja_duration_sec,
+       act.active AS caja_active
      FROM inventario_credocubes ic
      JOIN modelos m ON m.modelo_id = ic.modelo_id
      LEFT JOIN acond_caja_items aci ON aci.rfid = ic.rfid
      LEFT JOIN acond_cajas c ON c.caja_id = aci.caja_id
-           LEFT JOIN acond_caja_timers act ON act.caja_id = c.caja_id
-    WHERE ic.estado='Operación' AND ic.sub_estado IN ('Retorno','Transito','Completado')
+     LEFT JOIN acond_caja_timers act ON act.caja_id = c.caja_id
+    WHERE ic.estado='Operación' AND ic.sub_estado = 'Transito'
     ORDER BY ic.id DESC
     LIMIT 1200`));
       const rows = pendQ.rows as any[];
@@ -643,6 +643,16 @@ export const OperacionController = {
     const cajaId = Number(caja_id);
     if(!Number.isFinite(cajaId) || cajaId<=0) return res.status(400).json({ ok:false, error:'caja_id inválido' });
     try {
+      // Validar elegibilidad: TODOS los items de la caja deben estar en Operación · Transito
+      const eligQ = await withTenant(tenant, (c)=> c.query(
+        `SELECT COUNT(*)::int AS total,
+                SUM(CASE WHEN ic.estado='Operación' AND ic.sub_estado='Transito' THEN 1 ELSE 0 END)::int AS ok
+           FROM acond_caja_items aci
+           JOIN inventario_credocubes ic ON ic.rfid = aci.rfid
+          WHERE aci.caja_id=$1`, [cajaId]));
+      const row = eligQ.rows[0] as any; if(!row || row.ok < row.total){
+        return res.status(400).json({ ok:false, error:'Caja no elegible: requiere Operación · Transito' });
+      }
       const nowQ = await withTenant(tenant, (c)=> c.query<{ now:string }>(`SELECT NOW()::timestamptz AS now`));
       const nowMs = new Date(nowQ.rows[0].now).getTime();
       const tQ = await withTenant(tenant, (c)=> c.query(`SELECT started_at, duration_sec, active FROM acond_caja_timers WHERE caja_id=$1`, [cajaId]));
@@ -698,6 +708,14 @@ export const OperacionController = {
   const dur = Number(durationSec);
     if(!Number.isFinite(cajaId) || cajaId<=0) return res.status(400).json({ ok:false, error:'caja_id inválido' });
     try {
+      // Validar elegibilidad primero
+      const eligQ = await withTenant(tenant, (c)=> c.query(
+        `SELECT COUNT(*)::int AS total,
+                SUM(CASE WHEN ic.estado='Operación' AND ic.sub_estado='Transito' THEN 1 ELSE 0 END)::int AS ok
+           FROM acond_caja_items aci
+           JOIN inventario_credocubes ic ON ic.rfid = aci.rfid
+          WHERE aci.caja_id=$1`, [cajaId]));
+      const erow = eligQ.rows[0] as any; if(!erow || erow.ok < erow.total){ return res.status(400).json({ ok:false, error:'Caja no elegible: requiere Operación · Transito' }); }
       const itemsQ = await withTenant(tenant, (c)=> c.query(`SELECT rfid FROM acond_caja_items WHERE caja_id=$1`, [cajaId]));
       if(!itemsQ.rowCount) return res.status(404).json({ ok:false, error:'Caja sin items' });
       const rfids = itemsQ.rows.map((r:any)=> r.rfid);
@@ -766,6 +784,16 @@ export const OperacionController = {
     const cajaId = Number(caja_id);
     if(!Number.isFinite(cajaId) || cajaId<=0) return res.status(400).json({ ok:false, error:'caja_id inválido' });
     try {
+      // Validar elegibilidad: Operación · Transito
+      const eligQ = await withTenant(tenant, (c)=> c.query(
+        `SELECT COUNT(*)::int AS total,
+                SUM(CASE WHEN ic.estado='Operación' AND ic.sub_estado='Transito' THEN 1 ELSE 0 END)::int AS ok
+           FROM acond_caja_items aci
+           JOIN inventario_credocubes ic ON ic.rfid = aci.rfid
+          WHERE aci.caja_id=$1`, [cajaId]));
+      const row = eligQ.rows[0] as any; if(!row || row.ok < row.total){
+        return res.status(400).json({ ok:false, error:'Caja no elegible: requiere Operación · Transito' });
+      }
       const nowQ = await withTenant(tenant, (c)=> c.query<{ now:string }>(`SELECT NOW()::timestamptz AS now`));
       const nowMs = new Date(nowQ.rows[0].now).getTime();
       const tQ = await withTenant(tenant, (c)=> c.query(`SELECT started_at, duration_sec, active FROM acond_caja_timers WHERE caja_id=$1`, [cajaId]));
@@ -789,6 +817,14 @@ export const OperacionController = {
     const { caja_id } = req.body as any; const cajaId = Number(caja_id);
     if(!Number.isFinite(cajaId) || cajaId<=0) return res.status(400).json({ ok:false, error:'caja_id inválido' });
     try {
+      // Validar elegibilidad: Operación · Transito
+      const eligQ = await withTenant(tenant, (c)=> c.query(
+        `SELECT COUNT(*)::int AS total,
+                SUM(CASE WHEN ic.estado='Operación' AND ic.sub_estado='Transito' THEN 1 ELSE 0 END)::int AS ok
+           FROM acond_caja_items aci
+           JOIN inventario_credocubes ic ON ic.rfid = aci.rfid
+          WHERE aci.caja_id=$1`, [cajaId]));
+      const erow = eligQ.rows[0] as any; if(!erow || erow.ok < erow.total){ return res.status(400).json({ ok:false, error:'Caja no elegible: requiere Operación · Transito' }); }
       const itemsQ = await withTenant(tenant, (c)=> c.query(`SELECT rfid FROM acond_caja_items WHERE caja_id=$1`, [cajaId]));
       if(!itemsQ.rowCount) return res.status(404).json({ ok:false, error:'Caja sin items' });
       const rfids = itemsQ.rows.map((r:any)=> r.rfid);

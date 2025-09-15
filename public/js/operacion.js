@@ -28,6 +28,19 @@
   let addScanLocked = false; // evita más escritura tras código válido
   let lastLookupCode = null; // evita lookups duplicados consecutivos
   let polling=null; let ticking=null; let serverOffset=0;
+  // Focus de caja al escanear un RFID (igual patrón que acond.js)
+  let focusCajaId = null; // number | null
+
+  // Parse RFIDs de 24 chars consecutivos (permite bursts del lector)
+  function parseRfids(raw){
+    const s = String(raw||'').toUpperCase().replace(/\s+/g,'');
+    const out = [];
+    // chunks exactos cada 24
+    for(let i=0;i+24<=s.length;i+=24){ out.push(s.slice(i,i+24)); }
+    // regex rescatando overlap / mezclados
+    const rx=/[A-Z0-9]{24}/g; let m; while((m=rx.exec(s))){ const c=m[0]; if(!out.includes(c)) out.push(c); }
+    return out;
+  }
 
   function msRemaining(timer){ if(!timer||!timer.endsAt) return 0; return new Date(timer.endsAt).getTime() - (Date.now()+serverOffset); }
   function timerDisplay(rem){
@@ -119,16 +132,43 @@
   }
   function render(){
     if(!tbody) return;
-    const f = (filterInput?.value||'').trim().toLowerCase();
+    const raw = (filterInput?.value||'');
+    const firstRfid = parseRfids(raw)[0] || '';
+    const f = raw.trim().toLowerCase();
     const activos = dataCajas.filter(c=> c.estado!=='Completado');
-  const filAct = f? activos.filter(c=> c.codigoCaja.toLowerCase().includes(f) || (c.componentes||[]).some(it=> it.codigo.toLowerCase().includes(f)) ): activos;
+
+    // Determinar focusCajaId si el primer token es un RFID válido
+    if(firstRfid){
+      const hit = activos.find(c=> (c.componentes||[]).some(it=> String(it.codigo||'').toUpperCase() === firstRfid));
+      focusCajaId = hit ? hit.id : null;
+    } else {
+      focusCajaId = null;
+    }
+
+    const filAct = focusCajaId != null
+      ? activos.filter(c=> String(c.id) === String(focusCajaId))
+      : (f? activos.filter(c=> c.codigoCaja.toLowerCase().includes(f) || (c.componentes||[]).some(it=> it.codigo.toLowerCase().includes(f)) ): activos);
+
     // Tabla
     tbody.innerHTML = filAct.length? filAct.map(c=> rowHTML(c)).join('') : `<tr><td colspan="5" class="text-center py-6 text-xs opacity-50">Sin resultados</td></tr>`;
     // Tarjetas (solo una por caja, no por componente)
     if(grid){
       grid.innerHTML = filAct.length? filAct.map(c=> cardHTML(c)).join('') : `<div class="text-xs opacity-50 col-span-full py-6 text-center">Sin resultados</div>`;
     }
-  if(count) count.textContent = `(${filAct.reduce((a,c)=> a + (c.componentes||[]).length,0)} de ${activos.reduce((a,c)=> a + (c.componentes||[]).length,0)})`;
+    if(count){
+      const totalComp = activos.reduce((a,c)=> a + (c.componentes||[]).length,0);
+      let filteredComp;
+      if(focusCajaId != null){
+        filteredComp = filAct.reduce((a,c)=> a + (c.componentes||[]).length,0);
+      } else if(f){
+        // Contar sólo los componentes cuyo código coincide; si resulta 0, caer a todos los de las cajas filtradas
+        filteredComp = filAct.reduce((a,c)=> a + (c.componentes||[]).filter(it=> it.codigo.toLowerCase().includes(f)).length,0);
+        if(filteredComp===0){ filteredComp = filAct.reduce((a,c)=> a + (c.componentes||[]).length,0); }
+      } else {
+        filteredComp = filAct.reduce((a,c)=> a + (c.componentes||[]).length,0);
+      }
+      count.textContent = `(${filteredComp} de ${totalComp})`;
+    }
   }
   function ensureTick(){ if(ticking) return; ticking = setInterval(()=>{
     qsa('[data-op-timer]').forEach(b=>{

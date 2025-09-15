@@ -812,21 +812,40 @@
   renderInitialLoading();
   loadData();
 
-  // Client-side filtering
+  // Client-side filtering con soporte multi-RFID (24 chars) y debounce
+  function parseRfids(raw){
+    const s = String(raw||'').toUpperCase().replace(/\s+/g,'');
+    const out = [];
+    for(let i=0;i+24<=s.length;i+=24){ out.push(s.slice(i,i+24)); }
+    // fallback: capturar 24 alfanum continuos si vienen con separadores
+    const rx=/[A-Z0-9]{24}/g; let m; while((m=rx.exec(s))){ const c=m[0]; if(!out.includes(c)) out.push(c); }
+    return out;
+  }
   function applyFilter(inputEl, tbody, countEl){
-    const q = (inputEl?.value||'').trim().toLowerCase();
+    const raw = (inputEl?.value||'');
+    const rfids = parseRfids(raw);
+    const q = raw.trim().toLowerCase();
     const trs = Array.from(tbody?.querySelectorAll('tr')||[]);
     let visible = 0, total = 0;
+    const set = new Set(rfids);
+    const multi = rfids.length > 1;
+    // Si multi, forzar vista de lista para visualizar filtros por RFID
+    try{ if(multi && typeof setView==='function'){ setView('list'); } }catch{}
     trs.forEach(tr=>{
       const tds = tr.querySelectorAll('td');
       if(!tds || tds.length===1){
-        // empty state row
-        tr.style.display = q? 'none' : '';
+        tr.style.display = (q? 'none' : '');
         return;
       }
       total++;
-      const hay = Array.from(tds).slice(0,4).map(td=>td.textContent||'').join(' ').toLowerCase();
-      const show = !q || hay.includes(q);
+      let show=false;
+      if(multi){
+        const code = (tds[0]?.textContent||'').trim().toUpperCase();
+        show = set.has(code);
+      } else {
+        const hay = Array.from(tds).slice(0,4).map(td=>td.textContent||'').join(' ').toLowerCase();
+        show = !q || hay.includes(q);
+      }
       tr.style.display = show? '' : 'none';
       if(show) visible++;
     });
@@ -837,6 +856,13 @@
       countEl.textContent = `(${visible} de ${totalCount})`;
     }
   }
-  searchCong?.addEventListener('input', ()=>applyFilter(searchCong, tableCongBody, countCong));
-  searchAtem?.addEventListener('input', ()=>applyFilter(searchAtem, tableAtemBody, countAtem));
+  let _fltTimer=0;
+  function scheduleFilter(inputEl, tbody, countEl){ if(_fltTimer){ clearTimeout(_fltTimer); } _fltTimer=setTimeout(()=>{ _fltTimer=0; applyFilter(inputEl, tbody, countEl); }, 120); }
+  searchCong?.addEventListener('input', ()=>scheduleFilter(searchCong, tableCongBody, countCong));
+  searchAtem?.addEventListener('input', ()=>scheduleFilter(searchAtem, tableAtemBody, countAtem));
+  searchCong?.addEventListener('paste', (e)=>{ const t=e.clipboardData?.getData('text')||''; if(t){ e.preventDefault(); searchCong.value = (searchCong.value||'') + t; scheduleFilter(searchCong, tableCongBody, countCong); } });
+  searchAtem?.addEventListener('paste', (e)=>{ const t=e.clipboardData?.getData('text')||''; if(t){ e.preventDefault(); searchAtem.value = (searchAtem.value||'') + t; scheduleFilter(searchAtem, tableAtemBody, countAtem); } });
+  const preventEnter = (ev)=>{ const k=ev.key||ev.code; if(k==='Enter'||k==='NumpadEnter'){ ev.preventDefault(); ev.stopPropagation(); scheduleFilter(ev.target===searchCong?searchCong:searchAtem, ev.target===searchCong?tableCongBody:tableAtemBody, ev.target===searchCong?countCong:countAtem); } };
+  searchCong?.addEventListener('keydown', preventEnter);
+  searchAtem?.addEventListener('keydown', preventEnter);
 })();
