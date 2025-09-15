@@ -264,26 +264,13 @@ export const InventarioController = {
     const isSingleRfid = scanned.length===0 && /^[A-Za-z0-9]{24}$/.test(q||'');
     try {
       if(isSingleRfid){
-        // Reusar lógica cajaMode mínima (sin counts detallados)
-        let cajaJoin=false; let whereSQL=''; let params:any[]=[];
-        try {
-          const byCaja = await withTenant(tenant, c=>c.query(`SELECT aci.caja_id, c.lote FROM acond_caja_items aci JOIN acond_cajas c ON c.caja_id=aci.caja_id WHERE aci.rfid=$1 LIMIT 1`, [q]));
-          if(byCaja.rowCount){
-            const id = byCaja.rows[0].caja_id;
-            cajaJoin=true; whereSQL='WHERE aci.caja_id = $1'; params=[id];
-          } else {
-            const byLote = await withTenant(tenant, c=>c.query(`SELECT lote FROM inventario_credocubes WHERE rfid=$1 LIMIT 1`, [q]));
-            const lote = (byLote.rows?.[0]?.lote||'').toString().trim();
-            if(lote){ whereSQL='WHERE ic.lote = $1'; params=[lote]; }
-          }
-        }catch{}
-        const sql = `SELECT ic.id, ic.nombre_unidad, ic.modelo_id, ic.rfid, ic.lote, ic.estado, ic.sub_estado, ic.fecha_ingreso
-                      FROM inventario_credocubes ic
-                      ${cajaJoin? 'JOIN acond_caja_items aci ON aci.rfid=ic.rfid':''}
-                      ${whereSQL}
-                      ORDER BY ic.id DESC LIMIT $${params.length+1}`;
-        const rows = await withTenant(tenant, c=>c.query(sql, [...params, limit]));
-        return res.json({ ok:true, mode:'caja', count: rows.rowCount, items: rows.rows });
+        // Regla: con un solo RFID se devuelve solo ese item si existe (no expandir a caja)
+        const rows = await withTenant(tenant, c=>c.query(
+          `SELECT ic.id, ic.nombre_unidad, ic.modelo_id, ic.rfid, ic.lote, ic.estado, ic.sub_estado, ic.fecha_ingreso
+             FROM inventario_credocubes ic
+            WHERE ic.rfid=$1`, [q]
+        ));
+        return res.json({ ok:true, mode:'single', count: rows.rowCount, items: rows.rows });
       }
       if(scanned.length>0){
         // Multi: traer todos esos RFIDs
