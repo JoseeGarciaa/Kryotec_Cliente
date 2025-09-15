@@ -914,9 +914,13 @@
     const crearBtn = document.getElementById('btn-crear-caja');
     const limpiarBtn = document.getElementById('btn-clear-ensam');
 
-    const ticSet = new Set();
-    const vipSet = new Set();
-    const cubeSet = new Set();
+  // Conjuntos de válidos por rol
+  const ticSet = new Set();
+  const vipSet = new Set();
+  const cubeSet = new Set();
+  // Buffer de escaneos (todos los códigos escaneados pendientes/validados)
+  const scannedSet = new Set();
+  let _validateTimer = 0;
 
     function renderLists(){
       if(listTic) listTic.innerHTML = [...ticSet].map(r=>`<li class="px-2 py-1 bg-base-200 rounded text-xs font-mono truncate">${r}</li>`).join('');
@@ -939,21 +943,23 @@
       if(hint) hint.textContent = compComplete() ? 'Composición completa. Indica duración y crea la caja.' : `Faltan: ${faltTic} TIC · ${faltVip} VIP · ${faltCube} CUBE`;
       if(crearBtn) crearBtn.disabled = !(compComplete() && durationMinutes()>0);
     }
-    function resetAll(){ ticSet.clear(); vipSet.clear(); cubeSet.clear(); renderLists(); updateStatus(); if(msg) msg.textContent=''; }
+  function resetAll(){ ticSet.clear(); vipSet.clear(); cubeSet.clear(); scannedSet.clear(); renderLists(); updateStatus(); if(msg) msg.textContent=''; }
 
-    async function validateAll(last){
-      const rfids = [...ticSet, ...vipSet, ...cubeSet];
-      if(last && !rfids.includes(last)) rfids.push(last);
-      if(rfids.length===0 && !last) return;
+    async function validateAll(){
+      const rfids = Array.from(scannedSet);
+      if(rfids.length===0) return;
       try {
         const res = await fetch('/operacion/acond/ensamblaje/validate',{ method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ rfids })});
         const json = await res.json();
         if(!res.ok || !json.ok) throw new Error(json.error||'Error validando');
-  // Nuevo backend devuelve { ok:true, counts:{...}, roles:[ { rfid, rol } ] }
-  const roles = Array.isArray(json.roles) ? json.roles : [];
-  // Limpiar sets y reconstruir desde roles válidos
-  ticSet.clear(); vipSet.clear(); cubeSet.clear();
-        roles.forEach(v=>{ if(v.rol==='tic') ticSet.add(v.rfid); else if(v.rol==='vip') vipSet.add(v.rfid); else if(v.rol==='cube') cubeSet.add(v.rfid); });
+        // Backend: { ok:true, roles:[ { rfid, rol } ], invalid:[{rfid, reason}] }
+        const roles = Array.isArray(json.roles) ? json.roles : [];
+        const invalid = Array.isArray(json.invalid) ? json.invalid : [];
+        // Reconstruir válidos por rol
+        ticSet.clear(); vipSet.clear(); cubeSet.clear();
+        roles.forEach(v=>{ const code=String(v.rfid||'').toUpperCase(); if(v.rol==='tic') ticSet.add(code); else if(v.rol==='vip') vipSet.add(code); else if(v.rol==='cube') cubeSet.add(code); });
+        // Auto-filtrar: remover inválidos del buffer (no mostrar en UI ni revalidarlos)
+        if(invalid.length){ invalid.forEach(it=> scannedSet.delete(String(it.rfid||'').toUpperCase())); }
         // Cap local: máximo 6 TICs visibles/seleccionables
         if(ticSet.size > 6){
           const keep = Array.from(ticSet).slice(0,6);
@@ -961,27 +967,27 @@
           if(msg) msg.textContent = 'Máximo 6 TICs';
         }
         renderLists(); updateStatus();
-        if(msg) msg.textContent='';
-        if(Array.isArray(json.invalid) && json.invalid.length){
-          // Buscar si el último escaneado está inválido
-            const inv = last ? json.invalid.find(i=>i.rfid===last) : null;
-            if(inv && msg) msg.textContent = `${inv.rfid}: ${inv.reason}`;
-        }
+        if(msg && !invalid.length) msg.textContent='';
         console.debug('[Ensamblaje] Validación OK', json);
       } catch(e){ if(msg) msg.textContent = e.message||'Error'; }
     }
+    function scheduleValidate(){ if(_validateTimer){ clearTimeout(_validateTimer); } _validateTimer = setTimeout(()=>{ _validateTimer=0; validateAll(); }, 120); }
+    function processBuffer(str){
+      let v = (str||'').replace(/\s+/g,'').toUpperCase();
+      while(v.length>=24){ const chunk=v.slice(0,24); if(chunk.length===24) scannedSet.add(chunk); v=v.slice(24); }
+      return v;
+    }
     function handleScan(force){
       if(!scanInput) return;
-      let raw = (scanInput.value||'').trim().toUpperCase();
+      let raw = (scanInput.value||'').toUpperCase();
       if(!raw) return;
-      if(raw.length===24 || force){
-        validateAll(raw); scanInput.value='';
-      } else if(raw.length>24){
-        let i=0; while(i+24<=raw.length){ validateAll(raw.slice(i,i+24)); i+=24; }
-        scanInput.value = raw.slice(i);
-      }
+      if(force && raw.length>0){ raw = processBuffer(raw); scanInput.value = raw; scheduleValidate(); return; }
+      const rest = processBuffer(raw);
+      scanInput.value = rest;
+      scheduleValidate();
     }
-  scanInput?.addEventListener('input', ()=>handleScan(false));
+    scanInput?.addEventListener('input', ()=>handleScan(false));
+    scanInput?.addEventListener('paste', (e)=>{ const t=e.clipboardData?.getData('text')||''; if(t){ e.preventDefault(); const rest=processBuffer(t); scanInput.value = rest; scheduleValidate(); } });
     scanInput?.addEventListener('keydown', e=>{ if(e.key==='Enter'){ e.preventDefault(); handleScan(true); }});
     horas?.addEventListener('input', updateStatus);
     minutos?.addEventListener('input', updateStatus);
