@@ -28,6 +28,7 @@
   const dlg = qs('#dlg-scan');
   const scanInput = qs('#scan-input');
   const chipsBox = qs('#chips');
+  const scanCount = qs('#scan-count');
   const msg = qs('#scan-msg');
   const btnConfirm = qs('#btn-confirm');
   const keepLoteRow = qs('#keep-lote-row');
@@ -391,22 +392,23 @@
   }
 
   function renderChips(){
-    const items = rfids.map(code=>{
-      const isInvalid = invalid.some(x=>x.rfid===code);
-      const isOk = valid.includes(code);
-      const cls = isInvalid ? 'badge badge-error gap-2' : (isOk ? 'badge badge-success gap-2' : 'badge badge-outline gap-2');
-      const status = isInvalid ? '<div class="text-[10px] text-error">inválido</div>' : (isOk ? '<div class="text-[10px] text-success">ok</div>' : '');
+    // Mostrar únicamente los válidos (verdes) y contar
+    const uniqueValid = Array.from(new Set(valid));
+    const items = uniqueValid.map(code=>{
       return `<div class="inline-flex flex-col items-center">
-                <span class="${cls}">${code}<button type="button" class="btn btn-ghost btn-xs" data-remove="${code}">✕</button></span>
-                ${status}
+                <span class="badge badge-success gap-2">${code}<button type="button" class="btn btn-ghost btn-xs" data-remove="${code}">✕</button></span>
+                <div class="text-[10px] text-success">ok</div>
               </div>`;
     }).join('');
     chipsBox.innerHTML = items || '<div class="opacity-60 text-sm">Sin RFIDs</div>';
-    btnConfirm.disabled = valid.length === 0;
+    if(scanCount){ scanCount.textContent = String(uniqueValid.length); }
+    btnConfirm.disabled = uniqueValid.length === 0;
   }
 
   function addCode(chunk){
-    if(chunk && chunk.length===24 && !rfids.includes(chunk)) rfids.push(chunk);
+    if(!chunk) return;
+    const code = String(chunk).toUpperCase();
+    if(code.length===24 && !rfids.includes(code)) rfids.push(code);
   }
 
   function processBuffer(raw){
@@ -420,15 +422,26 @@
     try{
       const r = await fetch('/operacion/preacond/validate', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ target, rfids }) });
       const j = await r.json();
-      invalid = Array.isArray(j.invalid)? j.invalid : [];
-      valid = Array.isArray(j.valid)? j.valid : [];
-      renderChips();
-      msg.textContent = invalid.length ? 'Elimine o corrija los RFIDs inválidos.' : '';
+  const inv = Array.isArray(j.invalid)? j.invalid : [];
+  const ok = Array.isArray(j.valid)? j.valid : [];
+  // Auto-filtrar: conservar solo válidos y limpiar inválidos (no mostrar rojos)
+  invalid = [];
+  valid = ok.map(String);
+  rfids = rfids.filter(c => valid.includes(c));
+  renderChips();
+  msg.textContent = '';
     }catch{ /* keep state */ }
   }
 
+  // Debounce to avoid hammering the server with the RFID gun rapid input
+  let _vTimer = 0;
+  function scheduleValidate(){
+    if(_vTimer){ clearTimeout(_vTimer); }
+    _vTimer = setTimeout(()=>{ _vTimer = 0; validate(); }, 120);
+  }
+
   // Input handlers
-  scanInput?.addEventListener('input', ()=>{ if(scanMode==='individual'){ scanInput.value = processBuffer(scanInput.value); validate(); } });
+  scanInput?.addEventListener('input', ()=>{ if(scanMode==='individual'){ scanInput.value = processBuffer(scanInput.value); scheduleValidate(); } });
   // Modo selector
   document.querySelectorAll('input[name="scan-mode"]').forEach(r=>{
     r.addEventListener('change', (e)=>{
@@ -476,7 +489,7 @@
   if(v.length===24){ handleLoteScan(v); }
     }
   });
-  scanInput?.addEventListener('paste', (e)=>{ const t=e.clipboardData?.getData('text')||''; if(t){ e.preventDefault(); scanInput.value = processBuffer(t); validate(); } });
+  scanInput?.addEventListener('paste', (e)=>{ const t=e.clipboardData?.getData('text')||''; if(t){ e.preventDefault(); scanInput.value = processBuffer(t); scheduleValidate(); } });
   // Prevent Enter from auto-confirming; require tapping the Confirm button
   scanInput?.addEventListener('keydown', (e)=>{
     if(e.key === 'Enter'){
@@ -489,7 +502,13 @@
   chipsBox?.addEventListener('click', (e)=>{
     const t = e.target; if(!(t instanceof Element)) return;
     const code = t.getAttribute('data-remove');
-    if(code){ rfids = rfids.filter(x=>x!==code); valid = valid.filter(x=>x!==code); invalid = invalid.filter(x=>x.rfid!==code); renderChips(); validate(); }
+    if(code){
+      rfids = rfids.filter(x=>x!==code);
+      valid = valid.filter(x=>x!==code);
+      // invalid list is not shown; keep empty
+      renderChips();
+      validate();
+    }
   });
 
   // Cambiar mensaje cuando usuario marca conservar lote (no se puede crear lote nuevo)

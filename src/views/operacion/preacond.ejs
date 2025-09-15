@@ -147,6 +147,9 @@
   <label class="flex items-center gap-2 text-sm"><input type="radio" name="scan-mode" value="lote" class="radio radio-xs"> <span>Traer todo el lote (escanea 1 TIC congelada)</span></label>
       </div>
       <input id="scan-input" type="text" class="input input-bordered" placeholder="Listo para escanear..." />
+      <div class="flex items-center justify-between">
+        <div class="text-xs opacity-70">Total escaneadas: <span id="scan-count">0</span></div>
+      </div>
       <div id="chips" class="flex flex-wrap gap-2"></div>
       <div id="scan-msg" class="text-sm text-error"></div>
       <!-- Resumen lote -->
