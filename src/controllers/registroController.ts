@@ -15,9 +15,9 @@ function normTipo(tipo: string | null): 'TIC' | 'VIP' | 'Cube' | 'Otros' {
 
 export const RegistroController = {
   index: async (req: Request, res: Response) => {
-  const t = resolveTenant(req);
+  const t = (req as any).user?.tenant || resolveTenant(req);
   if (!t) return res.status(400).send('Tenant no especificado');
-  const tenant = t.startsWith('tenant_') ? t : `tenant_${t}`;
+  const tenant = String(t).startsWith('tenant_') ? String(t) : `tenant_${t}`;
   const modelosRes = await withTenant(tenant, (c) => c.query<ModeloRow>('SELECT modelo_id, nombre_modelo, tipo FROM modelos ORDER BY nombre_modelo'));
     const modelos = modelosRes.rows;
 
@@ -35,9 +35,9 @@ export const RegistroController = {
   },
 
   create: async (req: Request, res: Response) => {
-  const t = resolveTenant(req);
+  const t = (req as any).user?.tenant || resolveTenant(req);
   if (!t) return res.status(400).send('Tenant no especificado');
-  const tenant = t.startsWith('tenant_') ? t : `tenant_${t}`;
+  const tenant = String(t).startsWith('tenant_') ? String(t) : `tenant_${t}`;
   const { modelo_id, rfids } = req.body as any;
     const modeloIdNum = Number(modelo_id);
     // rfids may come as array or object (rfids[0], rfids[1], ...)
@@ -74,7 +74,6 @@ export const RegistroController = {
         if (!meta.rowCount) throw new Error('Modelo no encontrado');
         const nombre = meta.rows[0].nombre_modelo;
         selectedTipo = normTipo(meta.rows[0].tipo) as string;
-        const categoria = meta.rows[0].tipo || null;
 
         // Pre-check duplicates y filtrar los existentes
         const dupCheck = await c.query<{ rfid: string }>(
@@ -89,9 +88,9 @@ export const RegistroController = {
         for (const rfid of toInsert) {
           await c.query(
             `INSERT INTO inventario_credocubes 
-               (modelo_id, nombre_unidad, rfid, lote, estado, sub_estado, categoria, fecha_ingreso, fecha_vencimiento)
-             VALUES ($1, $2, $3, NULL, 'En Bodega', NULL, $4, NOW(), NOW() + INTERVAL '5 years')`,
-            [modeloIdNum, nombre, rfid, categoria]
+               (modelo_id, nombre_unidad, rfid, lote, estado, sub_estado)
+             VALUES ($1, $2, $3, NULL, 'En Bodega', NULL)`,
+            [modeloIdNum, nombre, rfid]
           );
         }
         // Si algunos eran duplicados, redirigir igual (operación idempotente)
