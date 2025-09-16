@@ -7,12 +7,12 @@
 
   <div class="card border border-base-300/40 shadow-sm bg-base-200/50">
     <div class="card-body pt-5 md:pt-6">
-      <form id="form-filtros" class="grid gap-4 md:gap-5 w-full sm:grid-cols-2 lg:grid-cols-5 items-end">
+      <form id="form-filtros" class="grid grid-cols-1 gap-4 md:gap-5 w-full sm:grid-cols-2 lg:grid-cols-5 items-end">
         <label class="form-control w-full">
           <span class="label-text text-xs">Buscar</span>
           <input name="q" id="f-q" class="input input-sm input-bordered" placeholder="RFID / nombre / lote" />
         </label>
-        <label class="form-control w-full max-w-xs">
+        <label class="form-control w-full">
           <span class="label-text text-xs">Categoría</span>
           <select name="cat" id="f-cat" class="select select-sm select-bordered">
             <option value="">Todas</option>
@@ -21,9 +21,9 @@
             <option value="cubes">Cubes</option>
           </select>
         </label>
-        <div class="flex gap-3 sm:col-span-2 lg:col-span-2 xl:col-span-1">
+        <div class="flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-3 sm:col-span-2 lg:col-span-2 xl:col-span-1">
           <button class="btn btn-primary btn-sm w-full sm:w-auto" type="submit">Filtrar</button>
-          <button id="btn-clear" type="button" class="btn btn-ghost btn-sm w-full sm:w-auto">Limpiar</button>
+          <button id="btn-clear" type="button" class="btn btn-outline btn-sm w-full sm:w-auto">Limpiar</button>
         </div>
         <div class="lg:col-span-2 hidden xl:block"></div>
       </form>

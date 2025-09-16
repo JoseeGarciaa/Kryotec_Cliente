@@ -1,0 +1,49 @@
+<% title = title || 'Notificaciones' %>
+<div class="space-y-5">
+  <div class="flex items-center justify-between">
+    <h1 class="text-2xl font-bold tracking-tight">Notificaciones</h1>
+    <a href="/notificaciones" class="btn btn-ghost btn-sm">Recargar</a>
+  </div>
+
+  <div class="overflow-x-auto border border-base-300/40 rounded-xl bg-base-100/60">
+    <table class="table table-sm">
+      <thead>
+        <tr>
+          <th>ID</th>
+          <th>Tipo</th>
+          <th>Descripción</th>
+          <th>Creación</th>
+          <th>Estado</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody>
+        <% if (!items || !items.length) { %>
+          <tr><td colspan="6" class="text-center text-xs opacity-70">Sin alertas</td></tr>
+        <% } %>
+        <% (items||[]).forEach(a => { %>
+          <tr>
+            <td><%= a.id %></td>
+            <td><span class="badge badge-outline"><%= a.tipo_alerta %></span></td>
+            <td class="max-w-[420px]"><div class="truncate" title="<%= a.descripcion || '' %>"><%= a.descripcion || '-' %></div></td>
+            <td class="text-xs"><%= new Date(a.fecha_creacion).toLocaleString('es-CO') %></td>
+            <td>
+              <% if (a.resuelta) { %>
+                <span class="badge badge-success badge-outline">Resuelta</span>
+              <% } else { %>
+                <span class="badge badge-warning badge-outline">Pendiente</span>
+              <% } %>
+            </td>
+            <td class="text-right">
+              <% if (!a.resuelta) { %>
+                <form method="post" action="/notificaciones/<%= a.id %>/resolver">
+                  <button class="btn btn-xs btn-primary">Marcar resuelta</button>
+                </form>
+              <% } %>
+            </td>
+          </tr>
+        <% }) %>
+      </tbody>
+    </table>
+  </div>
+</div>

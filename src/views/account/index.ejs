@@ -1,0 +1,44 @@
+<% title = title || 'Mi cuenta' %>
+<div class="space-y-6">
+  <div class="card border border-base-300/40 bg-base-200/60">
+    <div class="card-body">
+      <h2 class="card-title">Perfil</h2>
+      <form action="/cuenta/update-profile" method="post" class="grid gap-4 sm:grid-cols-2">
+        <label class="form-control">
+          <span class="label-text">Nombre</span>
+          <input class="input input-bordered" type="text" name="nombre" value="<%= (accountUser && accountUser.nombre) || '' %>" required />
+        </label>
+        <label class="form-control">
+          <span class="label-text">Correo</span>
+          <input class="input input-bordered" type="email" name="correo" value="<%= (accountUser && accountUser.correo) || '' %>" required />
+        </label>
+        <label class="form-control">
+          <span class="label-text">Teléfono</span>
+          <input class="input input-bordered" type="text" name="telefono" value="<%= (accountUser && accountUser.telefono) || '' %>" />
+        </label>
+        <div class="sm:col-span-2">
+          <button class="btn btn-primary">Guardar</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <div class="card border border-base-300/40 bg-base-200/60">
+    <div class="card-body">
+      <h2 class="card-title">Cambiar contraseña</h2>
+      <form action="/cuenta/change-password" method="post" class="grid gap-4 sm:grid-cols-2">
+        <label class="form-control">
+          <span class="label-text">Actual</span>
+          <input class="input input-bordered" type="password" name="current_password" required />
+        </label>
+        <label class="form-control">
+          <span class="label-text">Nueva</span>
+          <input class="input input-bordered" type="password" name="new_password" minlength="6" required />
+        </label>
+        <div class="sm:col-span-2">
+          <button class="btn btn-primary">Actualizar contraseña</button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>

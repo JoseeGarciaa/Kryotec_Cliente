@@ -23,6 +23,7 @@ const ROLE_ACCESS: Record<string, string[]> = {
   acondicionador: [
     '/operacion/preacond',
     '/operacion/acond',
+    '/cuenta', '/notificaciones',
     '/auth', '/ui/theme', '/static', '/health'
   ],
   operador: [
@@ -32,16 +33,19 @@ const ROLE_ACCESS: Record<string, string[]> = {
     '/operacion/caja',
     '/operacion/scan',
     '/operacion/devolucion',
+    '/cuenta', '/notificaciones',
     '/auth', '/ui/theme', '/static', '/health'
   ],
   bodeguero: [
     '/operacion/bodega',
   '/operacion/bodega-pend-insp',
     '/registro',
+    '/cuenta', '/notificaciones',
     '/auth', '/ui/theme', '/static', '/health'
   ],
   inspeccionador: [
     '/operacion/inspeccion',
+    '/cuenta', '/notificaciones',
     '/auth', '/ui/theme', '/static', '/health'
   ],
 };

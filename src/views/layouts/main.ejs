@@ -28,7 +28,7 @@
           <span>KryoSense</span>
           <label for="drawer-nav" aria-label="close sidebar" class="lg:hidden btn btn-ghost btn-xs">✕</label>
         </div>
-        <div class="text-xs opacity-60 px-2 mb-3">Tenant: <%= (user && user.tenant) || '-' %></div>
+        
   <button id="btn-theme-toggle" class="btn k-gradient-btn btn-sm mb-4 text-xs justify-start">Cambiar tema</button>
         <ul class="menu flex-1">
           <% const roleLowerRaw = (user && (user.rol || '').toLowerCase()) || ''; %>
@@ -77,14 +77,45 @@
             <li><a class="<%= currentPath.startsWith('/administracion') ? 'active' : '' %>" href="/administracion">Administración</a></li>
           <% } %>
         </ul>
-        <form method="post" action="/auth/logout" class="mt-4">
-          <button class="btn btn-outline btn-sm w-full">Salir</button>
-        </form>
+        <!-- User menu at bottom -->
+        <div class="mt-2">
+          <!-- Hidden form for logout (so we can submit from menu item) -->
+          <form id="logout-form" method="post" action="/auth/logout"></form>
+          <div class="dropdown dropdown-top w-full">
+            <label tabindex="0" class="btn btn-ghost w-full justify-between">
+              <div class="flex items-center gap-3">
+                <div class="avatar placeholder">
+                  <div class="bg-primary text-primary-content rounded-full w-8">
+                    <span class="text-sm">
+                      <%= ((user && user.nombre) ? String(user.nombre).charAt(0) : 'U').toUpperCase() %>
+                    </span>
+                  </div>
+                </div>
+                <div class="text-left leading-tight">
+                  <div class="text-sm font-semibold truncate max-w-[140px]">
+                    <%= (user && (user.nombre || user.correo)) ? (user.nombre || user.correo) : 'Usuario' %>
+                  </div>
+                  <div class="text-[11px] opacity-60 truncate max-w-[160px]">
+                    <%= (typeof theme !== 'undefined', (user && user.tenant) ? String(user.tenant).replace(/^tenant_?/i,'') : '-') %>
+                  </div>
+                </div>
+              </div>
+              <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 opacity-70" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M5.23 7.21a.75.75 0 011.06.02L10 11.111l3.71-3.88a.75.75 0 111.08 1.04l-4.24 4.43a.75.75 0 01-1.08 0L5.21 8.27a.75.75 0 01.02-1.06z" clip-rule="evenodd"/></svg>
+            </label>
+            <ul tabindex="0" class="dropdown-content menu p-2 shadow bg-base-100 rounded-box w-60 mb-2">
+              <li><a href="#" id="user-settings">Configuración</a></li>
+              <li><a href="#" id="user-notifs">Notificaciones</a></li>
+              <li><button type="submit" form="logout-form" class="text-error">Cerrar sesión</button></li>
+            </ul>
+          </div>
+        </div>
       </aside>
     </div>
   </div>
   <script src="/static/js/theme.js?v=<%= assetVersion %>"></script>
   <script src="/static/js/ux.js?v=<%= assetVersion %>"></script>
+  <script src="/static/js/user-menu.js?v=<%= assetVersion %>" defer></script>
+  <script src="/static/js/notifications.js?v=<%= assetVersion %>" defer></script>
   <style>
     /* Ocultar botón cuando drawer abierto */
     #drawer-nav:checked + label.mobile-menu-btn { display:none }

@@ -1,5 +1,6 @@
 import { Request, Response } from 'express';
 import { withTenant } from '../db/pool';
+import { AlertsModel } from '../models/alerts';
 import { requireAuth } from '../middleware/auth';
 
 export const InventarioController = {
@@ -312,6 +313,14 @@ export const InventarioController = {
          WHERE id=$5`,
         [nombre_unidad || null, (lote||'')? lote : null, estado || null, (sub_estado||'')? sub_estado : null, id]
       ));
+      // Crear alerta de actualización
+      await withTenant(tenant, (c) =>
+        AlertsModel.create(c, {
+          inventario_id: id,
+          tipo_alerta: 'inventario:actualizado',
+          descripcion: `Item ${id} actualizado${estado ? ' - estado: '+estado : ''}${sub_estado ? ' / '+sub_estado : ''}`,
+        })
+      );
       return res.redirect('/inventario');
     } catch(e:any){
       return res.status(500).send('Error actualizando');
@@ -323,6 +332,14 @@ export const InventarioController = {
     const id = Number((req.params as any).id);
     if(!Number.isFinite(id) || id<=0) return res.status(400).json({ ok:false, error:'id inválido' });
     try {
+      // Crear alerta antes de borrar para conservar el id en el registro de alertas
+      await withTenant(tenant, (c) =>
+        AlertsModel.create(c, {
+          inventario_id: id,
+          tipo_alerta: 'inventario:eliminado',
+          descripcion: `Item ${id} eliminado`,
+        })
+      );
       // Hard delete: elimina el registro de la base de datos
       await withTenant(tenant, (c)=> c.query(
         `DELETE FROM inventario_credocubes WHERE id=$1`, [id]
@@ -338,12 +355,23 @@ export const InventarioController = {
     const tenant = (req as any).user?.tenant;
     const { modelo_id, nombre_unidad, rfid, lote, estado, sub_estado } = req.body;
     try {
-      await withTenant(tenant, (c) =>
+      const inserted = await withTenant(tenant, (c) =>
         c.query(
           `INSERT INTO inventario_credocubes (modelo_id, nombre_unidad, rfid, lote, estado, sub_estado)
-           VALUES ($1,$2,$3,$4,$5,$6)`,
+           VALUES ($1,$2,$3,$4,$5,$6)
+           RETURNING id, rfid`,
           [modelo_id, nombre_unidad, rfid, lote || null, estado, sub_estado || null]
         )
+      );
+      const newId = inserted.rows?.[0]?.id as number | undefined;
+      const newRfid = inserted.rows?.[0]?.rfid as string | undefined;
+      // Crear alerta de creación
+      await withTenant(tenant, (c) =>
+        AlertsModel.create(c, {
+          inventario_id: newId ?? null,
+          tipo_alerta: 'inventario:creado',
+          descripcion: `Item${newId ? ' '+newId : ''}${newRfid ? ' (RFID '+newRfid+')' : ''} creado`,
+        })
       );
       return res.redirect('/inventario');
     } catch (e: any) {

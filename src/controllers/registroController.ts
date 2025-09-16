@@ -1,5 +1,6 @@
 import { Request, Response } from 'express';
 import { withTenant } from '../db/pool';
+import { AlertsModel } from '../models/alerts';
 
 type ModeloRow = { modelo_id: number; nombre_modelo: string; tipo: string | null };
 
@@ -59,7 +60,8 @@ export const RegistroController = {
   type DuplicatePayload = { dups: string[]; modelosByTipo: Record<string, Array<{ id: number; name: string }>> };
   let selectedTipo: string = 'Otros';
   let duplicatePayload: DuplicatePayload | null = null;
-      await withTenant(tenant, async (c) => {
+  let insertedCount = 0;
+  await withTenant(tenant, async (c) => {
         const meta = await c.query<{ nombre_modelo: string; tipo: string | null }>(
           'SELECT nombre_modelo, tipo FROM modelos WHERE modelo_id = $1',
           [modeloIdNum]
@@ -75,7 +77,8 @@ export const RegistroController = {
           [rfidsArr]
         );
         const existing = new Set((dupCheck.rows || []).map(r => r.rfid));
-        const toInsert = rfidsArr.filter(r => !existing.has(r));
+  const toInsert = rfidsArr.filter(r => !existing.has(r));
+  insertedCount = toInsert.length;
 
         // Insertar solo los no existentes
         for (const rfid of toInsert) {
@@ -88,6 +91,11 @@ export const RegistroController = {
         }
         // Si algunos eran duplicados, redirigir igual (operación idempotente)
       });
+      // Crear alerta de registro si se insertó al menos un item
+      if (insertedCount > 0) {
+        const desc = `${insertedCount} item${insertedCount>1 ? 's' : ''} registrado${insertedCount>1 ? 's' : ''} (${selectedTipo})`;
+        await withTenant(tenant, (c) => AlertsModel.create(c, { tipo_alerta: 'inventario:registro', descripcion: desc }));
+      }
       return res.redirect('/inventario');
     } catch (e: any) {
       console.error(e);

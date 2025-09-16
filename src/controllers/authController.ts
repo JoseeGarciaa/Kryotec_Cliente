@@ -68,7 +68,7 @@ export const AuthController = {
 
   await withTenant(tenantSchema!, (client) => UsersModel.touchUltimoIngreso(client, user.id));
 
-  const token = jwt.sign({ sub: user.id, tenant: tenantSchema, rol: user.rol }, config.jwtSecret, { expiresIn: '120m' });
+  const token = jwt.sign({ sub: user.id, tenant: tenantSchema, rol: user.rol, nombre: user.nombre, correo: user.correo }, config.jwtSecret, { expiresIn: '120m' });
   res.cookie('token', token, {
     httpOnly: true,
     sameSite: 'lax',
@@ -96,7 +96,7 @@ export const AuthController = {
             const tenant = matches[0].tenant;
             const user = matches[0].user;
             await withTenant(tenant, (client) => UsersModel.touchUltimoIngreso(client, user.id));
-            const token = jwt.sign({ sub: user.id, tenant, rol: user.rol }, config.jwtSecret, { expiresIn: '120m' });
+            const token = jwt.sign({ sub: user.id, tenant, rol: user.rol, nombre: user.nombre, correo: user.correo }, config.jwtSecret, { expiresIn: '120m' });
             res.cookie('token', token, {
               httpOnly: true,
               sameSite: 'lax',

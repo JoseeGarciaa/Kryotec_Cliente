@@ -5,6 +5,8 @@ import helmet from 'helmet';
 import dotenv from 'dotenv';
 import authRoutes from './routes/authRoutes';
 import dashboardRoutes from './routes/dashboardRoutes';
+import accountRoutes from './routes/accountRoutes';
+import notificationsRoutes from './routes/notificationsRoutes';
 import inventarioRoutes from './routes/inventarioRoutes';
 import registroRoutes from './routes/registroRoutes';
 import operacionRoutes from './routes/operacionRoutes';
@@ -15,6 +17,9 @@ import expressStatic from 'express';
 // @ts-ignore types optional
 import expressLayouts from 'express-ejs-layouts';
 import { restrictByRole } from './middleware/roles';
+import { resolveTenant } from './middleware/tenant';
+import { withTenant } from './db/pool';
+import { UsersModel } from './models/User';
 
 dotenv.config();
 
@@ -39,7 +44,7 @@ app.use('/static', expressStatic.static(staticDir, {
 }));
 
 // theme from cookie
-app.use((req, res, next) => {
+app.use(async (req, res, next) => {
 	res.locals.theme = req.cookies?.theme || 'dark';
 	res.locals.currentPath = req.path;
 	// asset version for cache-busting across environments
@@ -51,6 +56,19 @@ app.use((req, res, next) => {
 			res.locals.user = jwt.verify(token, config.jwtSecret);
 		} catch {}
 	}
+	// Si falta nombre/correo en el token (tokens antiguos), completarlo desde BD
+	try {
+		const u: any = (res.locals as any).user;
+		if (u && (!u.nombre || !u.correo)) {
+			const t = resolveTenant(req) || u.tenant;
+			if (t && u.sub) {
+				const userRow = await withTenant(t, (client) => UsersModel.findById(client, Number(u.sub)));
+				if (userRow) {
+					(res.locals as any).user = { ...u, nombre: userRow.nombre, correo: userRow.correo };
+				}
+			}
+		}
+	} catch {}
 	// res.locals.user.rol se usa para condicionar navegación (Administración solo admins)
 	next();
 });
@@ -60,6 +78,8 @@ app.use(restrictByRole);
 
 app.use('/auth', authRoutes);
 app.use('/dashboard', dashboardRoutes);
+app.use('/cuenta', accountRoutes);
+app.use('/notificaciones', notificationsRoutes);
 app.use('/inventario', inventarioRoutes);
 app.use('/registro', registroRoutes);
 app.use('/operacion', operacionRoutes);
