@@ -142,6 +142,24 @@
       </div>
       <div class="text-xs opacity-60 mt-2" id="ensam-timer-hint">Debes indicar una duración &gt; 0. El cronómetro iniciará automáticamente al crear la caja.</div>
     </div>
+    <!-- Opcional: Vincular a una orden existente -->
+    <div class="mt-4 border border-base-300/40 rounded-lg p-3 bg-base-200/30">
+      <div class="form-control">
+        <label class="label cursor-pointer justify-start gap-3">
+          <input id="ensam-link-order" type="checkbox" class="checkbox checkbox-sm" />
+          <span class="label-text text-sm">Vincular esta caja a una orden existente</span>
+        </label>
+      </div>
+      <div class="mt-2 grid grid-cols-1 gap-2">
+        <label class="form-control">
+          <span class="label-text text-xs">Orden</span>
+          <select id="ensam-order-select" class="select select-bordered select-sm" disabled>
+            <option value="">Selecciona una orden…</option>
+          </select>
+        </label>
+        <div id="ensam-order-hint" class="text-xs opacity-60">Activa la casilla para elegir una orden. Se asociará al crear la caja.</div>
+      </div>
+    </div>
     <div class="mt-4 flex flex-wrap gap-3 items-center">
       <button id="btn-clear-ensam" class="btn btn-ghost btn-sm" type="button">Limpiar</button>
       <button id="btn-crear-caja" class="btn btn-primary" disabled>Crear caja</button>

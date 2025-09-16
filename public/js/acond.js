@@ -977,10 +977,14 @@
     const vipCount = document.getElementById('vip-count');
     const cubeCount = document.getElementById('cube-count');
     const hint = document.getElementById('scan-hint');
-    const horas = document.getElementById('ensam-hr');
+  const horas = document.getElementById('ensam-hr');
     const minutos = document.getElementById('ensam-min');
     const crearBtn = document.getElementById('btn-crear-caja');
     const limpiarBtn = document.getElementById('btn-clear-ensam');
+  // Ordenes
+  const linkOrderChk = document.getElementById('ensam-link-order');
+  const orderSelect = document.getElementById('ensam-order-select');
+  const orderHint = document.getElementById('ensam-order-hint');
 
   // Conjuntos de válidos por rol
   const ticSet = new Set();
@@ -1010,8 +1014,34 @@
       const faltCube = Math.max(0, 1 - cubeSet.size);
       if(hint) hint.textContent = compComplete() ? 'Composición completa. Indica duración y crea la caja.' : `Faltan: ${faltTic} TIC · ${faltVip} VIP · ${faltCube} CUBE`;
       if(crearBtn) crearBtn.disabled = !(compComplete() && durationMinutes()>0);
+      // Orden select state
+      if(linkOrderChk && orderSelect){ orderSelect.disabled = !linkOrderChk.checked; }
     }
-  function resetAll(){ ticSet.clear(); vipSet.clear(); cubeSet.clear(); scannedSet.clear(); renderLists(); updateStatus(); if(msg) msg.textContent=''; }
+  function resetAll(){ ticSet.clear(); vipSet.clear(); cubeSet.clear(); scannedSet.clear(); renderLists(); updateStatus(); if(msg) msg.textContent=''; if(orderSelect){ orderSelect.innerHTML = `<option value="">Selecciona una orden…</option>`; } if(linkOrderChk){ linkOrderChk.checked=false; } }
+
+    async function loadOrdenes(){
+      if(!orderSelect) return;
+      orderSelect.innerHTML = `<option value="">Cargando órdenes…</option>`;
+      try{
+        const r = await fetch('/ordenes/list', { headers:{ 'Accept':'application/json' } });
+        const j = await r.json();
+        if(!r.ok || j.ok===false){ throw new Error(j.error||'Error'); }
+        const items = Array.isArray(j.items) ? j.items : [];
+        // Build options label: numero_orden · cliente · producto · cantidad
+        const opts = [`<option value="">Selecciona una orden…</option>`]
+          .concat(items.map(o => {
+            const num = (o.numero_orden||'').toString();
+            const cli = (o.cliente||'').toString();
+            const prod = (o.codigo_producto||'').toString();
+            const cant = (o.cantidad!=null? o.cantidad: '').toString();
+            const label = [num, cli, prod, cant?`x${cant}`:''].filter(Boolean).join(' · ');
+            return `<option value="${o.id}">${label}</option>`;
+          }));
+        orderSelect.innerHTML = opts.join('');
+      }catch(e){
+        orderSelect.innerHTML = `<option value="">No se pudo cargar órdenes</option>`;
+      }
+    }
 
     async function validateAll(){
       const rfids = Array.from(scannedSet);
@@ -1066,9 +1096,12 @@
       if(rfids.length!==8){ if(msg) msg.textContent='Composición incompleta'; return; }
       const durMin = durationMinutes();
       if(durMin<=0){ if(msg) msg.textContent='Duración inválida'; return; }
+      // Optional order id
+      let orderId = null;
+      if(linkOrderChk && linkOrderChk.checked && orderSelect && orderSelect.value){ orderId = Number(orderSelect.value); if(!Number.isFinite(orderId)) orderId = null; }
       crearBtn.disabled = true; if(msg) msg.textContent='Creando caja...';
       try {
-        const res = await fetch('/operacion/acond/ensamblaje/create',{ method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ rfids })});
+        const res = await fetch('/operacion/acond/ensamblaje/create',{ method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ rfids, order_id: orderId })});
         const json = await res.json();
         if(!res.ok || !json.ok) throw new Error(json.error||'Error creando caja');
         // Inicia cronómetro inmediatamente
@@ -1079,8 +1112,9 @@
       } catch(e){ if(msg) msg.textContent = e.message || 'Error creando'; }
       finally { crearBtn.disabled=false; }
     });
-
-  openBtns.forEach(b=> b.addEventListener('click', ()=>{ try { dialog.showModal(); } catch { dialog.classList.remove('hidden'); } resetAll(); scanInput?.focus(); }));
+    // Toggle checkbox enabling select
+    linkOrderChk?.addEventListener('change', ()=>{ updateStatus(); if(linkOrderChk.checked){ loadOrdenes(); } });
+    openBtns.forEach(b=> b.addEventListener('click', ()=>{ try { dialog.showModal(); } catch { dialog.classList.remove('hidden'); } resetAll(); scanInput?.focus(); if(linkOrderChk && linkOrderChk.checked){ loadOrdenes(); } }));
   }
 
   // ========================= MODAL DESPACHO =========================

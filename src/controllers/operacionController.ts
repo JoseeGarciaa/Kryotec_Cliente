@@ -2516,7 +2516,12 @@ export const OperacionController = {
   // Create caja (atomic) with exactly 1 cube, 1 vip, 6 tics (atemperadas)
   acondEnsamblajeCreate: async (req: Request, res: Response) => {
     const tenant = (req as any).user?.tenant;
-    const { rfids } = req.body as any;
+    const { rfids, order_id } = req.body as any;
+    let orderId: number | null = null;
+    if(order_id != null){
+      const n = Number(order_id);
+      orderId = Number.isFinite(n) && n>0 ? n : null;
+    }
     const input = Array.isArray(rfids) ? rfids : (rfids ? [rfids] : []);
     const codes = [...new Set(input.filter((x:any)=>typeof x==='string').map((s:string)=>s.trim()).filter(Boolean))];
     if(codes.length !== 8) return res.status(400).json({ ok:false, error:'Se requieren exactamente 8 RFIDs (1 cube, 1 vip, 6 tics)' });
@@ -2587,11 +2592,23 @@ export const OperacionController = {
     await withTenant(tenant, async (c) => {
       await c.query('BEGIN');
       try {
+        // Ensure dependent tables/columns
+        await c.query(`CREATE TABLE IF NOT EXISTS ordenes (
+          id serial PRIMARY KEY,
+          numero_orden text,
+          codigo_producto text,
+          cantidad integer,
+          ciudad_destino text,
+          ubicacion_destino text,
+          cliente text,
+          fecha_generacion timestamptz
+        )`);
         await c.query(`CREATE TABLE IF NOT EXISTS acond_cajas (
            caja_id serial PRIMARY KEY,
            lote text NOT NULL,
            created_at timestamptz NOT NULL DEFAULT NOW()
         )`);
+        await c.query(`ALTER TABLE acond_cajas ADD COLUMN IF NOT EXISTS order_id integer`);
         await c.query(`CREATE TABLE IF NOT EXISTS acond_caja_items (
            caja_id int NOT NULL REFERENCES acond_cajas(caja_id) ON DELETE CASCADE,
            rfid text NOT NULL,
@@ -2612,6 +2629,19 @@ export const OperacionController = {
             EXECUTE 'CREATE UNIQUE INDEX IF NOT EXISTS inventario_credocubes_rfid_key ON inventario_credocubes(rfid)';
           EXCEPTION WHEN others THEN
           END;
+          -- FK to ordenes(order_id) if not exists
+          IF NOT EXISTS (
+            SELECT 1 FROM pg_constraint
+             WHERE conrelid = 'acond_cajas'::regclass
+               AND conname = 'acond_cajas_order_id_fkey'
+          ) THEN
+            BEGIN
+              ALTER TABLE acond_cajas
+                ADD CONSTRAINT acond_cajas_order_id_fkey
+                FOREIGN KEY (order_id) REFERENCES ordenes(id) ON DELETE SET NULL;
+            EXCEPTION WHEN others THEN
+            END;
+          END IF;
           IF NOT EXISTS (
             SELECT 1 FROM pg_constraint
              WHERE conrelid = 'acond_caja_items'::regclass
@@ -2622,10 +2652,19 @@ export const OperacionController = {
               FOREIGN KEY (rfid) REFERENCES inventario_credocubes(rfid) ON DELETE CASCADE;
           END IF;
         END $$;`);
+        // Validate provided order_id exists (if provided)
+        if(orderId != null){
+          const chk = await c.query(`SELECT 1 FROM ordenes WHERE id=$1`, [orderId]);
+          if(!chk.rowCount){ throw new Error('Orden seleccionada no existe'); }
+        }
         let rCaja; let retries=0;
         while(true){
           try {
-            rCaja = await c.query(`INSERT INTO acond_cajas(lote) VALUES ($1) RETURNING caja_id`, [loteNuevo]);
+            if(orderId != null){
+              rCaja = await c.query(`INSERT INTO acond_cajas(lote, order_id) VALUES ($1, $2) RETURNING caja_id`, [loteNuevo, orderId]);
+            } else {
+              rCaja = await c.query(`INSERT INTO acond_cajas(lote) VALUES ($1) RETURNING caja_id`, [loteNuevo]);
+            }
             break;
           } catch(e:any){
             if(/unique/i.test(e.message||'') && retries<4){
