@@ -5,10 +5,12 @@ import { AlertsModel } from '../models/Alerts';
 
 export const NotificationsController = {
   list: async (req: Request, res: Response) => {
-    const u: any = (res.locals as any).user;
-    if (!u) return res.redirect('/auth/login');
-    const t = resolveTenant(req);
-    const tenantSchema = t ? (t.startsWith('tenant_') ? t : `tenant_${t}`) : (u.tenant || '');
+    const u: any = (res.locals as any).user || (req as any).user || {};
+    let tenantSchema: string;
+    {
+      const ttmp = resolveTenant(req);
+      tenantSchema = ttmp ? (ttmp.startsWith('tenant_') ? ttmp : `tenant_${ttmp}`) : (u.tenant || 'public');
+    }
     try {
       const page = Number(req.query.page || 1) || 1;
       const limit = Math.min(100, Number(req.query.limit || 25) || 25);
@@ -79,10 +81,12 @@ export const NotificationsController = {
   },
 
   resolve: async (req: Request, res: Response) => {
-    const u: any = (res.locals as any).user;
-    if (!u) return res.redirect('/auth/login');
-    const t = resolveTenant(req);
-    const tenantSchema = t ? (t.startsWith('tenant_') ? t : `tenant_${t}`) : (u.tenant || '');
+    const u: any = (res.locals as any).user || (req as any).user || {};
+    let tenantSchema: string;
+    {
+      const ttmp = resolveTenant(req);
+      tenantSchema = ttmp ? (ttmp.startsWith('tenant_') ? ttmp : `tenant_${ttmp}`) : (u.tenant || 'public');
+    }
     const id = Number(req.params.id);
     if (!id) return res.redirect('/notificaciones');
     try {

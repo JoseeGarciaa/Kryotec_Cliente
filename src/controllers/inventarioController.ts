@@ -5,7 +5,9 @@ import { requireAuth } from '../middleware/auth';
 
 export const InventarioController = {
   index: async (req: Request, res: Response) => {
-    const tenant = (req as any).user?.tenant;
+  const u: any = (res.locals as any).user || (req as any).user || {};
+  const tten = (require('../middleware/tenant') as any).resolveTenant ? (require('../middleware/tenant') as any).resolveTenant(req) : null;
+  const tenant = tten ? (String(tten).startsWith('tenant_') ? tten : `tenant_${tten}`) : (u.tenant || 'public');
     // Inputs
     const { q: qRaw, cat: catRaw, state: stateRaw, page: pageRaw, limit: limitRaw, rfids: rfidsRaw } = req.query as any;
     const q = (qRaw ? String(qRaw) : '').slice(0, 24);
@@ -251,7 +253,9 @@ export const InventarioController = {
   },
   data: async (req: Request, res: Response) => {
     // Versión JSON simplificada para live-scan (sin paginación avanzada por ahora)
-    const tenant = (req as any).user?.tenant;
+  const u2: any = (res.locals as any).user || (req as any).user || {};
+  const tten2 = (require('../middleware/tenant') as any).resolveTenant ? (require('../middleware/tenant') as any).resolveTenant(req) : null;
+  const tenant = tten2 ? (String(tten2).startsWith('tenant_') ? tten2 : `tenant_${tten2}`) : (u2.tenant || 'public');
     const { q: qRaw, rfids: rfidsRaw, limit: limitRaw } = req.query as any;
     const q = (qRaw ? String(qRaw) : '').slice(0, 24);
     const limit = Math.min(500, Math.max(10, parseInt(String(limitRaw||'100'), 10) || 100));
@@ -299,7 +303,9 @@ export const InventarioController = {
   },
 
   update: async (req: Request, res: Response) => {
-    const tenant = (req as any).user?.tenant;
+  const u3: any = (res.locals as any).user || (req as any).user || {};
+  const tten3 = (require('../middleware/tenant') as any).resolveTenant ? (require('../middleware/tenant') as any).resolveTenant(req) : null;
+  const tenant = tten3 ? (String(tten3).startsWith('tenant_') ? tten3 : `tenant_${tten3}`) : (u3.tenant || 'public');
     const id = Number((req.params as any).id);
     if(!Number.isFinite(id) || id<=0) return res.status(400).json({ ok:false, error:'id inválido' });
     const { nombre_unidad, lote, estado, sub_estado } = req.body as any;

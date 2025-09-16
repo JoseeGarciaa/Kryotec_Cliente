@@ -1,6 +1,7 @@
 import { Request, Response } from 'express';
 import { withTenant } from '../db/pool';
 import { AlertsModel } from '../models/Alerts';
+import { resolveTenant } from '../middleware/tenant';
 
 type ModeloRow = { modelo_id: number; nombre_modelo: string; tipo: string | null };
 
@@ -14,7 +15,9 @@ function normTipo(tipo: string | null): 'TIC' | 'VIP' | 'Cube' | 'Otros' {
 
 export const RegistroController = {
   index: async (req: Request, res: Response) => {
-    const tenant = (req as any).user?.tenant;
+  const u: any = (res.locals as any).user || (req as any).user || {};
+  const t = resolveTenant(req);
+  const tenant = t ? (t.startsWith('tenant_') ? t : `tenant_${t}`) : (u.tenant || 'public');
   const modelosRes = await withTenant(tenant, (c) => c.query<ModeloRow>('SELECT modelo_id, nombre_modelo, tipo FROM modelos ORDER BY nombre_modelo'));
     const modelos = modelosRes.rows;
 
@@ -32,7 +35,9 @@ export const RegistroController = {
   },
 
   create: async (req: Request, res: Response) => {
-    const tenant = (req as any).user?.tenant;
+  const u: any = (res.locals as any).user || (req as any).user || {};
+  const t = resolveTenant(req);
+  const tenant = t ? (t.startsWith('tenant_') ? t : `tenant_${t}`) : (u.tenant || 'public');
   const { modelo_id, rfids } = req.body as any;
     const modeloIdNum = Number(modelo_id);
     // rfids may come as array or object (rfids[0], rfids[1], ...)
