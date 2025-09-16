@@ -864,21 +864,22 @@ export const OperacionController = {
           );
           await c.query(`UPDATE acond_caja_timers SET active=false, started_at=NULL, duration_sec=NULL, updated_at=NOW() WHERE caja_id=$1`, [cajaId]);
           await c.query(`UPDATE operacion_caja_timers SET active=false, started_at=NULL, duration_sec=NULL, updated_at=NOW() WHERE caja_id=$1`, [cajaId]);
-          // Iniciar cronómetro de Inspección (conteo hacia adelante)
-    await c.query(`CREATE TABLE IF NOT EXISTS inspeccion_caja_timers (
-      caja_id int PRIMARY KEY REFERENCES acond_cajas(caja_id) ON DELETE CASCADE,
-      started_at timestamptz,
-      duration_sec integer,
-      active boolean NOT NULL DEFAULT false,
-      updated_at timestamptz NOT NULL DEFAULT NOW()
-    )`);
-    await c.query(`ALTER TABLE inspeccion_caja_timers ADD COLUMN IF NOT EXISTS duration_sec integer`);
+          // No iniciar cronómetro hacia adelante en Inspección; dejar registro inactivo
+          await c.query(`CREATE TABLE IF NOT EXISTS inspeccion_caja_timers (
+            caja_id int PRIMARY KEY REFERENCES acond_cajas(caja_id) ON DELETE CASCADE,
+            started_at timestamptz,
+            duration_sec integer,
+            active boolean NOT NULL DEFAULT false,
+            updated_at timestamptz NOT NULL DEFAULT NOW()
+          )`);
+          await c.query(`ALTER TABLE inspeccion_caja_timers ADD COLUMN IF NOT EXISTS duration_sec integer`);
           await c.query(
-        `INSERT INTO inspeccion_caja_timers(caja_id, started_at, active, updated_at)
-          VALUES ($1, NOW(), true, NOW())
+            `INSERT INTO inspeccion_caja_timers(caja_id, started_at, duration_sec, active, updated_at)
+               VALUES ($1, NULL, NULL, false, NOW())
              ON CONFLICT (caja_id) DO UPDATE
-               SET started_at = COALESCE(inspeccion_caja_timers.started_at, EXCLUDED.started_at),
-                   active = true,
+               SET started_at = NULL,
+                   duration_sec = NULL,
+                   active = false,
                    updated_at = NOW()`,
             [cajaId]
           );
@@ -923,28 +924,24 @@ export const OperacionController = {
         if(id && !ids.includes(id)) ids.push(id);
       }
       function inferRol(nombre:string){ const n=nombre.toLowerCase(); if(n.includes('vip')) return 'vip'; if(n.includes('tic')) return 'tic'; if(n.includes('cube')||n.includes('cubo')) return 'cube'; return 'otro'; }
-      // Asegurar tabla y timers para cajas activas en Inspección
+      // Asegurar tabla de timers (sin auto-iniciar). Sólo leer timers existentes con duración (cuenta regresiva)
       if(ids.length){
         await withTenant(tenant, async (c)=>{
-       await c.query(`CREATE TABLE IF NOT EXISTS inspeccion_caja_timers (
+          await c.query(`CREATE TABLE IF NOT EXISTS inspeccion_caja_timers (
              caja_id int PRIMARY KEY REFERENCES acond_cajas(caja_id) ON DELETE CASCADE,
-         started_at timestamptz,
-         duration_sec integer,
-         active boolean NOT NULL DEFAULT false,
+             started_at timestamptz,
+             duration_sec integer,
+             active boolean NOT NULL DEFAULT false,
              updated_at timestamptz NOT NULL DEFAULT NOW()
           )`);
-       await c.query(`ALTER TABLE inspeccion_caja_timers ADD COLUMN IF NOT EXISTS duration_sec integer`);
-          await c.query(
-            `INSERT INTO inspeccion_caja_timers(caja_id, started_at, active, updated_at)
-               SELECT x, NOW(), true, NOW() FROM UNNEST($1::int[]) AS x
-             ON CONFLICT (caja_id) DO NOTHING`, [ids]
-          );
-          // Obtener timers
+          await c.query(`ALTER TABLE inspeccion_caja_timers ADD COLUMN IF NOT EXISTS duration_sec integer`);
+          // Obtener timers existentes
           const tQ = await c.query(`SELECT caja_id, started_at, duration_sec, active FROM inspeccion_caja_timers WHERE caja_id = ANY($1::int[])`, [ids]);
           const tMap = new Map<number, any>(tQ.rows.map((r:any)=> [r.caja_id, r]));
           for(const id of ids){
             const g = mapa[id]; if(!g) continue;
-            const t = tMap.get(id); if(t && t.started_at){ g.timer = { startsAt: t.started_at, durationSec: t.duration_sec||null }; }
+            const t = tMap.get(id);
+            if(t && (t.duration_sec || 0) > 0){ g.timer = { startsAt: t.started_at, durationSec: t.duration_sec }; }
           }
         });
       }
@@ -977,15 +974,23 @@ export const OperacionController = {
             AND (m.nombre_modelo ILIKE '%tic%')
             AND LOWER(ic.estado) IN ('inspeccion','inspección')
           ORDER BY ic.rfid`, [cajaId]));
-      // Si no hay TICs en inspección, verificar si la caja está en Pendiente a Inspección
+      // Si no hay TICs en inspección, permitir si hay VIP/CUBE en Inspección (caso 6 TICs inhabilitadas)
       if(!(ticsQ.rows||[]).length){
+        const vipCubeQ = await withTenant(tenant, (c)=> c.query(
+          `SELECT COUNT(*)::int AS cnt
+             FROM acond_caja_items aci
+             JOIN inventario_credocubes ic ON ic.rfid = aci.rfid
+             JOIN modelos m ON m.modelo_id = ic.modelo_id
+            WHERE aci.caja_id = $1
+              AND LOWER(ic.estado) IN ('inspeccion','inspección')
+              AND (m.nombre_modelo ILIKE '%vip%' OR m.nombre_modelo ILIKE '%cube%' OR m.nombre_modelo ILIKE '%cubo%')`, [cajaId]));
+        if(vipCubeQ.rows[0]?.cnt>0){ return res.json({ ok:true, caja:{ id: cajaId, lote }, tics: [] }); }
         const pendQ = await withTenant(tenant, (c)=> c.query(
           `SELECT COUNT(*)::int AS cnt
              FROM acond_caja_items aci
              JOIN inventario_credocubes ic ON ic.rfid = aci.rfid
-       WHERE aci.caja_id = $1 AND LOWER(ic.estado)=LOWER('En bodega') AND ic.sub_estado IN ('Pendiente a Inspección','Pendiente a Inspeccion')`, [cajaId]));
+            WHERE aci.caja_id = $1 AND LOWER(ic.estado)=LOWER('En bodega') AND ic.sub_estado IN ('Pendiente a Inspección','Pendiente a Inspeccion')`, [cajaId]));
         if(pendQ.rows[0]?.cnt>0){ return res.json({ ok:false, error:'Caja no está en Inspección (Pendiente a Inspección)' }); }
-        // No está en Inspección ni en Pendiente a Inspección
         return res.status(400).json({ ok:false, error:'Caja no está en Inspección ni Pendiente a Inspección' });
       }
       // Esperamos 6 TICs
@@ -1129,8 +1134,7 @@ export const OperacionController = {
     if(!Number.isFinite(cajaId) || cajaId<=0) return res.status(400).json({ ok:false, error:'caja_id inválido' });
     try {
       const list = Array.isArray(confirm_rfids) ? confirm_rfids.filter((x:any)=> typeof x==='string' && x.trim().length===24) : [];
-      if(list.length !== 6) return res.status(400).json({ ok:false, error:'Se requieren 6 TICs confirmadas' });
-      // Validate that those 6 RFIDs belong to this caja, son TICs y están en Inspección
+      // Validate against current TICs in Inspección for this caja (can be 0..6)
       const ticsQ = await withTenant(tenant, (c)=> c.query(
         `SELECT ic.rfid
            FROM acond_caja_items aci
@@ -1139,9 +1143,12 @@ export const OperacionController = {
           WHERE aci.caja_id = $1
             AND (m.nombre_modelo ILIKE '%tic%')
             AND LOWER(ic.estado) IN ('inspeccion','inspección')`, [cajaId]));
-      const set = new Set((ticsQ.rows||[]).map((r:any)=> r.rfid));
+      const current = (ticsQ.rows||[]).map((r:any)=> r.rfid);
+      const set = new Set(current);
       const allBelong = list.every((r:string)=> set.has(r));
-      if(!allBelong) return res.status(400).json({ ok:false, error:'Alguna TIC no pertenece a la caja o no está en Inspección' });
+      if(!allBelong || list.length !== current.length){
+        return res.status(400).json({ ok:false, error:'Faltan checks de TICs o hay RFIDs inválidos' });
+      }
       // Con todas las TICs OK: devolver toda la caja (TICs, VIP y CUBE) a En bodega y reiniciar
       await withTenant(tenant, async (c)=>{
         await c.query('BEGIN');

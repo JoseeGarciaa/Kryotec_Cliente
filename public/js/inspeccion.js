@@ -20,8 +20,10 @@
       tics.length ? `<span class='badge badge-warning badge-xs font-semibold' title='TICs'>TIC × ${tics.length}</span>` : '',
       cubes.length ? `<span class='badge badge-accent badge-xs font-semibold' title='CUBEs'>CUBE × ${cubes.length}</span>` : ''
     ].filter(Boolean).join(' ');
-    const timerHtml = caja.timer && caja.timer.startsAt
-      ? `<span class='badge badge-neutral badge-xs font-mono' data-insp-timer='${caja.id}' id='insp-timer-${caja.id}'>${timerDisplay(msElapsed(caja.timer))}</span>`
+    // Only show countdown timers (with duration). Hide forward/elapsed timers to avoid UI conflicts.
+    const hasCountdown = !!(caja.timer && caja.timer.durationSec);
+    const timerHtml = hasCountdown
+      ? `<span class='badge badge-neutral badge-xs font-mono' data-insp-timer='${caja.id}' id='insp-timer-${caja.id}'>↓ ${timerDisplay(Math.max(0, msRemaining(caja.timer)||0))}</span>`
       : `<span class='badge badge-outline badge-xs opacity-70'>Sin cronómetro</span>`;
     return `<div class='caja-card rounded-lg border border-base-300/40 bg-base-200/10 p-3 flex flex-col gap-2'>
       <div class='flex items-center justify-between text-[10px] tracking-wide uppercase opacity-60'><span>Caja</span><span class='font-mono'>${caja.codigoCaja||''}</span></div>
@@ -56,16 +58,13 @@
   setInterval(load, 15000);
   // tick timers
   setInterval(()=>{
+    // Update only countdown timers; ignore forward/elapsed timers entirely
     (state.cajas||[]).forEach(c=>{
-      if(!c.timer||!c.timer.startsAt) return;
+      if(!c.timer || !c.timer.durationSec) return;
       const el = document.getElementById('insp-timer-'+c.id);
       if(!el) return;
-      if(c.timer && c.timer.durationSec){
-        const rem = Math.max(0, msRemaining(c.timer)||0);
-        el.textContent = '↓ ' + timerDisplay(rem);
-      } else {
-        el.textContent = timerDisplay(msElapsed(c.timer));
-      }
+      const rem = Math.max(0, msRemaining(c.timer)||0);
+      el.textContent = '↓ ' + timerDisplay(rem);
     });
   }, 1000);
   // ---- Scan/Lookup caja ----
@@ -238,18 +237,18 @@
   function inferTipo(nombre){ const n=(nombre||'').toLowerCase(); if(n.includes('vip')) return 'vip'; if(n.includes('tic')) return 'tic'; if(n.includes('cube')||n.includes('cubo')) return 'cube'; return 'otro'; }
 
   function updateCompleteBtn(){
-    // Checklist habilitado solo cuando ya hay caja seleccionada (ya jalada a Inspección)
-    const ticsOk = (state.tics||[]).length===6 && (state.tics||[]).every(t=>{
+    // Enable completion when: (a) all present TICs (0..6) have all three checks, and (b) VIP/CUBE checks (if present) are all done.
+    const tics = state.tics||[];
+    const allTicsChecked = tics.every(t=>{
       const v = state.ticChecks.get(t.rfid) || { limpieza:false, goteo:false, desinfeccion:false };
       return v.limpieza && v.goteo && v.desinfeccion;
     });
-    // VIP/CUBE checks (si existen)
     const comps = (state.cajaSel?.componentes||[]).filter(it=> (it.tipo==='vip' || it.tipo==='cube'));
     const compsOk = comps.every(it=>{
       const v = state.ticChecks.get(it.codigo) || { limpieza:false, goteo:false, desinfeccion:false };
       return v.limpieza && v.goteo && v.desinfeccion;
     });
-    const all = !!state.cajaSel?.id && ticsOk && compsOk;
+    const all = !!state.cajaSel?.id && allTicsChecked && compsOk;
     if(completeBtn) completeBtn.disabled = !all;
   }
 
@@ -341,19 +340,25 @@
     if(!state.cajaSel?.id) return;
     completeBtn.disabled = true;
     try {
-      // Gather the 6 TIC RFIDs that have all 3 checks
-      const confirm = (state.tics||[])
-        .filter(t=>{ const v = state.ticChecks.get(t.rfid)||{limpieza:false,goteo:false,desinfeccion:false}; return v.limpieza&&v.goteo&&v.desinfeccion; })
-        .map(t=>t.rfid);
-      if(confirm.length!==6){ completeBtn.disabled=false; scanMsg && (scanMsg.textContent='Faltan checks'); return; }
+      // Gather the TIC RFIDs that have all 3 checks; must match the number of TICs currently presentes (0..6)
+      const tics = state.tics||[];
+      const confirm = tics.filter(t=>{
+        const v = state.ticChecks.get(t.rfid)||{limpieza:false,goteo:false,desinfeccion:false};
+        return v.limpieza&&v.goteo&&v.desinfeccion;
+      }).map(t=>t.rfid);
+      if(confirm.length !== tics.length){
+        completeBtn.disabled=false;
+        scanMsg && (scanMsg.textContent='Faltan checks en las TICs presentes');
+        return;
+      }
       const r = await fetch('/operacion/inspeccion/complete',{ method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ caja_id: state.cajaSel.id, confirm_rfids: confirm })});
       const j = await r.json();
       if(!j.ok){ completeBtn.disabled=false; scanMsg && (scanMsg.textContent=j.error||'Error'); return; }
       // Reset panel and reload list
-  panel.classList.add('hidden'); state.cajaSel=null; state.tics=[]; state.ticChecks.clear(); state.activeTic=null;
+      panel.classList.add('hidden'); state.cajaSel=null; state.tics=[]; state.ticChecks.clear(); state.activeTic=null;
       scanInput && (scanInput.value='');
-  await load();
-  scanMsg && (scanMsg.textContent='Caja completa devuelta a Bodega y reiniciada');
+      await load();
+      scanMsg && (scanMsg.textContent='Inspección finalizada: caja devuelta a Bodega');
     } catch(e){ completeBtn.disabled=false; scanMsg && (scanMsg.textContent='Error'); }
   });
 
