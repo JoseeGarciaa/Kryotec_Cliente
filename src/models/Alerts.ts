@@ -11,10 +11,28 @@ export type Alert = {
 };
 
 export const AlertsModel = {
+  async ensureTable(client: PoolClient): Promise<void> {
+    // Crea la tabla en el esquema activo (search_path ya está seteado por withTenant)
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS alertas (
+        id SERIAL PRIMARY KEY,
+        inventario_id INTEGER NULL,
+        tipo_alerta TEXT NOT NULL,
+        descripcion TEXT NULL,
+        fecha_creacion TIMESTAMP WITHOUT TIME ZONE NOT NULL DEFAULT NOW(),
+        resuelta BOOLEAN NOT NULL DEFAULT FALSE,
+        fecha_resolucion TIMESTAMP WITHOUT TIME ZONE NULL
+      );
+    `);
+    // Índices útiles
+    await client.query(`CREATE INDEX IF NOT EXISTS alertas_resuelta_idx ON alertas (resuelta);`);
+    await client.query(`CREATE INDEX IF NOT EXISTS alertas_fecha_idx ON alertas (fecha_creacion);`);
+  },
   async list(
     client: PoolClient,
     opts: { page: number; limit: number; likePatterns?: string[] }
   ): Promise<{ items: Alert[]; total: number }> {
+    await this.ensureTable(client);
     const offset = (opts.page - 1) * opts.limit;
     const whereParts: string[] = [];
     const params: any[] = [];
@@ -42,6 +60,7 @@ export const AlertsModel = {
   },
 
   async resolve(client: PoolClient, id: number): Promise<void> {
+    await this.ensureTable(client);
     await client.query(
       `UPDATE alertas SET resuelta = TRUE, fecha_resolucion = NOW() WHERE id = $1`,
       [id]
@@ -52,6 +71,7 @@ export const AlertsModel = {
     client: PoolClient,
     data: { inventario_id?: number | null; tipo_alerta: string; descripcion?: string | null }
   ): Promise<void> {
+    await this.ensureTable(client);
     await client.query(
       `INSERT INTO alertas (inventario_id, tipo_alerta, descripcion, fecha_creacion, resuelta)
        VALUES ($1, $2, $3, NOW(), FALSE)`,
