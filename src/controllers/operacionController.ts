@@ -1248,20 +1248,31 @@ export const OperacionController = {
               const totalTics = Number(agg.rows?.[0]?.total_tics||0);
               const inactTics = Number(agg.rows?.[0]?.inact_tics||0);
               if(totalTics>0 && inactTics === totalTics){
-                // Fetch VIP & CUBE RFIDs
+                // Todos los TICs quedaron inhabilitados: NO devolver VIP/CUBE a Bodega.
+                // Mantener VIP y CUBE en Inspección para su revisión y conservar la caja/timers.
                 const vc = await c.query(`SELECT rfid FROM acond_caja_items WHERE caja_id=$1 AND rol IN ('vip','cube')`, [cajaId]);
                 const vcrfids = (vc.rows||[]).map((r:any)=> r.rfid);
                 if(vcrfids.length){
-                  await c.query(`UPDATE inventario_credocubes SET estado='En bodega', sub_estado=NULL, lote=NULL WHERE rfid = ANY($1::text[])`, [vcrfids]);
-                  autoReturnedCount = vcrfids.length;
+                  await c.query(`UPDATE inventario_credocubes SET estado='Inspección', sub_estado=NULL WHERE rfid = ANY($1::text[])`, [vcrfids]);
+                  // Asegurar timer de Inspección activo (no crear duplicados, reutilizar si existe)
+                  await c.query(`CREATE TABLE IF NOT EXISTS inspeccion_caja_timers (
+                    caja_id int PRIMARY KEY REFERENCES acond_cajas(caja_id) ON DELETE CASCADE,
+                    started_at timestamptz,
+                    duration_sec integer,
+                    active boolean NOT NULL DEFAULT false,
+                    updated_at timestamptz NOT NULL DEFAULT NOW()
+                  )`);
+                  await c.query(`ALTER TABLE inspeccion_caja_timers ADD COLUMN IF NOT EXISTS duration_sec integer`);
+                  await c.query(
+                    `INSERT INTO inspeccion_caja_timers(caja_id, started_at, active, updated_at)
+                       VALUES ($1, COALESCE((SELECT started_at FROM inspeccion_caja_timers WHERE caja_id=$1), NOW()), true, NOW())
+                     ON CONFLICT (caja_id) DO UPDATE
+                       SET active = true, updated_at = NOW()`,
+                    [cajaId]
+                  );
                 }
-                // Clear timers and remove caja + associations
-                await c.query(`DELETE FROM inspeccion_caja_timers WHERE caja_id=$1`, [cajaId]);
-                await c.query(`DELETE FROM pend_insp_caja_timers WHERE caja_id=$1`, [cajaId]);
-                await c.query(`DELETE FROM acond_caja_timers WHERE caja_id=$1`, [cajaId]);
-                await c.query(`DELETE FROM operacion_caja_timers WHERE caja_id=$1`, [cajaId]);
-                await c.query(`DELETE FROM acond_caja_items WHERE caja_id=$1`, [cajaId]);
-                await c.query(`DELETE FROM acond_cajas WHERE caja_id=$1`, [cajaId]);
+                // Importante: NO desarmar la caja ni borrar timers; requiere revisión de VIP/CUBE.
+                autoReturnedCount = 0;
               }
             }
           }

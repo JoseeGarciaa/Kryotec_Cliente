@@ -1,0 +1,41 @@
+<% title = title || 'Órdenes' %>
+
+<h1 class="text-2xl font-bold mb-3">Órdenes</h1>
+<p class="opacity-70 mb-4 text-sm">Listado y gestión de órdenes</p>
+
+<div class="card bg-base-200 shadow">
+  <div class="card-body">
+    <% if ((items||[]).length === 0) { %>
+      <div class="text-center opacity-60 py-8">No hay órdenes por ahora.</div>
+    <% } else { %>
+      <div class="overflow-x-auto">
+        <table class="table table-zebra">
+          <thead>
+            <tr>
+              <th># Orden</th>
+              <th>Código producto</th>
+              <th>Cantidad</th>
+              <th>Ciudad destino</th>
+              <th>Ubicación destino</th>
+              <th>Cliente</th>
+              <th>Fecha generación</th>
+            </tr>
+          </thead>
+          <tbody>
+            <% items.forEach(o => { %>
+              <tr>
+                <td><%= o.numero_orden || '-' %></td>
+                <td><%= o.codigo_producto || '-' %></td>
+                <td><%= o.cantidad ?? '-' %></td>
+                <td><%= o.ciudad_destino || '-' %></td>
+                <td><%= o.ubicacion_destino || '-' %></td>
+                <td><%= o.cliente || '-' %></td>
+                <td><%= o.fecha_generacion ? new Date(o.fecha_generacion).toLocaleString() : '-' %></td>
+              </tr>
+            <% }) %>
+          </tbody>
+        </table>
+      </div>
+    <% } %>
+  </div>
+</div>
