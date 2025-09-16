@@ -15,9 +15,9 @@ function normTipo(tipo: string | null): 'TIC' | 'VIP' | 'Cube' | 'Otros' {
 
 export const RegistroController = {
   index: async (req: Request, res: Response) => {
-  const u: any = (res.locals as any).user || (req as any).user || {};
   const t = resolveTenant(req);
-  const tenant = t ? (t.startsWith('tenant_') ? t : `tenant_${t}`) : (u.tenant || 'public');
+  if (!t) return res.status(400).send('Tenant no especificado');
+  const tenant = t.startsWith('tenant_') ? t : `tenant_${t}`;
   const modelosRes = await withTenant(tenant, (c) => c.query<ModeloRow>('SELECT modelo_id, nombre_modelo, tipo FROM modelos ORDER BY nombre_modelo'));
     const modelos = modelosRes.rows;
 
@@ -35,9 +35,9 @@ export const RegistroController = {
   },
 
   create: async (req: Request, res: Response) => {
-  const u: any = (res.locals as any).user || (req as any).user || {};
   const t = resolveTenant(req);
-  const tenant = t ? (t.startsWith('tenant_') ? t : `tenant_${t}`) : (u.tenant || 'public');
+  if (!t) return res.status(400).send('Tenant no especificado');
+  const tenant = t.startsWith('tenant_') ? t : `tenant_${t}`;
   const { modelo_id, rfids } = req.body as any;
     const modeloIdNum = Number(modelo_id);
     // rfids may come as array or object (rfids[0], rfids[1], ...)
