@@ -1,6 +1,6 @@
 import { Request, Response } from 'express';
 import { withTenant } from '../db/pool';
-import { AlertsModel } from '../models/alerts';
+import { AlertsModel } from '../models/Alerts';
 
 type ModeloRow = { modelo_id: number; nombre_modelo: string; tipo: string | null };
 

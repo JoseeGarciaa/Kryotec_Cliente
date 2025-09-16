@@ -1,6 +1,6 @@
 import { Request, Response } from 'express';
 import { withTenant } from '../db/pool';
-import { AlertsModel } from '../models/alerts';
+import { AlertsModel } from '../models/Alerts';
 import { requireAuth } from '../middleware/auth';
 
 export const InventarioController = {

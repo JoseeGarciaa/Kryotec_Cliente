@@ -1,7 +1,7 @@
 import { Request, Response } from 'express';
 import { resolveTenant } from '../middleware/tenant';
 import { withTenant } from '../db/pool';
-import { AlertsModel } from '../models/alerts';
+import { AlertsModel } from '../models/Alerts';
 
 export const NotificationsController = {
   list: async (req: Request, res: Response) => {
