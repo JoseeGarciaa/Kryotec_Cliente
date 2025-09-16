@@ -1196,9 +1196,16 @@ export const OperacionController = {
     const desc = (typeof descripcion==='string' ? descripcion.trim() : null);
     if(!mot) return res.status(400).json({ ok:false, error:'Motivo requerido' });
     try{
-      const rItem = await withTenant(tenant, (c)=> c.query(`SELECT id FROM inventario_credocubes WHERE rfid=$1`, [code]));
+      const rItem = await withTenant(tenant, (c)=> c.query(
+        `SELECT ic.id, ic.rfid, m.nombre_modelo
+           FROM inventario_credocubes ic
+           JOIN modelos m ON m.modelo_id = ic.modelo_id
+          WHERE ic.rfid=$1`, [code]));
       if(!rItem.rowCount) return res.status(404).json({ ok:false, error:'RFID no encontrado' });
       const piezaId = rItem.rows[0].id;
+      const nombreModelo = String((rItem.rows[0] as any).nombre_modelo||'');
+      const lower = nombreModelo.toLowerCase();
+      const piezaRol: 'tic'|'vip'|'cube'|'otro' = lower.includes('tic') ? 'tic' : (lower.includes('vip') ? 'vip' : ((lower.includes('cube')||lower.includes('cubo')) ? 'cube' : 'otro'));
   let autoReturnedCount = 0;
   let clearedCaja = false;
   await withTenant(tenant, async (c)=>{
@@ -1261,7 +1268,7 @@ export const OperacionController = {
                 WHERE aci.caja_id = $1`, [cajaId]);
               const totalTics = Number(agg.rows?.[0]?.total_tics||0);
               const inactTics = Number(agg.rows?.[0]?.inact_tics||0);
-              if(totalTics>0 && inactTics === totalTics){
+              if(totalTics>0 && inactTics === totalTics && piezaRol === 'tic'){
                 // Todos los TICs quedaron inhabilitados: NO devolver VIP/CUBE a Bodega.
                 // Mantener VIP y CUBE en Inspección para su revisión y conservar la caja/timers.
                 const vc = await c.query(`SELECT rfid FROM acond_caja_items WHERE caja_id=$1 AND rol IN ('vip','cube')`, [cajaId]);
