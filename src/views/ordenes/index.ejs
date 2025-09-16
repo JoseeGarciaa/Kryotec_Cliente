@@ -6,7 +6,7 @@
     <p class="opacity-70 text-sm">Listado y gestión de órdenes</p>
   </div>
   <div>
-    <button class="btn btn-primary btn-sm" onclick="document.getElementById('modal-add-order').showModal()">
+    <button id="btn-add-order" class="btn btn-primary btn-sm">
       Agregar orden
     </button>
   </div>
@@ -88,7 +88,7 @@
         <input name="fecha_generacion" type="datetime-local" class="input input-sm input-bordered" />
       </div>
       <div class="form-control md:col-span-1 flex items-end justify-end gap-2">
-        <button type="button" class="btn btn-sm" onclick="document.getElementById('modal-add-order').close()">Cancelar</button>
+        <button type="button" class="btn btn-sm" data-close>Cancelar</button>
         <button class="btn btn-sm btn-primary">Agregar</button>
       </div>
     </form>
@@ -97,3 +97,4 @@
     <button>close</button>
   </form>
 </dialog>
+<script src="/static/js/ordenes.js?v=<%= assetVersion %>" defer></script>

@@ -1155,16 +1155,18 @@ export const OperacionController = {
       if(!allBelong || list.length !== current.length){
         return res.status(400).json({ ok:false, error:'Faltan checks de TICs o hay RFIDs inválidos' });
       }
-      // Con todas las TICs OK: devolver toda la caja (TICs, VIP y CUBE) a En bodega y reiniciar
+      // Con todas las TICs OK: devolver a En bodega SOLO los items que estén actualmente en Inspección (TICs/VIP/CUBE).
+      // No tocar piezas previamente marcadas como Inhabilitado.
       await withTenant(tenant, async (c)=>{
         await c.query('BEGIN');
         try {
-          // 1) Obtener todos los RFIDs de la caja (tic/vip/cube)
-          const itemsQ = await c.query(`SELECT rfid FROM acond_caja_items WHERE caja_id=$1`, [cajaId]);
-          if(!itemsQ.rowCount){ await c.query('ROLLBACK'); return res.status(404).json({ ok:false, error:'Caja sin items' }); }
-          const allRfids = itemsQ.rows.map((r:any)=> r.rfid);
-          // 2) Devolver a En bodega y limpiar lote para todos
-          await c.query(`UPDATE inventario_credocubes SET estado='En bodega', sub_estado=NULL, lote=NULL WHERE rfid = ANY($1::text[])`, [allRfids]);
+          // 1) Devolver a En bodega sólo los RFIDs de esta caja cuyo estado actual sea Inspección
+          const upd = await c.query(
+            `UPDATE inventario_credocubes ic
+                SET estado='En bodega', sub_estado=NULL, lote=NULL
+              WHERE ic.rfid IN (SELECT rfid FROM acond_caja_items WHERE caja_id=$1)
+                AND LOWER(ic.estado) IN ('inspeccion','inspección')
+              RETURNING ic.rfid`, [cajaId]);
           // 3) No persistimos checklist; no hay que limpiar columnas de validación
           // 4) Eliminar/limpiar timers asociados a la caja
           await c.query(`DELETE FROM inspeccion_caja_timers WHERE caja_id=$1`, [cajaId]);
@@ -1174,8 +1176,9 @@ export const OperacionController = {
           await c.query(`DELETE FROM acond_caja_items WHERE caja_id=$1`, [cajaId]);
           await c.query(`DELETE FROM acond_cajas WHERE caja_id=$1`, [cajaId]);
           await c.query('COMMIT');
-          // Responder después del commit con totales
-          return res.json({ ok:true, devueltos: allRfids.length, caja_deleted: true });
+          // Responder después del commit con totales devueltos
+          const count = upd.rowCount || 0;
+          return res.json({ ok:true, devueltos: count, caja_deleted: true });
         } catch(e){ await c.query('ROLLBACK'); throw e; }
       });
       // Inalcanzable normalmente: si se llega aquí, algo falló en el transaction handler
