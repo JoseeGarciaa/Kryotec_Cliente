@@ -4,7 +4,7 @@
   const qs = (s)=> document.querySelector(s);
   const grid = qs('#insp-caja-grid');
   const spin = qs('#insp-spin');
-  const state = { cajas: [], serverOffset: 0, cajaSel: null, tics: [], ticChecks: new Map(), activeTic: null };
+  const state = { cajas: [], serverOffset: 0, cajaSel: null, tics: [], ticChecks: new Map(), activeTic: null, inInspeccion: false };
 
   function msElapsed(timer){ if(!timer||!timer.startsAt) return 0; return (Date.now()+state.serverOffset) - new Date(timer.startsAt).getTime(); }
   function timerDisplay(ms){ const s=Math.max(0,Math.floor(ms/1000)); const h=Math.floor(s/3600); const m=Math.floor((s%3600)/60); const sec=s%60; return `${h}:${String(m).padStart(2,'0')}:${String(sec).padStart(2,'0')}`; }
@@ -116,8 +116,13 @@
           }).join(' ')
         : "<span class='badge badge-ghost badge-xs'>Sin items</span>";
     }
-    // Checklist visible solo si la caja está en Inspección (cuando tics fueron cargadas desde inspección endpoints)
-    if(checklistArea){ checklistArea.classList.toggle('hidden', !(state.tics||[]).length); }
+    // Checklist visible cuando la caja está en Inspección. Debe mostrarse aún si hay 0 TICs
+    // siempre que existan VIP/CUBE para inspeccionar.
+    if(checklistArea){
+      const hasVipCube = (state.cajaSel?.componentes||[]).some(it=> (it.tipo==='vip' || it.tipo==='cube'));
+      const show = !!state.inInspeccion && (((state.tics||[]).length > 0) || hasVipCube);
+      checklistArea.classList.toggle('hidden', !show);
+    }
     const active = state.activeTic;
     list.innerHTML = (state.tics||[]).map(t=>{
       const v = state.ticChecks.get(t.rfid) || { limpieza:false, goteo:false, desinfeccion:false };
@@ -200,16 +205,22 @@
       const r = await fetch('/operacion/inspeccion/lookup',{ method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ rfid: code })});
       const j = await r.json();
       if(j.ok){
-        // Caja en Inspección: tenemos TICs; complementar con lista completa de componentes
-        state.cajaSel = j.caja; state.tics = j.tics||[]; state.ticChecks = new Map(); state.activeTic = null;
+        // Caja en Inspección: tenemos TICs (posiblemente 0) y opcionalmente comps (VIP/CUBE)
+        state.cajaSel = j.caja; state.tics = j.tics||[]; state.ticChecks = new Map(); state.activeTic = null; state.inInspeccion = true;
         try{
           const r2 = await fetch('/operacion/caja/lookup',{ method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ code })});
           const j2 = await r2.json();
           if(j2.ok){
             const comps = (j2.caja?.items||[]).map(it=>({ codigo: it.rfid, tipo: (it.rol||inferTipo(it.nombre_modelo||'')) }))
             state.cajaSel = { ...state.cajaSel, componentes: comps };
+          } else if(Array.isArray(j.comps)){
+            state.cajaSel = { ...state.cajaSel, componentes: (j.comps||[]).map(it=> ({ codigo: it.rfid, tipo: it.rol })) };
           }
-        }catch(_e){}
+        }catch(_e){
+          if(Array.isArray(j.comps)){
+            state.cajaSel = { ...state.cajaSel, componentes: (j.comps||[]).map(it=> ({ codigo: it.rfid, tipo: it.rol })) };
+          }
+        }
         renderChecklist();
         scanMsg && (scanMsg.textContent='');
         return;
@@ -222,7 +233,7 @@
         if(j2.ok){
           const comps = (j2.caja?.items||[]).map(it=>({ codigo: it.rfid, tipo: (it.rol||inferTipo(it.nombre_modelo||'')) }))
           state.cajaSel = { id: j2.caja.id, lote: j2.caja.lote, componentes: comps };
-          state.tics = []; state.ticChecks = new Map(); state.activeTic = null;
+          state.tics = []; state.ticChecks = new Map(); state.activeTic = null; state.inInspeccion = false;
           renderChecklist();
           scanMsg && (scanMsg.textContent='Caja no está en Inspección. Usa "Agregar a Inspección" para traerla.');
           return;
@@ -433,7 +444,7 @@
       const r = await fetch('/operacion/inspeccion/pull',{ method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ rfid: code, durationSec: sec })});
       const j = await r.json();
       if(!j.ok){ addMsg && (addMsg.textContent=j.error||'Error'); return; }
-      state.cajaSel = j.caja; state.tics = j.tics||[]; state.ticChecks = new Map(); state.activeTic = null;
+      state.cajaSel = j.caja; state.tics = j.tics||[]; state.ticChecks = new Map(); state.activeTic = null; state.inInspeccion = true;
       renderChecklist();
       await load();
       addMsg && (addMsg.textContent='Agregado');

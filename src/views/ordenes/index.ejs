@@ -1,11 +1,63 @@
 <% title = title || 'Órdenes' %>
 
-<h1 class="text-2xl font-bold mb-3">Órdenes</h1>
-<p class="opacity-70 mb-4 text-sm">Listado y gestión de órdenes</p>
+<div class="flex items-center justify-between mb-2">
+  <div>
+    <h1 class="text-2xl font-bold">Órdenes</h1>
+    <p class="opacity-70 text-sm">Listado y gestión de órdenes</p>
+  </div>
+  <div>
+    <button class="btn btn-primary btn-sm" onclick="document.getElementById('modal-add-order').showModal()">
+      Agregar orden
+    </button>
+  </div>
+  
+</div>
 
-<div class="card bg-base-200 shadow mb-6">
+<!-- Tabla de órdenes -->
+<div class="card bg-base-200 shadow">
   <div class="card-body">
-    <h2 class="card-title text-base">Nueva orden</h2>
+    <div class="overflow-x-auto">
+      <table class="table table-zebra">
+        <thead>
+          <tr>
+            <th># Orden</th>
+            <th>Código producto</th>
+            <th>Cantidad</th>
+            <th>Ciudad destino</th>
+            <th>Ubicación destino</th>
+            <th>Cliente</th>
+            <th>Fecha generación</th>
+          </tr>
+        </thead>
+        <tbody>
+          <% if ((items||[]).length === 0) { %>
+            <tr>
+              <td colspan="7" class="text-center opacity-60">No hay órdenes por ahora.</td>
+            </tr>
+          <% } else { %>
+            <% items.forEach(o => { %>
+              <tr>
+                <td><%= o.numero_orden || '-' %></td>
+                <td><%= o.codigo_producto || '-' %></td>
+                <td><%= o.cantidad ?? '-' %></td>
+                <td><%= o.ciudad_destino || '-' %></td>
+                <td><%= o.ubicacion_destino || '-' %></td>
+                <td><%= o.cliente || '-' %></td>
+                <td><%= o.fecha_generacion ? new Date(o.fecha_generacion).toLocaleString() : '-' %></td>
+              </tr>
+            <% }) %>
+          <% } %>
+        </tbody>
+      </table>
+    </div>
+  </div>
+  
+</div>
+
+<!-- Modal crear orden -->
+<dialog id="modal-add-order" class="modal">
+  <div class="modal-box max-w-3xl">
+    <h3 class="font-bold text-lg mb-2">Nueva orden</h3>
     <form class="grid grid-cols-1 md:grid-cols-3 gap-3" action="/ordenes/create" method="post">
       <div class="form-control">
         <label class="label"><span class="label-text">Número de orden</span></label>
@@ -35,46 +87,13 @@
         <label class="label"><span class="label-text">Fecha generación (opcional)</span></label>
         <input name="fecha_generacion" type="datetime-local" class="input input-sm input-bordered" />
       </div>
-      <div class="form-control flex justify-end md:col-span-1 items-end">
-        <button class="btn btn-sm btn-primary w-full md:w-auto">Agregar</button>
+      <div class="form-control md:col-span-1 flex items-end justify-end gap-2">
+        <button type="button" class="btn btn-sm" onclick="document.getElementById('modal-add-order').close()">Cancelar</button>
+        <button class="btn btn-sm btn-primary">Agregar</button>
       </div>
     </form>
   </div>
-</div>
-
-<div class="card bg-base-200 shadow">
-  <div class="card-body">
-    <% if ((items||[]).length === 0) { %>
-      <div class="text-center opacity-60 py-8">No hay órdenes por ahora.</div>
-    <% } else { %>
-      <div class="overflow-x-auto">
-         <table class="table table-zebra">
-          <thead>
-            <tr>
-              <th># Orden</th>
-              <th>Código producto</th>
-              <th>Cantidad</th>
-              <th>Ciudad destino</th>
-              <th>Ubicación destino</th>
-              <th>Cliente</th>
-              <th>Fecha generación</th>
-            </tr>
-          </thead>
-          <tbody>
-            <% items.forEach(o => { %>
-              <tr>
-                <td><%= o.numero_orden || '-' %></td>
-                <td><%= o.codigo_producto || '-' %></td>
-                <td><%= o.cantidad ?? '-' %></td>
-                <td><%= o.ciudad_destino || '-' %></td>
-                <td><%= o.ubicacion_destino || '-' %></td>
-                <td><%= o.cliente || '-' %></td>
-                <td><%= o.fecha_generacion ? new Date(o.fecha_generacion).toLocaleString() : '-' %></td>
-              </tr>
-            <% }) %>
-          </tbody>
-        </table>
-      </div>
-    <% } %>
-  </div>
-</div>
+  <form method="dialog" class="modal-backdrop">
+    <button>close</button>
+  </form>
+</dialog>

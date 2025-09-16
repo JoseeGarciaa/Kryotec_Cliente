@@ -977,14 +977,20 @@ export const OperacionController = {
       // Si no hay TICs en inspección, permitir si hay VIP/CUBE en Inspección (caso 6 TICs inhabilitadas)
       if(!(ticsQ.rows||[]).length){
         const vipCubeQ = await withTenant(tenant, (c)=> c.query(
-          `SELECT COUNT(*)::int AS cnt
+          `SELECT ic.rfid, 
+                  CASE WHEN m.nombre_modelo ILIKE '%vip%' THEN 'vip'
+                       WHEN (m.nombre_modelo ILIKE '%cube%' OR m.nombre_modelo ILIKE '%cubo%') THEN 'cube'
+                       ELSE 'otro' END AS rol
              FROM acond_caja_items aci
              JOIN inventario_credocubes ic ON ic.rfid = aci.rfid
              JOIN modelos m ON m.modelo_id = ic.modelo_id
             WHERE aci.caja_id = $1
               AND LOWER(ic.estado) IN ('inspeccion','inspección')
               AND (m.nombre_modelo ILIKE '%vip%' OR m.nombre_modelo ILIKE '%cube%' OR m.nombre_modelo ILIKE '%cubo%')`, [cajaId]));
-        if(vipCubeQ.rows[0]?.cnt>0){ return res.json({ ok:true, caja:{ id: cajaId, lote }, tics: [] }); }
+        if((vipCubeQ.rows||[]).length>0){
+          // Mantener caja en Inspección con VIP/CUBE disponibles y 0 TICs
+          return res.json({ ok:true, caja:{ id: cajaId, lote }, tics: [], comps: vipCubeQ.rows });
+        }
         const pendQ = await withTenant(tenant, (c)=> c.query(
           `SELECT COUNT(*)::int AS cnt
              FROM acond_caja_items aci
