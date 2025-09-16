@@ -1200,6 +1200,7 @@ export const OperacionController = {
       if(!rItem.rowCount) return res.status(404).json({ ok:false, error:'RFID no encontrado' });
       const piezaId = rItem.rows[0].id;
   let autoReturnedCount = 0;
+  let clearedCaja = false;
   await withTenant(tenant, async (c)=>{
         await c.query('BEGIN');
         try{
@@ -1287,12 +1288,27 @@ export const OperacionController = {
                 // Importante: NO desarmar la caja ni borrar timers; requiere revisión de VIP/CUBE.
                 autoReturnedCount = 0;
               }
+
+              // Después de registrar la novedad, si ya no quedan items en estado 'Inspección' dentro de la caja,
+              // limpiar cronómetro y desmontar la caja.
+              const leftQ = await c.query(
+                `SELECT COUNT(*)::int AS cnt
+                   FROM acond_caja_items aci
+                   JOIN inventario_credocubes ic ON ic.rfid = aci.rfid
+                  WHERE aci.caja_id = $1 AND LOWER(ic.estado) IN ('inspeccion','inspección')`, [cajaId]);
+              const remain = Number(leftQ.rows?.[0]?.cnt||0);
+              if(remain === 0){
+                await c.query(`DELETE FROM inspeccion_caja_timers WHERE caja_id=$1`, [cajaId]);
+                await c.query(`DELETE FROM acond_caja_items WHERE caja_id=$1`, [cajaId]);
+                await c.query(`DELETE FROM acond_cajas WHERE caja_id=$1`, [cajaId]);
+                clearedCaja = true;
+              }
             }
           }
           await c.query('COMMIT');
         }catch(e){ await c.query('ROLLBACK'); throw e; }
       });
-      return res.json({ ok:true, auto_returned: autoReturnedCount });
+      return res.json({ ok:true, auto_returned: autoReturnedCount, cleared: clearedCaja });
     }catch(e:any){ return res.status(500).json({ ok:false, error: e.message||'Error registrando novedad' }); }
   },
   // Vista: En bodega

@@ -331,13 +331,13 @@
       }
       state.ticChecks.delete(code);
       renderChecklist();
-      // If caja auto-retired (VIP/CUBE sent to Bodega), clear panel and refresh grid immediately
-      if(j.auto_returned && state.cajaSel){
+      // If caja auto-retired or cleared (no items remain in Inspección), clear panel and refresh grid immediately
+      if((j.auto_returned || j.cleared) && state.cajaSel){
         try{ novDlg.close(); }catch{ novDlg.classList.add('hidden'); }
         if(panel){ panel.classList.add('hidden'); }
         state.cajaSel = null; state.tics = []; state.ticChecks.clear(); state.activeTic = null;
         await load();
-        scanMsg && (scanMsg.textContent = 'Caja retirada: VIP/CUBE devueltos a Bodega');
+        scanMsg && (scanMsg.textContent = 'Caja retirada de Inspección');
         return; // done
       }
       // close modal
@@ -442,12 +442,14 @@
     addMsg && (addMsg.textContent='Agregando...');
     try {
       const r = await fetch('/operacion/inspeccion/pull',{ method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ rfid: code, durationSec: sec })});
-      const j = await r.json();
-      if(!j.ok){ addMsg && (addMsg.textContent=j.error||'Error'); return; }
-      state.cajaSel = j.caja; state.tics = j.tics||[]; state.ticChecks = new Map(); state.activeTic = null; state.inInspeccion = true;
-      renderChecklist();
-      await load();
-      addMsg && (addMsg.textContent='Agregado');
+  const j = await r.json();
+  if(!j.ok){ addMsg && (addMsg.textContent=j.error||'Error'); return; }
+  // No mostrar el panel derecho automáticamente: exigir identificación por RFID.
+  // Solo refrescamos la lista de cajas de la izquierda.
+  state.cajaSel = null; state.tics = []; state.ticChecks.clear(); state.activeTic = null; state.inInspeccion = false;
+  if(panel){ panel.classList.add('hidden'); }
+  await load();
+  addMsg && (addMsg.textContent='Agregado a Inspección. Identifica la caja con su RFID para continuar.');
       try{ addDlg.close(); }catch{ addDlg.classList.add('hidden'); }
     } catch(e){ addMsg && (addMsg.textContent='Error'); }
   });
