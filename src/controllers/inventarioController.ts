@@ -2,12 +2,14 @@ import { Request, Response } from 'express';
 import { withTenant } from '../db/pool';
 import { AlertsModel } from '../models/Alerts';
 import { requireAuth } from '../middleware/auth';
+import { resolveTenant } from '../middleware/tenant';
 
 export const InventarioController = {
   index: async (req: Request, res: Response) => {
-  const tten = (require('../middleware/tenant') as any).resolveTenant ? (require('../middleware/tenant') as any).resolveTenant(req) : null;
-  if (!tten) return res.status(400).send('Tenant no especificado');
-  const tenant = String(tten).startsWith('tenant_') ? tten : `tenant_${tten}`;
+  // Prefer authenticated tenant; fallback to resolver only if missing
+  const t0 = (req as any).user?.tenant || resolveTenant(req);
+  if (!t0) return res.status(400).send('Tenant no especificado');
+  const tenant = String(t0).startsWith('tenant_') ? String(t0) : `tenant_${t0}`;
     // Inputs
     const { q: qRaw, cat: catRaw, state: stateRaw, page: pageRaw, limit: limitRaw, rfids: rfidsRaw } = req.query as any;
     const q = (qRaw ? String(qRaw) : '').slice(0, 24);
@@ -253,9 +255,9 @@ export const InventarioController = {
   },
   data: async (req: Request, res: Response) => {
     // Versión JSON simplificada para live-scan (sin paginación avanzada por ahora)
-  const tten2 = (require('../middleware/tenant') as any).resolveTenant ? (require('../middleware/tenant') as any).resolveTenant(req) : null;
-  if (!tten2) return res.status(400).json({ ok: false, error: 'Tenant no especificado' });
-  const tenant = String(tten2).startsWith('tenant_') ? tten2 : `tenant_${tten2}`;
+  const t1 = (req as any).user?.tenant || resolveTenant(req);
+  if (!t1) return res.status(400).json({ ok: false, error: 'Tenant no especificado' });
+  const tenant = String(t1).startsWith('tenant_') ? String(t1) : `tenant_${t1}`;
     const { q: qRaw, rfids: rfidsRaw, limit: limitRaw } = req.query as any;
     const q = (qRaw ? String(qRaw) : '').slice(0, 24);
     const limit = Math.min(500, Math.max(10, parseInt(String(limitRaw||'100'), 10) || 100));
@@ -303,9 +305,9 @@ export const InventarioController = {
   },
 
   update: async (req: Request, res: Response) => {
-  const tten3 = (require('../middleware/tenant') as any).resolveTenant ? (require('../middleware/tenant') as any).resolveTenant(req) : null;
-  if (!tten3) return res.status(400).json({ ok: false, error: 'Tenant no especificado' });
-  const tenant = String(tten3).startsWith('tenant_') ? tten3 : `tenant_${tten3}`;
+  const t2 = (req as any).user?.tenant || resolveTenant(req);
+  if (!t2) return res.status(400).json({ ok: false, error: 'Tenant no especificado' });
+  const tenant = String(t2).startsWith('tenant_') ? String(t2) : `tenant_${t2}`;
     const id = Number((req.params as any).id);
     if(!Number.isFinite(id) || id<=0) return res.status(400).json({ ok:false, error:'id inválido' });
     const { nombre_unidad, lote, estado, sub_estado } = req.body as any;
@@ -334,9 +336,9 @@ export const InventarioController = {
   },
 
   remove: async (req: Request, res: Response) => {
-  const tten = (require('../middleware/tenant') as any).resolveTenant ? (require('../middleware/tenant') as any).resolveTenant(req) : null;
-  if (!tten) return res.status(400).json({ ok: false, error: 'Tenant no especificado' });
-  const tenant = String(tten).startsWith('tenant_') ? tten : `tenant_${tten}`;
+  const t3 = (req as any).user?.tenant || resolveTenant(req);
+  if (!t3) return res.status(400).json({ ok: false, error: 'Tenant no especificado' });
+  const tenant = String(t3).startsWith('tenant_') ? String(t3) : `tenant_${t3}`;
     const id = Number((req.params as any).id);
     if(!Number.isFinite(id) || id<=0) return res.status(400).json({ ok:false, error:'id inválido' });
     try {
@@ -360,9 +362,9 @@ export const InventarioController = {
   },
 
   create: async (req: Request, res: Response) => {
-  const tten = (require('../middleware/tenant') as any).resolveTenant ? (require('../middleware/tenant') as any).resolveTenant(req) : null;
-  if (!tten) return res.status(400).render('inventario/index', { title: 'Inventario', modelos: [], items: [], error: 'Tenant no especificado' });
-  const tenant = String(tten).startsWith('tenant_') ? tten : `tenant_${tten}`;
+  const t4 = (req as any).user?.tenant || resolveTenant(req);
+  if (!t4) return res.status(400).render('inventario/index', { title: 'Inventario', modelos: [], items: [], error: 'Tenant no especificado' });
+  const tenant = String(t4).startsWith('tenant_') ? String(t4) : `tenant_${t4}`;
     const { modelo_id, nombre_unidad, rfid, lote, estado, sub_estado } = req.body;
     try {
       const inserted = await withTenant(tenant, (c) =>
