@@ -42,20 +42,25 @@
   }
 
   function show(alert){
-    if(!canNotify() || Notification.permission !== 'granted') {
-      showInApp(alert);
-      return;
-    }
     const title = (alert.tipo_alerta || 'Alerta');
     const body = (alert.descripcion || 'Hay una nueva notificación');
     const ts = new Date(alert.fecha_creacion || Date.now());
+
+    // Siempre mostramos un toast in-app para asegurar feedback visual
+    showInApp(alert);
+
+    if(!canNotify() || Notification.permission !== 'granted') {
+      return; // nativa no disponible
+    }
     try {
       const notif = new Notification(title, {
-      body: body + ' • ' + ts.toLocaleString(),
+        body: body + ' • ' + ts.toLocaleString(),
       icon: '/static/images/favicon.png',
       tag: 'kryo-alert-'+alert.id,
-        requireInteraction: false,
+        requireInteraction: true,
         timestamp: ts.getTime(),
+        renotify: true,
+        silent: false,
       });
       notif.onclick = () => {
       window.focus();
@@ -66,7 +71,6 @@
     } catch(e) {
       // Silencioso si el navegador no permite construir la notificación
       console.debug('Notification error', e);
-      showInApp(alert);
     }
   }
 
