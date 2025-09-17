@@ -1,5 +1,6 @@
 import { Request, Response } from 'express';
 import { withTenant } from '../db/pool';
+import { AlertsModel } from '../models/Alerts';
 
 // Debug control for kanbanData verbosity
 const KANBAN_DEBUG = process.env.KANBAN_DEBUG === '1';
@@ -2097,13 +2098,14 @@ export const OperacionController = {
       await c.query('BEGIN');
       try {
         // Mark items with active item timers in this section as completed state
-        await c.query(
+        const upd = await c.query(
           `UPDATE inventario_credocubes ic
               SET sub_estado = CASE WHEN $1='congelamiento' THEN 'Congelado' ELSE 'Atemperado' END
             WHERE ic.rfid IN (
                     SELECT pit.rfid FROM preacond_item_timers pit
                      WHERE pit.section = $1 AND pit.active = true
-                  )`, [s]
+                  )
+          RETURNING ic.id, ic.rfid, ic.lote`, [s]
         );
         // Deactivate item timers
         await c.query(
@@ -2116,6 +2118,19 @@ export const OperacionController = {
           `UPDATE preacond_timers SET active = false, updated_at = NOW() WHERE section = $1`, [s]
         );
         await c.query('COMMIT');
+        // Crear alerta agregada (fallback a trigger): N TIC(s) marcadas Congelado/Atemperado
+        const count = upd.rowCount || 0;
+        if (count > 0) {
+          const nextState = s === 'congelamiento' ? 'Congelado' : 'Atemperado';
+          const lotes = Array.from(new Set((upd.rows || []).map((r: any) => String(r.lote || '').trim()).filter(Boolean)));
+          const lotesMsg = lotes.length ? ` (Lote${lotes.length>1?'s':''}: ${lotes.join(', ')})` : '';
+          try {
+            await AlertsModel.create(c, {
+              tipo_alerta: `inventario:preacond:${nextState.toLowerCase()}`,
+              descripcion: `${count} TIC${count>1?'s':''} marcada${count>1?'s':''} ${nextState}${lotesMsg}`
+            });
+          } catch {}
+        }
       } catch (e) {
         await c.query('ROLLBACK');
         throw e;
@@ -2134,8 +2149,11 @@ export const OperacionController = {
     await withTenant(tenant, async (c) => {
       await c.query('BEGIN');
       try {
-        await c.query(
-          `UPDATE inventario_credocubes SET sub_estado = CASE WHEN $1='congelamiento' THEN 'Congelado' ELSE 'Atemperado' END WHERE rfid = $2`,
+        const upd = await c.query(
+          `UPDATE inventario_credocubes
+              SET sub_estado = CASE WHEN $1='congelamiento' THEN 'Congelado' ELSE 'Atemperado' END
+            WHERE rfid = $2
+          RETURNING id, rfid, lote`,
           [s, r]
         );
         await c.query(
@@ -2143,6 +2161,17 @@ export const OperacionController = {
           [s, r]
         );
         await c.query('COMMIT');
+        // Alerta por pieza (fallback): RFID → Congelado/Atemperado
+        if (upd.rowCount) {
+          const nextState = s === 'congelamiento' ? 'Congelado' : 'Atemperado';
+          const row = (upd.rows || [])[0] as any;
+          try {
+            await AlertsModel.create(c, {
+              tipo_alerta: `inventario:preacond:${nextState.toLowerCase()}`,
+              descripcion: `RFID ${row?.rfid || r} → ${nextState}${row?.lote? ' (L: '+row.lote+')' : ''}`
+            });
+          } catch {}
+        }
       } catch (e) {
         await c.query('ROLLBACK');
         throw e;
