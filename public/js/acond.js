@@ -1199,7 +1199,9 @@
               <span class='font-mono text-[10px]'>${c.rfid}</span>
             </span>`;
           }).join('');
+          const ordenTxt = j.order_num ? String(j.order_num) : (j.order_id ? `#${j.order_id}` : '—');
           summary.innerHTML = `<div class='mb-2'><strong>Caja:</strong> ${j.lote} (ID ${j.caja_id})</div>
+            <div class='mb-2'><span class='opacity-70'>Orden:</span> <span class='font-mono'>${ordenTxt}</span></div>
             <div class='mb-2'>Componentes (${j.total}):
               <div class='mt-1 grid grid-cols-2 gap-1 max-h-40 overflow-auto'>${listHTML}</div>
             </div>

@@ -2872,14 +2872,17 @@ export const OperacionController = {
     try {
       // 1. Resolver caja_id y lote usando el RFID
       const cajaRow = await withTenant(tenant, (c)=> c.query(
-        `SELECT c.caja_id, c.lote
+        `SELECT c.caja_id, c.lote, c.order_id, o.numero_orden AS order_num
            FROM acond_caja_items aci
            JOIN acond_cajas c ON c.caja_id = aci.caja_id
+      LEFT JOIN ordenes o ON o.id = c.order_id
           WHERE aci.rfid = $1
           LIMIT 1`, [code]));
       if(!cajaRow.rowCount) return res.status(404).json({ ok:false, error:'RFID no pertenece a ninguna caja' });
-      const cajaId = cajaRow.rows[0].caja_id;
-      const lote = cajaRow.rows[0].lote;
+  const cajaId = cajaRow.rows[0].caja_id;
+  const lote = cajaRow.rows[0].lote;
+  const orderId = cajaRow.rows[0].order_id ?? null;
+  const orderNum = cajaRow.rows[0].order_num ?? null;
       // 2. Traer componentes actuales + litraje/rol (fallback si columna litraje no existe)
       let currentQ:any; let litrajeDisponible = true;
       try {
@@ -2984,6 +2987,8 @@ export const OperacionController = {
         ok:true,
         caja_id: cajaId,
         lote,
+        order_id: orderId,
+        order_num: orderNum,
         // Back-compat: mantener rfids plano; nuevo: incluir rol por componente
         rfids: allEnsamblado ? rows.map(r=>r.rfid) : [],
         componentes: allEnsamblado ? rows.map(r=> ({ rfid: r.rfid, rol: r.rol })) : [],
