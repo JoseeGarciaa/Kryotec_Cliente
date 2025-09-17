@@ -3369,18 +3369,20 @@ export const OperacionController = {
      WHERE aci.rfid IS NULL`));
    } catch(e){ if(KANBAN_DEBUG) console.log('[operacionData] backfill acond_caja_items error', (e as any)?.message); }
       const nowRes = await withTenant(tenant, (c)=> c.query<{ now:string }>(`SELECT NOW()::timestamptz AS now`));
-      const cajasQ = await withTenant(tenant, (c)=> c.query(
-        `SELECT c.caja_id, c.lote, act.started_at, act.duration_sec, act.active,
-                COUNT(*) FILTER (WHERE ic.estado='Operación') AS total_op,
-                COUNT(*) FILTER (WHERE ic.estado='Operación' AND ic.sub_estado='Completado') AS completados
-           FROM acond_cajas c
-           JOIN acond_caja_items aci ON aci.caja_id = c.caja_id
-           JOIN inventario_credocubes ic ON ic.rfid = aci.rfid
-     LEFT JOIN acond_caja_timers act ON act.caja_id = c.caja_id
-          WHERE ic.estado='Operación'
-          GROUP BY c.caja_id, c.lote, act.started_at, act.duration_sec, act.active
-          ORDER BY c.caja_id DESC
-          LIMIT 300`));
+   const cajasQ = await withTenant(tenant, (c)=> c.query(
+     `SELECT c.caja_id, c.lote, c.order_id, o.numero_orden AS order_num,
+       act.started_at, act.duration_sec, act.active,
+       COUNT(*) FILTER (WHERE ic.estado='Operación') AS total_op,
+       COUNT(*) FILTER (WHERE ic.estado='Operación' AND ic.sub_estado='Completado') AS completados
+     FROM acond_cajas c
+     JOIN acond_caja_items aci ON aci.caja_id = c.caja_id
+     JOIN inventario_credocubes ic ON ic.rfid = aci.rfid
+   LEFT JOIN ordenes o ON o.id = c.order_id
+  LEFT JOIN acond_caja_timers act ON act.caja_id = c.caja_id
+    WHERE ic.estado='Operación'
+    GROUP BY c.caja_id, c.lote, c.order_id, o.numero_orden, act.started_at, act.duration_sec, act.active
+    ORDER BY c.caja_id DESC
+    LIMIT 300`));
       const itemsQ = await withTenant(tenant, (c)=> c.query(
         `SELECT c.caja_id, aci.rol, ic.rfid, ic.estado, ic.sub_estado, m.nombre_modelo
            FROM acond_caja_items aci
@@ -3420,6 +3422,8 @@ export const OperacionController = {
           id: r.caja_id,
           codigoCaja: r.lote,
           estado: estadoCaja,
+          orderId: (r as any).order_id ?? null,
+          orderNumero: (r as any).order_num ?? null,
           timer,
           componentes: items.map(it=> ({ codigo: it.codigo, tipo: it.rol, nombre: it.nombre, estado: it.estado, sub_estado: it.sub_estado }))
         };

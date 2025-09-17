@@ -218,6 +218,15 @@
     setText('detalle-caja-id', '#'+caja.id);
     setText('detalle-caja-comp', `VIP:${counts.vip||0} · TIC:${counts.tic||0} · CUBE:${counts.cube||0}`);
     setText('detalle-caja-fecha', '-');
+    // Orden vinculada si existe
+    (function(){
+      const el = document.getElementById('detalle-caja-orden');
+      if(!el) return;
+      const num = caja.orderNumero || null;
+      const idNum = caja.orderId || null;
+      el.textContent = num ? String(num) : (idNum ? `#${idNum}` : '—');
+      el.classList.toggle('opacity-60', !(num||idNum));
+    })();
     const itemsBox = document.getElementById('detalle-caja-items');
     if(itemsBox){
       itemsBox.innerHTML = comps.map(cc=>{
