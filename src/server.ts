@@ -24,6 +24,7 @@ import { withTenant } from './db/pool';
 import { UsersModel } from './models/User';
 import { AlertsModel } from './models/Alerts';
 import fs from 'fs';
+import Jimp from 'jimp';
 
 dotenv.config();
 
@@ -58,15 +59,35 @@ app.get('/sw.js', (_req, res) => {
 	res.sendFile(path.join(staticDir, 'sw.js'));
 });
 
-// Serve static pre-sized icons if present; fallback to favicon
-app.get(['/icons/icon-192.png','/icons/icon-512.png'], (req, res) => {
-	const filename = req.path.endsWith('512.png') ? 'icon-512.png' : 'icon-192.png';
-	const candidate = path.join(staticDir, 'images', filename);
-	const fallback = path.join(staticDir, 'images', 'favicon.png');
-	const fileToSend = fs.existsSync(candidate) ? candidate : fallback;
-	res.type('image/png');
-	res.setHeader('Cache-Control', process.env.NODE_ENV === 'production' ? 'public, max-age=604800, immutable' : 'no-cache');
-	res.sendFile(fileToSend);
+// Serve icons, generate from vect.png if missing
+app.get(['/icons/icon-192.png','/icons/icon-512.png'], async (req, res) => {
+	try {
+		const size = req.path.endsWith('512.png') ? 512 : 192;
+		const destName = size === 512 ? 'icon-512.png' : 'icon-192.png';
+		const dest = path.join(staticDir, 'images', destName);
+		const src = path.join(staticDir, 'images', 'vect.png');
+		// If static exists, send it
+		if (fs.existsSync(dest)) {
+			res.type('image/png');
+			return res.sendFile(dest);
+		}
+		// Try generate from vect.png
+		if (fs.existsSync(src)) {
+			const img = await Jimp.read(src);
+			img.cover(size, size).quality(100);
+			await img.writeAsync(dest);
+			res.type('image/png');
+			return res.sendFile(dest);
+		}
+		// Fallback to favicon
+		const fallback = path.join(staticDir, 'images', 'favicon.png');
+		res.type('image/png');
+		return res.sendFile(fallback);
+	} catch (e) {
+		const fallback = path.join(staticDir, 'images', 'favicon.png');
+		res.type('image/png');
+		return res.sendFile(fallback);
+	}
 });
 
 // theme from cookie
