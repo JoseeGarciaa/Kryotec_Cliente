@@ -6,44 +6,53 @@
   </div>
 
   <div class="overflow-x-auto border border-base-300/40 rounded-xl bg-base-100/60">
-    <table class="table table-sm">
-      <thead>
-        <tr>
-          <th>ID</th>
-          <th>Tipo</th>
-          <th>Descripción</th>
-          <th>Creación</th>
-          <th>Estado</th>
-          <th></th>
-        </tr>
-      </thead>
-      <tbody>
-        <% if (!items || !items.length) { %>
-          <tr><td colspan="6" class="text-center text-xs opacity-70">Sin alertas</td></tr>
-        <% } %>
-        <% (items||[]).forEach(a => { %>
+    <form method="post" action="/notificaciones/bulk/resolve" id="bulk-form" class="p-0 m-0">
+      <div class="flex items-center justify-between p-3 border-b border-base-300/40">
+        <div class="flex items-center gap-3">
+          <label class="label cursor-pointer gap-2">
+            <input type="checkbox" class="checkbox checkbox-sm" id="select-all" />
+            <span class="label-text text-sm">Seleccionar todas</span>
+          </label>
+        </div>
+        <div class="flex items-center gap-2">
+          <button formaction="/notificaciones/bulk/resolve" class="btn btn-sm btn-primary" id="btn-bulk-resolve" disabled>Marcar resueltas</button>
+          <button formaction="/notificaciones/bulk/delete" class="btn btn-sm btn-error" id="btn-bulk-delete" disabled>Eliminar</button>
+        </div>
+      </div>
+      <table class="table table-sm">
+        <thead>
           <tr>
-            <td><%= a.id %></td>
-            <td><span class="badge badge-outline"><%= a.tipo_alerta %></span></td>
-            <td class="max-w-[420px]"><div class="truncate" title="<%= a.descripcion || '' %>"><%= a.descripcion || '-' %></div></td>
-            <td class="text-xs"><%= new Date(a.fecha_creacion).toLocaleString('es-CO') %></td>
-            <td>
-              <% if (a.resuelta) { %>
-                <span class="badge badge-success badge-outline">Resuelta</span>
-              <% } else { %>
-                <span class="badge badge-warning badge-outline">Pendiente</span>
-              <% } %>
-            </td>
-            <td class="text-right">
-              <% if (!a.resuelta) { %>
-                <form method="post" action="/notificaciones/<%= a.id %>/resolver">
-                  <button class="btn btn-xs btn-primary">Marcar resuelta</button>
-                </form>
-              <% } %>
-            </td>
+            <th style="width:36px;"></th>
+            <th>Tipo</th>
+            <th>Descripción</th>
+            <th>Creación</th>
+            <th>Estado</th>
           </tr>
-        <% }) %>
-      </tbody>
-    </table>
+        </thead>
+        <tbody>
+          <% if (!items || !items.length) { %>
+            <tr><td colspan="5" class="text-center text-xs opacity-70">Sin alertas</td></tr>
+          <% } %>
+          <% (items||[]).forEach(a => { %>
+            <tr>
+              <td>
+                <input type="checkbox" class="checkbox checkbox-sm row-select" name="ids" value="<%= a.id %>" />
+              </td>
+              <td><span class="badge badge-outline"><%= a.tipo_alerta %></span></td>
+              <td class="max-w-[520px]"><div class="truncate" title="<%= a.descripcion || '' %>"><%= a.descripcion || '-' %></div></td>
+              <td class="text-xs"><%= new Date(a.fecha_creacion).toLocaleString('es-CO') %></td>
+              <td>
+                <% if (a.resuelta) { %>
+                  <span class="badge badge-success badge-outline">Resuelta</span>
+                <% } else { %>
+                  <span class="badge badge-warning badge-outline">Pendiente</span>
+                <% } %>
+              </td>
+            </tr>
+          <% }) %>
+        </tbody>
+      </table>
+    </form>
   </div>
+  <script src="/static/js/notifications-bulk.js?v=<%= assetVersion %>" defer></script>
 </div>

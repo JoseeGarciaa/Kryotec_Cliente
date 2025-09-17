@@ -27,6 +27,44 @@ export const AlertsModel = {
     // Índices útiles
     await client.query(`CREATE INDEX IF NOT EXISTS alertas_resuelta_idx ON alertas (resuelta);`);
     await client.query(`CREATE INDEX IF NOT EXISTS alertas_fecha_idx ON alertas (fecha_creacion);`);
+
+    // Disparador de trazabilidad: crear alerta en cada cambio de estado/sub_estado
+    // Idempotente: crea la función/trigger solo si no existen en el esquema actual
+    await client.query(`DO $$
+    DECLARE
+      fn_exists boolean := EXISTS (
+        SELECT 1 FROM pg_proc p
+        JOIN pg_namespace n ON n.oid = p.pronamespace
+        WHERE p.proname = 'f_alert_estado_cambiado' AND n.nspname = current_schema()
+      );
+      trg_exists boolean := EXISTS (
+        SELECT 1 FROM pg_trigger t WHERE t.tgname = 'trg_alert_estado_cambiado'
+      );
+    BEGIN
+      IF NOT fn_exists THEN
+        EXECUTE $$
+        CREATE FUNCTION f_alert_estado_cambiado() RETURNS trigger AS $$
+        BEGIN
+          IF (NEW.estado IS DISTINCT FROM OLD.estado) OR (NEW.sub_estado IS DISTINCT FROM OLD.sub_estado) THEN
+            INSERT INTO alertas (inventario_id, tipo_alerta, descripcion, fecha_creacion, resuelta)
+            VALUES (
+              NEW.id,
+              'inventario:estado_cambiado',
+              CONCAT('RFID ', COALESCE(NEW.rfid,''), ' | ',
+                     'estado ', COALESCE(OLD.estado,'(null)'), '/', COALESCE(OLD.sub_estado,'(null)'),
+                     ' → ', COALESCE(NEW.estado,'(null)'), '/', COALESCE(NEW.sub_estado,'(null)')),
+              NOW(), FALSE
+            );
+          END IF;
+          RETURN NEW;
+        END $$ LANGUAGE plpgsql;
+        $$;
+      END IF;
+
+      IF NOT trg_exists THEN
+        EXECUTE 'CREATE TRIGGER trg_alert_estado_cambiado\n\nAFTER UPDATE ON inventario_credocubes\nFOR EACH ROW\nEXECUTE FUNCTION f_alert_estado_cambiado()';
+      END IF;
+    END $$;`);
   },
   async list(
     client: PoolClient,

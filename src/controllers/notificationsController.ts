@@ -6,9 +6,11 @@ import { AlertsModel } from '../models/Alerts';
 export const NotificationsController = {
   list: async (req: Request, res: Response) => {
     const u: any = (res.locals as any).user || (req as any).user || {};
-    const t = resolveTenant(req);
-    if (!t) return res.status(400).send('Tenant no especificado');
-    const tenantSchema = t.startsWith('tenant_') ? t : `tenant_${t}`;
+    const tRaw = u?.tenant || resolveTenant(req);
+    const t = tRaw || process.env.DEFAULT_TENANT || null;
+    // Si no hay tenant, no romper la UI; renderizar vacío
+    if (!t) return res.render('notifications/index', { items: [], total: 0, page: 1, limit: 25, layout: 'layouts/main', title: 'Notificaciones' });
+    const tenantSchema = String(t).startsWith('tenant_') ? String(t) : `tenant_${t}`;
     try {
       const page = Number(req.query.page || 1) || 1;
       const limit = Math.min(100, Number(req.query.limit || 25) || 25);
@@ -27,11 +29,12 @@ export const NotificationsController = {
 
   // JSON feed for browser notifications polling
   apiUpdates: async (req: Request, res: Response) => {
-    const u: any = (res.locals as any).user;
-    if (!u) return res.status(401).json({ items: [], lastId: 0 });
-  const t = resolveTenant(req);
-  if (!t) return res.status(400).json({ items: [], lastId: 0 });
-  const tenantSchema = t.startsWith('tenant_') ? t : `tenant_${t}`;
+    const u: any = (res.locals as any).user || (req as any).user || null;
+    if (!u) return res.json({ items: [], lastId: 0 });
+    const tRaw = u?.tenant || resolveTenant(req);
+    const t = tRaw || process.env.DEFAULT_TENANT || null;
+    if (!t) return res.json({ items: [], lastId: 0 });
+    const tenantSchema = String(t).startsWith('tenant_') ? String(t) : `tenant_${t}`;
     const afterRaw = Number(req.query.after || 0) || 0;
     try {
       const role = String(u.rol || '').toLowerCase();
@@ -84,9 +87,10 @@ export const NotificationsController = {
 
   resolve: async (req: Request, res: Response) => {
     const u: any = (res.locals as any).user || (req as any).user || {};
-    const t = resolveTenant(req);
-    if (!t) return res.status(400).send('Tenant no especificado');
-    const tenantSchema = t.startsWith('tenant_') ? t : `tenant_${t}`;
+    const tRaw = u?.tenant || resolveTenant(req);
+    const t = tRaw || process.env.DEFAULT_TENANT || null;
+    if (!t) return res.redirect('/notificaciones');
+    const tenantSchema = String(t).startsWith('tenant_') ? String(t) : `tenant_${t}`;
     const id = Number(req.params.id);
     if (!id) return res.redirect('/notificaciones');
     try {
@@ -95,6 +99,48 @@ export const NotificationsController = {
     } catch (e) {
       console.error(e);
       return res.status(500).redirect('/notificaciones');
+    }
+  }
+  ,
+  bulkResolve: async (req: Request, res: Response) => {
+    const u: any = (res.locals as any).user || (req as any).user || {};
+    const tRaw = u?.tenant || resolveTenant(req);
+    const t = tRaw || process.env.DEFAULT_TENANT || null;
+    if (!t) return res.redirect('/notificaciones');
+    const tenantSchema = String(t).startsWith('tenant_') ? String(t) : `tenant_${t}`;
+    try {
+      const ids = ([] as any[]).concat((req.body as any)?.ids || []).map(x => Number(x)).filter(n => Number.isFinite(n) && n > 0);
+      if (ids.length) {
+        await withTenant(tenantSchema, async (client) => {
+          await AlertsModel.ensureTable(client);
+          await client.query(`UPDATE alertas SET resuelta = TRUE, fecha_resolucion = NOW() WHERE id = ANY($1::int[])`, [ids]);
+        });
+      }
+      return res.redirect('/notificaciones');
+    } catch (e) {
+      console.error(e);
+      return res.redirect('/notificaciones');
+    }
+  }
+  ,
+  bulkDelete: async (req: Request, res: Response) => {
+    const u: any = (res.locals as any).user || (req as any).user || {};
+    const tRaw = u?.tenant || resolveTenant(req);
+    const t = tRaw || process.env.DEFAULT_TENANT || null;
+    if (!t) return res.redirect('/notificaciones');
+    const tenantSchema = String(t).startsWith('tenant_') ? String(t) : `tenant_${t}`;
+    try {
+      const ids = ([] as any[]).concat((req.body as any)?.ids || []).map(x => Number(x)).filter(n => Number.isFinite(n) && n > 0);
+      if (ids.length) {
+        await withTenant(tenantSchema, async (client) => {
+          await AlertsModel.ensureTable(client);
+          await client.query(`DELETE FROM alertas WHERE id = ANY($1::int[])`, [ids]);
+        });
+      }
+      return res.redirect('/notificaciones');
+    } catch (e) {
+      console.error(e);
+      return res.redirect('/notificaciones');
     }
   }
 };

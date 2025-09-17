@@ -73,6 +73,16 @@
 				"build"
 			],
 			"group": "build"
+		},
+		{
+			"label": "TypeScript build",
+			"type": "shell",
+			"command": "npm",
+			"args": [
+				"run",
+				"build"
+			],
+			"group": "build"
 		}
 	]
 }

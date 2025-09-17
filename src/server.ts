@@ -21,6 +21,7 @@ import { restrictByRole } from './middleware/roles';
 import { resolveTenant } from './middleware/tenant';
 import { withTenant } from './db/pool';
 import { UsersModel } from './models/User';
+import { AlertsModel } from './models/Alerts';
 
 dotenv.config();
 
@@ -71,6 +72,13 @@ app.use(async (req, res, next) => {
 		}
 	} catch {}
 	// res.locals.user.rol se usa para condicionar navegación (Administración solo admins)
+	try {
+		// Inicializar tabla e instalar trigger de trazabilidad por tenant (idempotente/rápido)
+		const t = (res.locals as any).user?.tenant || resolveTenant(req);
+		if (t) {
+			await withTenant(t, (client) => AlertsModel.ensureTable(client));
+		}
+	} catch {}
 	next();
 });
 
