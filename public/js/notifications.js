@@ -82,15 +82,56 @@
       if(!container){
         container = document.createElement('div');
         container.id = 'kryo-toast-container';
-        container.className = 'toast toast-end';
+        // Responsive: bottom on mobile, end/right on >=sm; small gap between toasts
+        container.className = 'toast toast-bottom sm:toast-end gap-2';
         container.style.zIndex = '9999';
         document.body.appendChild(container);
       }
       const item = document.createElement('div');
-      item.className = 'alert alert-info shadow';
-      item.innerHTML = '<div><strong>'+escapeHtml(title)+'</strong><br><span>'+escapeHtml(body)+'</span></div>';
+      // Friendlier/smaller typography, rounded, subtle border
+      item.className = 'alert alert-info shadow rounded-2xl border border-info/30 p-3 md:p-4 text-sm';
+      item.setAttribute('role', 'status');
+      item.setAttribute('aria-live', 'polite');
+
+      // Layout: content on the left, close button on the right
+      const row = document.createElement('div');
+      row.className = 'w-full flex items-start gap-3';
+
+      const content = document.createElement('div');
+      content.className = 'min-w-0';
+
+      const titleEl = document.createElement('div');
+      titleEl.className = 'font-semibold text-base-content/90 mb-0.5';
+      titleEl.textContent = String(title);
+
+      const bodyEl = document.createElement('div');
+      bodyEl.className = 'text-xs md:text-sm leading-snug break-words max-w-[92vw] sm:max-w-[24rem] md:max-w-[36rem]';
+      bodyEl.textContent = String(body);
+
+      content.appendChild(titleEl);
+      content.appendChild(bodyEl);
+
+      const closeBtn = document.createElement('button');
+      closeBtn.className = 'btn btn-ghost btn-xs text-base-content/70 hover:text-base-content ml-2';
+      closeBtn.type = 'button';
+      closeBtn.setAttribute('aria-label', 'Cerrar notificación');
+      closeBtn.textContent = '✕';
+
+      // Close interaction (CSP-safe)
+      const removeItem = () => { try { item.remove(); } catch {} };
+      closeBtn.addEventListener('click', (ev) => { ev.preventDefault(); ev.stopPropagation(); removeItem(); });
+
+      // Clicking the toast navigates to Notificaciones (keeps current behavior intuitive)
+      item.style.cursor = 'pointer';
+      item.addEventListener('click', () => { try { window.location.href = '/notificaciones'; } catch{} });
+
+      row.appendChild(content);
+      row.appendChild(closeBtn);
+      item.appendChild(row);
       container.appendChild(item);
-      setTimeout(()=>{ try{ item.remove(); }catch{} }, 6000);
+
+      // Auto-dismiss after a few seconds, unless user already closed it
+      const autoTimer = setTimeout(removeItem, 6000);
     } catch {}
   }
 
