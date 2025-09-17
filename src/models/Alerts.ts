@@ -37,21 +37,14 @@ export const AlertsModel = {
         JOIN pg_namespace n ON n.oid = p.pronamespace
         WHERE p.proname = 'f_alert_estado_cambiado' AND n.nspname = current_schema()
       );
-      tbl_exists boolean := EXISTS (
-        SELECT 1 FROM pg_class c
-        JOIN pg_namespace n ON n.oid = c.relnamespace
-        WHERE c.relname = 'inventario_credocubes' AND n.nspname = current_schema()
-      );
-      trg_exists boolean := EXISTS (
-        SELECT 1
-          FROM pg_trigger t
-          JOIN pg_class c ON c.oid = t.tgrelid
-          JOIN pg_namespace n ON n.oid = c.relnamespace
-         WHERE t.tgname = 'trg_alert_estado_cambiado'
-           AND c.relname = 'inventario_credocubes'
-           AND n.nspname = current_schema()
-      );
+      rel regclass := to_regclass('inventario_credocubes');
+      trg_exists boolean := FALSE;
     BEGIN
+      IF rel IS NOT NULL THEN
+        SELECT EXISTS (
+          SELECT 1 FROM pg_trigger t WHERE t.tgrelid = rel AND t.tgname = 'trg_alert_estado_cambiado'
+        ) INTO trg_exists;
+      END IF;
       IF NOT fn_exists THEN
         EXECUTE $$
         CREATE FUNCTION f_alert_estado_cambiado() RETURNS trigger AS $$
@@ -72,13 +65,14 @@ export const AlertsModel = {
         $$;
       END IF;
 
-      IF tbl_exists AND NOT trg_exists THEN
-        EXECUTE $$
-        CREATE TRIGGER trg_alert_estado_cambiado
-        AFTER UPDATE ON inventario_credocubes
-        FOR EACH ROW
-        EXECUTE FUNCTION f_alert_estado_cambiado();
-        $$;
+      IF rel IS NOT NULL AND NOT trg_exists THEN
+        EXECUTE format($$
+          CREATE TRIGGER trg_alert_estado_cambiado
+          AFTER UPDATE ON %s
+          FOR EACH ROW
+          EXECUTE FUNCTION f_alert_estado_cambiado()$$,
+          rel::text
+        );
       END IF;
     END $$;`);
   },
