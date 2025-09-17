@@ -1,0 +1,13 @@
+{
+  "name": "KryoSense",
+  "short_name": "KryoSense",
+  "description": "Gestión de credocubes y operaciones Kryotec",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#0b1220",
+  "theme_color": "#6d5efc",
+  "icons": [
+    { "src": "/static/images/favicon.png", "sizes": "64x64 128x128 256x256", "type": "image/png" }
+  ]
+}

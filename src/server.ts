@@ -46,6 +46,15 @@ app.use('/static', expressStatic.static(staticDir, {
 	etag: true,
 }));
 
+// PWA assets at root paths
+app.get('/manifest.webmanifest', (_req, res) => {
+	res.sendFile(path.join(staticDir, 'manifest.webmanifest'));
+});
+app.get('/sw.js', (_req, res) => {
+	res.setHeader('Cache-Control', 'no-cache');
+	res.sendFile(path.join(staticDir, 'sw.js'));
+});
+
 // theme from cookie
 app.use(async (req, res, next) => {
 	res.locals.theme = req.cookies?.theme || 'dark';

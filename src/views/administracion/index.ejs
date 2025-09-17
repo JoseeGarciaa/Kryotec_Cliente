@@ -54,7 +54,11 @@
                   </div>
                 </td>
                 <td class="text-xs"><%= u.telefono || '-' %></td>
-                <td><span class="badge badge-outline <%= ['Admin','Administrador'].includes(u.rol)?'badge-primary':'' %>"><%= u.rol %></span></td>
+                <td>
+                  <% const roleMap = { 'Preacond': 'Acondicionador', 'Operacion': 'Operador', 'Bodega': 'Bodeguero', 'Inspeccion': 'Inspeccionador', 'Admin': 'Administrador' }; %>
+                  <% const displayRole = roleMap[u.rol] || u.rol; %>
+                  <span class="badge badge-outline <%= ['Admin','Administrador'].includes(u.rol)?'badge-primary':'' %>"><%= displayRole %></span>
+                </td>
                 <td>
                   <button class="badge border-0 <%= u.activo ? 'badge-success' : 'badge-error' %> cursor-pointer btn-toggle-activo" data-id="<%= u.id %>" data-next="<%= u.activo ? 'false' : 'true' %>">
                     <%= u.activo ? '+ Activo' : 'X Inactivo' %>

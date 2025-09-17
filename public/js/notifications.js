@@ -87,9 +87,9 @@
         container.style.zIndex = '9999';
         document.body.appendChild(container);
       }
-      const item = document.createElement('div');
-      // Friendlier/smaller typography, rounded, subtle border
-      item.className = 'alert alert-info shadow rounded-2xl border border-info/30 p-3 md:p-4 text-sm';
+  const item = document.createElement('div');
+  // Neutral background + strong contrast text for both themes
+  item.className = 'shadow rounded-2xl border p-3 md:p-4 text-sm bg-base-100 text-base-content border-base-300/50';
       item.setAttribute('role', 'status');
       item.setAttribute('aria-live', 'polite');
 
@@ -101,7 +101,7 @@
       content.className = 'min-w-0';
 
       const titleEl = document.createElement('div');
-      titleEl.className = 'font-semibold text-base-content/90 mb-0.5';
+  titleEl.className = 'font-semibold mb-0.5';
       titleEl.textContent = String(title);
 
       const bodyEl = document.createElement('div');
@@ -111,8 +111,8 @@
       content.appendChild(titleEl);
       content.appendChild(bodyEl);
 
-      const closeBtn = document.createElement('button');
-      closeBtn.className = 'btn btn-ghost btn-xs text-base-content/70 hover:text-base-content ml-2';
+  const closeBtn = document.createElement('button');
+  closeBtn.className = 'btn btn-ghost btn-xs text-base-content/80 hover:text-base-content ml-2';
       closeBtn.type = 'button';
       closeBtn.setAttribute('aria-label', 'Cerrar notificación');
       closeBtn.textContent = '✕';

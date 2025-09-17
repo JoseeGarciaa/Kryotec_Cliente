@@ -3,8 +3,13 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="theme-color" content="#6d5efc" />
   <title><%= (typeof title !== 'undefined' && title) ? title : 'Kryotecsense' %></title>
   <link rel="icon" type="image/png" href="/static/images/favicon.png" />
+  <link rel="manifest" href="/manifest.webmanifest" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <link rel="apple-touch-icon" href="/static/images/favicon.png" />
   <link rel="stylesheet" href="/static/css/app.css?v=<%= assetVersion %>" />
   <link rel="stylesheet" href="/static/css/overrides-acond.css?v=<%= assetVersion %>" />
 </head>
@@ -55,7 +60,7 @@
                   <li><a class="<%= currentPath === '/operacion/bodega' ? 'active' : '' %>" href="/operacion/bodega">En bodega</a></li>
                 <% } %>
                 <% if (roleLower === 'acondicionador' || !['acondicionador','operador','bodeguero','inspeccionador'].includes(roleLower)) { %>
-                  <li><a class="<%= currentPath === '/operacion/preacond' ? 'active' : '' %>" href="/operacion/preacond">Registrar pre acondicionamiento</a></li>
+                  <li><a class="<%= currentPath === '/operacion/preacond' ? 'active' : '' %>" href="/operacion/preacond">Preacondicionamiento</a></li>
                   <li><a class="<%= currentPath === '/operacion/acond' ? 'active' : '' %>" href="/operacion/acond">Acondicionamiento</a></li>
                 <% } %>
                 <% if (roleLower === 'operador' || !['acondicionador','operador','bodeguero','inspeccionador'].includes(roleLower)) { %>
@@ -118,6 +123,7 @@
   <script src="/static/js/ux.js?v=<%= assetVersion %>"></script>
   <script src="/static/js/user-menu.js?v=<%= assetVersion %>" defer></script>
   <script src="/static/js/notifications.js?v=<%= assetVersion %>" defer></script>
+  <script src="/static/js/pwa.js?v=<%= assetVersion %>" defer></script>
   <style>
     /* Ocultar botón cuando drawer abierto */
     #drawer-nav:checked + label.mobile-menu-btn { display:none }
