@@ -56,9 +56,9 @@
 
 <!-- Modal crear orden -->
 <dialog id="modal-add-order" class="modal">
-  <div class="modal-box max-w-3xl">
+  <div class="modal-box w-11/12 max-w-3xl sm:w-full">
     <h3 class="font-bold text-lg mb-2">Nueva orden</h3>
-    <form class="grid grid-cols-1 md:grid-cols-3 gap-3" action="/ordenes/create" method="post">
+    <form class="grid grid-cols-1 md:grid-cols-3 gap-3 sm:gap-4" action="/ordenes/create" method="post">
       <div class="form-control">
         <label class="label"><span class="label-text">Número de orden</span></label>
         <input name="numero_orden" type="text" class="input input-sm input-bordered" required />
@@ -87,9 +87,9 @@
         <label class="label"><span class="label-text">Fecha generación (opcional)</span></label>
         <input name="fecha_generacion" type="datetime-local" class="input input-sm input-bordered" />
       </div>
-      <div class="form-control md:col-span-1 flex items-end justify-end gap-2">
-        <button type="button" class="btn btn-sm" data-close>Cancelar</button>
-        <button class="btn btn-sm btn-primary">Agregar</button>
+      <div class="md:col-span-3 flex flex-col sm:flex-row items-stretch sm:items-end justify-end gap-2 mt-2">
+        <button type="button" class="btn btn-sm sm:btn-md" data-close>Cancelar</button>
+        <button class="btn btn-sm sm:btn-md btn-primary">Agregar</button>
       </div>
     </form>
   </div>

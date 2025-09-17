@@ -37,6 +37,8 @@ export const NotificationsController = {
       const role = String(u.rol || '').toLowerCase();
       const likePatterns = role === 'administrador' ? undefined : ['inventario:%'];
       const { items, lastId } = await withTenant(tenantSchema, async (client) => {
+        // Ensure table exists to avoid relation errors bubbling up
+        await AlertsModel.ensureTable(client);
         const whereParts: string[] = ['resuelta = FALSE'];
         const params: any[] = [];
         if (afterRaw > 0) {
@@ -73,9 +75,10 @@ export const NotificationsController = {
         return { items: rows.rows, lastId: maxId };
       });
       return res.json({ items, lastId });
-    } catch (e) {
-      console.error(e);
-      return res.status(500).json({ items: [], lastId: 0 });
+    } catch (e:any) {
+      // Be tolerant: do not propagate infra errors (like transient db) as 5xx to polling
+      console.error('[notificaciones][apiUpdates] error:', e?.message||e);
+      return res.json({ items: [], lastId: Number(afterRaw)||0 });
     }
   },
 
