@@ -2346,14 +2346,15 @@ export const OperacionController = {
         try {
           const cajasQ = await withTenant(tenant, (c) => c.query(
             `WITH cajas_validas AS (
-               SELECT c.caja_id, c.lote, c.created_at
+               SELECT c.caja_id, c.lote, c.created_at, c.order_id
                FROM acond_cajas c
                JOIN acond_caja_items aci ON aci.caja_id = c.caja_id
                JOIN inventario_credocubes ic ON ic.rfid = aci.rfid
-               GROUP BY c.caja_id, c.lote, c.created_at
+               GROUP BY c.caja_id, c.lote, c.created_at, c.order_id
                HAVING bool_and(ic.estado='Acondicionamiento' AND ic.sub_estado IN ('Ensamblaje','Ensamblado'))
              )
-             SELECT c.caja_id, c.lote, c.created_at,
+             SELECT c.caja_id, c.lote, c.created_at, c.order_id,
+                    o.numero_orden AS order_num,
                     MAX(m.litraje) AS litraje,
                     COUNT(*) FILTER (WHERE aci.rol='tic') AS tics,
                     COUNT(*) FILTER (WHERE aci.rol='cube') AS cubes,
@@ -2366,7 +2367,8 @@ export const OperacionController = {
              JOIN inventario_credocubes ic ON ic.rfid = aci.rfid
              LEFT JOIN modelos m ON m.modelo_id = ic.modelo_id
              LEFT JOIN acond_caja_timers act ON act.caja_id = c.caja_id
-             GROUP BY c.caja_id, c.lote, c.created_at, act.started_at, act.duration_sec, act.active
+             LEFT JOIN ordenes o ON o.id = c.order_id
+             GROUP BY c.caja_id, c.lote, c.created_at, c.order_id, o.numero_orden, act.started_at, act.duration_sec, act.active
              ORDER BY c.caja_id DESC
              LIMIT 200`));
           cajasRows = cajasQ.rows;
@@ -2384,14 +2386,15 @@ export const OperacionController = {
           if(e?.code === '42703') {
             const cajasQ = await withTenant(tenant, (c) => c.query(
               `WITH cajas_validas AS (
-                 SELECT c.caja_id, c.lote, c.created_at
+                 SELECT c.caja_id, c.lote, c.created_at, c.order_id
                    FROM acond_cajas c
                    JOIN acond_caja_items aci ON aci.caja_id = c.caja_id
                    JOIN inventario_credocubes ic ON ic.rfid = aci.rfid
-                  GROUP BY c.caja_id, c.lote, c.created_at
+                  GROUP BY c.caja_id, c.lote, c.created_at, c.order_id
                   HAVING bool_and(ic.estado='Acondicionamiento' AND ic.sub_estado IN ('Ensamblaje','Ensamblado'))
                )
-               SELECT c.caja_id, c.lote, c.created_at,
+               SELECT c.caja_id, c.lote, c.created_at, c.order_id,
+                      o.numero_orden AS order_num,
                       COUNT(*) FILTER (WHERE aci.rol='tic') AS tics,
                       COUNT(*) FILTER (WHERE aci.rol='cube') AS cubes,
                       COUNT(*) FILTER (WHERE aci.rol='vip') AS vips,
@@ -2401,8 +2404,9 @@ export const OperacionController = {
                  FROM cajas_validas c
                  JOIN acond_caja_items aci ON aci.caja_id = c.caja_id
                  JOIN inventario_credocubes ic ON ic.rfid = aci.rfid
-            LEFT JOIN acond_caja_timers act ON act.caja_id = c.caja_id
-                GROUP BY c.caja_id, c.lote, c.created_at, act.started_at, act.duration_sec, act.active
+                 LEFT JOIN acond_caja_timers act ON act.caja_id = c.caja_id
+                 LEFT JOIN ordenes o ON o.id = c.order_id
+                GROUP BY c.caja_id, c.lote, c.created_at, c.order_id, o.numero_orden, act.started_at, act.duration_sec, act.active
                 ORDER BY c.caja_id DESC
                 LIMIT 200`));
             cajasRows = cajasQ.rows;
@@ -2421,16 +2425,17 @@ export const OperacionController = {
   // Items en flujo de despacho: incluyen los que están ya "Lista para Despacho" (se eliminó etapa intermedia 'Despachando')
   const listoRows = await withTenant(tenant, (c)=> c.query(
     `SELECT ic.rfid, ic.nombre_unidad, ic.lote, ic.estado, ic.sub_estado, NOW() AS updated_at, m.nombre_modelo,
-            act.started_at AS timer_started_at, act.duration_sec AS timer_duration_sec, act.active AS timer_active,
-            c.lote AS caja_lote, c.caja_id
-       FROM inventario_credocubes ic
-       JOIN modelos m ON m.modelo_id = ic.modelo_id
+      act.started_at AS timer_started_at, act.duration_sec AS timer_duration_sec, act.active AS timer_active,
+      c.lote AS caja_lote, c.caja_id, c.order_id, o.numero_orden AS order_num
+    FROM inventario_credocubes ic
+    JOIN modelos m ON m.modelo_id = ic.modelo_id
   LEFT JOIN acond_caja_items aci ON aci.rfid = ic.rfid
   LEFT JOIN acond_cajas c ON c.caja_id = aci.caja_id
   LEFT JOIN acond_caja_timers act ON act.caja_id = aci.caja_id
+  LEFT JOIN ordenes o ON o.id = c.order_id
   WHERE ic.estado='Acondicionamiento' AND ic.sub_estado IN ('Lista para Despacho','Listo')
-      ORDER BY ic.id DESC
-      LIMIT 500`));
+   ORDER BY ic.id DESC
+   LIMIT 500`));
 
   // Normalizar estructura esperada por nuevo front-end (acond.js)
   const nowIso = nowRes.rows[0]?.now;
@@ -2460,6 +2465,8 @@ export const OperacionController = {
       estado: allEnsamblado ? 'Ensamblado' : 'Ensamblaje',
       createdAt: r.created_at,
       updatedAt: r.created_at,
+      orderId: (r as any).order_id ?? null,
+      orderNumero: (r as any).order_num ?? null,
       timer: startsAt ? { startsAt, endsAt, completedAt } : null,
       componentes: componentesPorCaja[r.caja_id] || []
     };
@@ -2493,7 +2500,9 @@ export const OperacionController = {
       updatedAt: r.updated_at,
       fase: 'Acond',
       categoria: categoriaSimple,
-      cronometro: startsAt ? { startsAt, endsAt, completedAt } : null
+      cronometro: startsAt ? { startsAt, endsAt, completedAt } : null,
+      order_id: (r as any).order_id ?? null,
+      order_num: (r as any).order_num ?? null
     };
   });
   res.json({ ok:true, now: nowIso, serverNow: nowIso, disponibles: { tics: tics.rows, cubes: cubes.rows, vips: vips.rows }, cajas: cajasUI, listoDespacho });

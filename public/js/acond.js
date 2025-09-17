@@ -622,7 +622,9 @@
           estado,
           createdAt: null,
           timer: tItem ? { startsAt: tItem.cronometro.startsAt, endsAt: tItem.cronometro.endsAt, completedAt: tItem.cronometro.completedAt } : null,
-          componentes: items.map(it=> ({ tipo: (it.categoria||'').toLowerCase(), codigo: it.codigo }))
+          componentes: items.map(it=> ({ tipo: (it.categoria||'').toLowerCase(), codigo: it.codigo })),
+          orderId: (tItem && (tItem.order_id!=null)) ? tItem.order_id : (items[0] && items[0].order_id!=null ? items[0].order_id : null),
+          orderNumero: (tItem && tItem.order_num) ? tItem.order_num : (items[0] && items[0].order_num ? items[0].order_num : null)
         };
       }
     }
@@ -641,6 +643,14 @@
     setText('detalle-caja-id', `#${caja.id}`);
     setText('detalle-caja-comp', `VIP:${counts.vip||0} · TIC:${counts.tic||0} · CUBE:${counts.cube||0}`);
     setText('detalle-caja-fecha', formatDateTime(caja.createdAt));
+    // Orden vinculada (si existe)
+    const ordenEl = document.getElementById('detalle-caja-orden');
+    if(ordenEl){
+      const num = caja.orderNumero || null;
+      const idNum = caja.orderId || null;
+      ordenEl.textContent = num ? String(num) : (idNum ? `#${idNum}` : '—');
+      ordenEl.classList.toggle('opacity-60', !(num||idNum));
+    }
 
     // Items
     const itemsBox = document.getElementById('detalle-caja-items');
