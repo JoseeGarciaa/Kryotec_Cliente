@@ -23,6 +23,9 @@ import { resolveTenant } from './middleware/tenant';
 import { withTenant } from './db/pool';
 import { UsersModel } from './models/User';
 import { AlertsModel } from './models/Alerts';
+import fs from 'fs';
+let sharp: any = null;
+try { sharp = require('sharp'); } catch {}
 
 dotenv.config();
 
@@ -55,6 +58,28 @@ app.get('/sw.js', (_req, res) => {
 	res.type('application/javascript');
 	res.setHeader('Cache-Control', 'no-cache');
 	res.sendFile(path.join(staticDir, 'sw.js'));
+});
+
+// Dynamic icon resizing so Android sees crisp icons
+app.get(['/icons/icon-192.png','/icons/icon-512.png'], async (req, res) => {
+	try {
+		const src = path.join(staticDir, 'images', 'favicon.png');
+		const exists = fs.existsSync(src);
+		if (!exists) return res.status(404).end();
+		const size = req.path.includes('512') ? 512 : 192;
+		res.type('image/png');
+		if (sharp) {
+			const buf = await sharp(src).resize(size, size, { fit: 'cover' }).png().toBuffer();
+			res.setHeader('Cache-Control', process.env.NODE_ENV === 'production' ? 'public, max-age=604800, immutable' : 'no-cache');
+			return res.send(buf);
+		} else {
+			// Fallback: send original (may be upscaled by OS)
+			res.setHeader('Cache-Control', 'no-cache');
+			return res.sendFile(src);
+		}
+	} catch (e) {
+		return res.status(500).end();
+	}
 });
 
 // theme from cookie

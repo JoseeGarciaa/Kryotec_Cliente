@@ -3,8 +3,16 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="theme-color" content="#6d5efc" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="application-name" content="KryoSense" />
   <title><%= (typeof title !== 'undefined' && title) ? title : 'Acceso' %></title>
   <link rel="icon" type="image/png" href="/static/images/favicon.png" />
+  <link rel="manifest" href="/manifest.webmanifest?v=<%= assetVersion %>" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="KryoSense" />
+  <link rel="apple-touch-icon" href="/static/images/favicon.png" />
   <link rel="stylesheet" href="/static/css/app.css?v=<%= assetVersion %>" />
   <link rel="stylesheet" href="/static/css/overrides-acond.css?v=<%= assetVersion %>" />
   <style>
@@ -16,5 +24,6 @@
     <%- body %>
   </div>
   <script src="/static/js/theme.js?v=<%= assetVersion %>"></script>
+  <script src="/static/js/pwa.js?v=<%= assetVersion %>" defer></script>
 </body>
 </html>
