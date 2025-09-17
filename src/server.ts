@@ -48,9 +48,11 @@ app.use('/static', expressStatic.static(staticDir, {
 
 // PWA assets at root paths
 app.get('/manifest.webmanifest', (_req, res) => {
+	res.type('application/manifest+json');
 	res.sendFile(path.join(staticDir, 'manifest.webmanifest'));
 });
 app.get('/sw.js', (_req, res) => {
+	res.type('application/javascript');
 	res.setHeader('Cache-Control', 'no-cache');
 	res.sendFile(path.join(staticDir, 'sw.js'));
 });
