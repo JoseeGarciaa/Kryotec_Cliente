@@ -318,12 +318,18 @@
           </span>`;
         }).join('');
       }
+      if(addSummary){
+        const ordenTxt = j.order_num ? String(j.order_num) : (j.order_id ? `#${j.order_id}` : '—');
+        // Insertar/actualizar bloque de info general sobre la caja (incluye orden)
+        const infoId = 'op-add-info';
+        let infoEl = document.getElementById(infoId);
+        const html = `<div id="${infoId}" class="text-xs opacity-80 mt-2">Orden: <span class="font-mono">${ordenTxt}</span></div>`;
+        if(infoEl){ infoEl.outerHTML = html; }
+        else { addSummary.insertAdjacentHTML('afterbegin', html); }
+      }
       if(addMsg){
-        if(j.timer && j.timer.endsAt){
-          addMsg.textContent = `Caja ${j.lote} detectada · ${addRoles.length} items · cronómetro activo`;
-        } else {
-          addMsg.textContent = `Caja ${j.lote} detectada · ${addRoles.length} items`;
-        }
+        const chrono = (j.timer && j.timer.endsAt) ? ' · cronómetro activo' : '';
+        addMsg.textContent = `Caja ${j.lote} detectada · ${addRoles.length} items${chrono}`;
       }
   updateCounts();
     } catch(e){ if(addMsg) addMsg.textContent='Error'; }

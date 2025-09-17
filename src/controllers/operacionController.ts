@@ -3440,16 +3440,22 @@ export const OperacionController = {
       let caja: any = null;
       if(val.length===24){
         const q = await withTenant(tenant, (c)=> c.query(
-          `SELECT c.caja_id, c.lote
+          `SELECT c.caja_id, c.lote, c.order_id, o.numero_orden AS order_num
              FROM acond_caja_items aci
              JOIN acond_cajas c ON c.caja_id = aci.caja_id
              JOIN inventario_credocubes ic ON ic.rfid = aci.rfid
+        LEFT JOIN ordenes o ON o.id = c.order_id
             WHERE aci.rfid=$1
             LIMIT 1`, [val]));
         if(q.rowCount) caja = q.rows[0];
       }
       if(!caja){
-        const q2 = await withTenant(tenant, (c)=> c.query(`SELECT caja_id, lote FROM acond_cajas WHERE lote=$1 LIMIT 1`, [val]));
+        const q2 = await withTenant(tenant, (c)=> c.query(
+          `SELECT c.caja_id, c.lote, c.order_id, o.numero_orden AS order_num
+             FROM acond_cajas c
+        LEFT JOIN ordenes o ON o.id = c.order_id
+            WHERE c.lote=$1
+            LIMIT 1`, [val]));
         if(q2.rowCount) caja = q2.rows[0];
       }
       if(!caja) return res.status(404).json({ ok:false, error:'Caja no encontrada' });
@@ -3476,7 +3482,7 @@ export const OperacionController = {
           timer = { startsAt: t.started_at, endsAt, completedAt };
         }
       }
-      res.json({ ok:true, caja_id: caja.caja_id, lote: caja.lote, total: items.length, elegibles: elegibles.map(e=> e.rfid), roles: elegibles.map(e=> ({ rfid: e.rfid, rol: e.rol })), timer });
+  res.json({ ok:true, caja_id: caja.caja_id, lote: caja.lote, order_id: (caja as any).order_id ?? null, order_num: (caja as any).order_num ?? null, total: items.length, elegibles: elegibles.map(e=> e.rfid), roles: elegibles.map(e=> ({ rfid: e.rfid, rol: e.rol })), timer });
     } catch(e:any){ res.status(500).json({ ok:false, error: e.message||'Error lookup' }); }
   },
   operacionAddMove: async (req: Request, res: Response) => {
