@@ -62,11 +62,9 @@ export const RegistroController = {
     }
 
     try {
-  type DuplicatePayload = { dups: string[]; modelosByTipo: Record<string, Array<{ id: number; name: string }>> };
-  let selectedTipo: string = 'Otros';
-  let duplicatePayload: DuplicatePayload | null = null;
-  let insertedCount = 0;
-  await withTenant(tenant, async (c) => {
+      let selectedTipo: string = 'Otros';
+      let insertedCount = 0;
+      await withTenant(tenant, async (c) => {
         const meta = await c.query<{ nombre_modelo: string; tipo: string | null }>(
           'SELECT nombre_modelo, tipo FROM modelos WHERE modelo_id = $1',
           [modeloIdNum]
@@ -75,25 +73,27 @@ export const RegistroController = {
         const nombre = meta.rows[0].nombre_modelo;
         selectedTipo = normTipo(meta.rows[0].tipo) as string;
 
-        // Pre-check duplicates y filtrar los existentes
-        const dupCheck = await c.query<{ rfid: string }>(
-          'SELECT rfid FROM inventario_credocubes WHERE rfid = ANY($1::text[])',
-          [rfidsArr]
-        );
-        const existing = new Set((dupCheck.rows || []).map(r => r.rfid));
-  const toInsert = rfidsArr.filter(r => !existing.has(r));
-  insertedCount = toInsert.length;
+        // Asegurar índice único para ON CONFLICT (rfid)
+        await c.query(`DO $$
+        BEGIN
+          BEGIN
+            EXECUTE 'CREATE UNIQUE INDEX IF NOT EXISTS inventario_credocubes_rfid_key ON inventario_credocubes(rfid)';
+          EXCEPTION WHEN others THEN
+          END;
+        END$$;`);
 
-        // Insertar solo los no existentes
-        for (const rfid of toInsert) {
-          await c.query(
+        // Insertar con ON CONFLICT DO NOTHING para evitar 23505 y permitir éxito parcial
+        for (const rfid of rfidsArr) {
+          const r = await c.query(
             `INSERT INTO inventario_credocubes 
                (modelo_id, nombre_unidad, rfid, lote, estado, sub_estado)
-             VALUES ($1, $2, $3, NULL, 'En Bodega', NULL)`,
+             VALUES ($1, $2, $3, NULL, 'En Bodega', NULL)
+             ON CONFLICT (rfid) DO NOTHING
+             RETURNING id`,
             [modeloIdNum, nombre, rfid]
           );
+          if (r.rowCount) insertedCount += r.rowCount;
         }
-        // Si algunos eran duplicados, redirigir igual (operación idempotente)
       });
       // Crear alerta de registro si se insertó al menos un item
       if (insertedCount > 0) {
@@ -103,27 +103,14 @@ export const RegistroController = {
       return res.redirect('/inventario');
     } catch (e: any) {
       console.error(e);
-      let msg = e?.code === '23505' ? 'Uno o más RFID ya existen' : 'Error registrando items';
-      let dups: string[] = [];
-      if (e?.code === '23505') {
-        // Attempt to figure out which RFIDs exist
-        try {
-          await withTenant(tenant, async (c) => {
-            const found = await c.query<{ rfid: string }>('SELECT rfid FROM inventario_credocubes WHERE rfid = ANY($1::text[])', [
-              Array.isArray((req.body as any).rfids) ? (req.body as any).rfids : Object.values((req.body as any).rfids || {}),
-            ]);
-            dups = found.rows.map((r) => r.rfid);
-          });
-        } catch {}
-      }
-      // Re-render with error and modelosByTipo; the view can recover using client-side state
+      // Fallback: mostrar mensaje amable sin bloquear si algo menor falló
       const modelosRes = await withTenant(tenant, (c) => c.query<ModeloRow>('SELECT modelo_id, nombre_modelo, tipo FROM modelos ORDER BY nombre_modelo'));
       const byTipo: Record<string, Array<{ id: number; name: string }>> = { TIC: [], VIP: [], Cube: [], Otros: [] } as any;
       for (const m of modelosRes.rows) {
         const key = normTipo(m.tipo);
         (byTipo[key] = byTipo[key] || []).push({ id: m.modelo_id, name: m.nombre_modelo });
       }
-      return res.status(200).render('registro/index', { title: 'Registro de Items', error: msg, modelosByTipo: byTipo, rfids: [], selectedModelo: modeloIdNum, dups });
+      return res.status(200).render('registro/index', { title: 'Registro de Items', error: 'Error registrando items', modelosByTipo: byTipo, rfids: [], selectedModelo: modeloIdNum });
     }
   },
   validate: async (req: Request, res: Response) => {

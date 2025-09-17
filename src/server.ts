@@ -76,7 +76,10 @@ app.use(async (req, res, next) => {
 		// Inicializar tabla e instalar trigger de trazabilidad por tenant (idempotente/rápido)
 		const t = (res.locals as any).user?.tenant || resolveTenant(req);
 		if (t) {
-			await withTenant(t, (client) => AlertsModel.ensureTable(client));
+			await withTenant(t, async (client) => {
+				await AlertsModel.ensureTable(client);
+				await AlertsModel.ensureStateChangeTrigger(client);
+			});
 		}
 	} catch {}
 	next();
