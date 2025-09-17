@@ -1773,6 +1773,18 @@ export const OperacionController = {
              AND ic.rfid = ANY($1::text[])
        AND ic.activo = true
              AND (m.nombre_modelo ILIKE '%tic%')`, [accept]));
+        // Alert: moved to Congelamiento
+        await withTenant(tenant, async (c) => {
+          try {
+            const lotesQ = await c.query<{ lote: string }>(`SELECT DISTINCT COALESCE(lote,'') AS lote FROM inventario_credocubes WHERE rfid = ANY($1::text[])`, [accept]);
+            const lotes = lotesQ.rows.map(r => (r.lote||'').trim()).filter(Boolean);
+            const lotesMsg = lotes.length ? ` (Lote${lotes.length>1?'s':''}: ${lotes.join(', ')})` : '';
+            await AlertsModel.create(c, {
+              tipo_alerta: 'inventario:preacond:inicio_congelamiento',
+              descripcion: `${accept.length} TIC${accept.length>1?'s':''} a Congelamiento${lotesMsg}`
+            });
+          } catch {}
+        });
       } else {
         const preserve = !!keepLote; // if true, do not clear lote
         if(preserve){
@@ -1796,6 +1808,15 @@ export const OperacionController = {
                AND (m.nombre_modelo ILIKE '%tic%')
                AND ic.estado = 'Pre Acondicionamiento' AND ic.sub_estado = 'Congelado'`, [accept]));
         }
+        // Alert: moved to Atemperamiento
+        await withTenant(tenant, async (c) => {
+          try {
+            await AlertsModel.create(c, {
+              tipo_alerta: 'inventario:preacond:inicio_atemperamiento',
+              descripcion: `${accept.length} TIC${accept.length>1?'s':''} a Atemperamiento`
+            });
+          } catch {}
+        });
       }
 
   // Do NOT auto-assign lote on scan; keep items without lote until a timer starts
@@ -1860,6 +1881,13 @@ export const OperacionController = {
         `UPDATE inventario_credocubes SET sub_estado = 'Atemperamiento', lote = NULL
           WHERE rfid = ANY($1::text[])`, [congelados]));
     }
+    // Alert: lote moved to Atemperamiento
+    try {
+      await withTenant(tenant, (c)=> AlertsModel.create(c, {
+        tipo_alerta: 'inventario:preacond:inicio_atemperamiento',
+        descripcion: `${congelados.length} TIC${congelados.length>1?'s':''} a Atemperamiento (Lote: ${loteVal})`
+      }));
+    } catch {}
     res.json({ ok:true, moved: congelados, lote: loteVal });
   },
 
