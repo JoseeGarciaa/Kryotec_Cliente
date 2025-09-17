@@ -75,6 +75,7 @@
             </details>
           </li>
           <% if (user && ['Admin','admin','Administrador','administrador'].includes(user.rol)) { %>
+            <li><a class="<%= currentPath.startsWith('/auditoria') ? 'active' : '' %>" href="/auditoria">Auditoría</a></li>
             <li><a class="<%= currentPath.startsWith('/administracion') ? 'active' : '' %>" href="/administracion">Administración</a></li>
           <% } %>
         </ul>
