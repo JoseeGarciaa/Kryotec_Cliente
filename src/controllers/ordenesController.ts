@@ -86,14 +86,16 @@ export const OrdenesController = {
     // Validación mínima
     const num = typeof numero_orden === 'string' && numero_orden.trim() ? numero_orden.trim() : null;
     const cod = typeof codigo_producto === 'string' && codigo_producto.trim() ? codigo_producto.trim() : null;
-    const cant = Number(cantidad);
+    let cant: number | null = null;
+    if (cantidad !== undefined && cantidad !== null && String(cantidad).trim() !== '') {
+      const n = Number(cantidad);
+      if (Number.isFinite(n) && n > 0) cant = n; // allow only positive values, else keep null
+    }
     const cdd = typeof ciudad_destino === 'string' && ciudad_destino.trim() ? ciudad_destino.trim() : null;
     const ubc = typeof ubicacion_destino === 'string' && ubicacion_destino.trim() ? ubicacion_destino.trim() : null;
     const cli = typeof cliente === 'string' && cliente.trim() ? cliente.trim() : null;
     const fgen = fecha_generacion ? new Date(fecha_generacion) : null;
-    if(!num || !cod || !Number.isFinite(cant) || cant<=0 || !cli){
-      return res.status(400).json({ ok:false, error:'Datos inválidos: numero_orden, codigo_producto, cantidad>0 y cliente son requeridos' });
-    }
+    if(!num){ return res.status(400).json({ ok:false, error:'El número de orden es requerido' }); }
 
     try {
       await withTenant(tenant, async (c) => {
