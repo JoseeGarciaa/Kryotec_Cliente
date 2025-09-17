@@ -67,9 +67,11 @@
       timerBadge = `<span class='badge badge-outline badge-xs opacity-60'>Sin cronómetro</span>`;
     }
     const progress = Math.min(100, Math.max(0, pct));
+    const ordenStr = (caja.orderNumero ? caja.orderNumero : (caja.orderId ? ('#'+caja.orderId) : '—'));
   return `<div class='caja-card rounded-lg border border-base-300/40 bg-base-200/10 p-3 flex flex-col gap-2 hover:border-primary/60 transition cursor-pointer' data-caja-id='${caja.id}'>
       <div class='flex items-center justify-between text-[10px] tracking-wide uppercase opacity-60'><span>Caja</span><span class='font-mono'>${caja.codigoCaja||''}</span></div>
       <div class='font-semibold text-xs leading-tight break-all pr-2' title='${caja.codigoCaja||''}'>${caja.codigoCaja||''}</div>
+      <div class='text-[10px] opacity-70'>Orden: <span class='font-mono'>${ordenStr}</span></div>
       <div class='flex flex-wrap gap-1 text-[9px] flex-1'>${compBadges || "<span class='badge badge-ghost badge-xs'>Sin items</span>"}</div>
       <div class='h-1.5 w-full bg-base-300/30 rounded-full overflow-hidden'>
         <div class='h-full bg-gradient-to-r from-primary via-primary to-primary/70' style='width:${progress.toFixed(1)}%' data-dev-caja-bar='${caja.id}'></div>
@@ -114,9 +116,11 @@
   // ---- Scan / Identificar Caja ----
   function inferTipo(nombre){ const n=(nombre||'').toLowerCase(); if(n.includes('vip')) return 'vip'; if(n.includes('tic')) return 'tic'; if(n.includes('cube')||n.includes('cubo')) return 'cube'; return 'otro'; }
   function miniCardHTML(c){
+    const ordenStr = (c.orderNumero ? c.orderNumero : (c.orderId ? ('#'+c.orderId) : (c.order_num ? c.order_num : (c.order_id ? ('#'+c.order_id) : '—'))));
     return `<div class='text-xs'>
       <div class='flex items-center justify-between text-[10px] uppercase opacity-60 mb-1'><span>Caja</span><span class='font-mono'>${c.codigoCaja||''}</span></div>
       <div class='font-semibold text-[11px] break-all mb-2'>${c.codigoCaja||''}</div>
+      <div class='text-[10px] opacity-70 mb-1'>Orden: <span class='font-mono'>${ordenStr}</span></div>
       <div class='flex flex-wrap gap-1 mb-2'>${(c.componentes||[]).map(it=>{ let cls='badge-ghost'; if(it.tipo==='vip') cls='badge-info'; else if(it.tipo==='tic') cls='badge-warning'; else if(it.tipo==='cube') cls='badge-accent'; return `<span class='badge ${cls} badge-xs'>${(it.tipo||'').toUpperCase()}</span>`; }).join('') || "<span class='badge badge-ghost badge-xs'>Sin items</span>"}</div>
   <div class='text-[10px] font-mono opacity-70'>${c.timer? (c.timer.completedAt? 'Listo' : 'Cronómetro activo') : 'Sin cronómetro'}</div>
   <div class='mt-2'><button class='btn btn-xs btn-primary btn-outline w-full' data-process-caja='${c.id}'>➜ Procesar devolución</button></div>
@@ -138,7 +142,7 @@
       const cajaId = j.caja.id;
       let caja = (data.cajas||[]).find(c=> String(c.id)===String(cajaId));
       if(!caja){
-        caja = { id: cajaId, codigoCaja: j.caja.lote, timer: j.caja.timer? { startsAt: j.caja.timer.startsAt, endsAt: j.caja.timer.endsAt, completedAt: j.caja.timer.active===false? j.caja.timer.endsAt:null }: null, componentes: (j.caja.items||[]).map(it=> ({ codigo: it.rfid, tipo: inferTipo(it.nombre_modelo||it.nombre||'') })) };
+        caja = { id: cajaId, codigoCaja: j.caja.lote, orderId: j.caja.order_id || null, orderNumero: j.caja.order_num || null, timer: j.caja.timer? { startsAt: j.caja.timer.startsAt, endsAt: j.caja.timer.endsAt, completedAt: j.caja.timer.active===false? j.caja.timer.endsAt:null }: null, componentes: (j.caja.items||[]).map(it=> ({ codigo: it.rfid, tipo: inferTipo(it.nombre_modelo||it.nombre||'') })) };
       }
       // Elegibilidad estricta: todos los items en Operación · Transito
       const items = (j.caja.items||[]);
@@ -171,9 +175,11 @@
       const comps = caja.componentes||[];
       const timerTxt = caja.timer? (caja.timer.completedAt? 'Listo' : timerDisplay(msRemaining(caja.timer))) : 'Sin cronómetro';
       const pct = progressPct(caja.timer);
+      const ordenStr = (caja.orderNumero ? caja.orderNumero : (caja.orderId ? ('#'+caja.orderId) : '—'));
       modalBody.innerHTML = `
         <div class='space-y-2'>
           <div class='text-[11px] font-mono break-all'>${caja.codigoCaja||''}</div>
+          <div class='text-[10px] opacity-70'>Orden: <span class='font-mono'>${ordenStr}</span></div>
           <div class='flex flex-wrap gap-1'>${comps.map(it=>{ let cls='badge-ghost'; if(it.tipo==='vip') cls='badge-info'; else if(it.tipo==='tic') cls='badge-warning'; else if(it.tipo==='cube') cls='badge-accent'; return `<span class='badge ${cls} badge-xs'>${(it.tipo||'').toUpperCase()}</span>`; }).join('') || "<span class='badge badge-ghost badge-xs'>Sin items</span>"}</div>
           <div class='space-y-1'>
             <div class='flex items-center justify-between text-[10px] font-mono'><span>Cronómetro</span><span id='dev-modal-timer'>${timerTxt}</span></div>

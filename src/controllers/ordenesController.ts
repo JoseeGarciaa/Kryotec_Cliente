@@ -127,4 +127,118 @@ export const OrdenesController = {
       return res.status(500).send(e?.message||'Error creando orden');
     }
   }
+  ,
+  update: async (req: Request, res: Response) => {
+    const t = (req as any).user?.tenant || resolveTenant(req);
+    if (!t) return res.status(400).json({ ok:false, error:'Tenant no especificado' });
+    const tenant = String(t).startsWith('tenant_') ? String(t) : `tenant_${t}`;
+    const {
+      id,
+      numero_orden,
+      codigo_producto,
+      cantidad,
+      ciudad_destino,
+      ubicacion_destino,
+      cliente,
+      fecha_generacion
+    } = (req.body || {}) as any;
+    const orderId = Number(id);
+    if(!Number.isFinite(orderId) || orderId<=0){ return res.status(400).json({ ok:false, error:'ID inválido' }); }
+    const num = typeof numero_orden === 'string' && numero_orden.trim() ? numero_orden.trim() : null;
+    const cod = typeof codigo_producto === 'string' && codigo_producto.trim() ? codigo_producto.trim() : null;
+    let cant: number | null = null;
+    if (cantidad !== undefined && cantidad !== null && String(cantidad).trim() !== '') {
+      const n = Number(cantidad);
+      if (Number.isFinite(n) && n > 0) cant = n; // allow only positive values
+    }
+    const cdd = typeof ciudad_destino === 'string' && ciudad_destino.trim() ? ciudad_destino.trim() : null;
+    const ubc = typeof ubicacion_destino === 'string' && ubicacion_destino.trim() ? ubicacion_destino.trim() : null;
+    const cli = typeof cliente === 'string' && cliente.trim() ? cliente.trim() : null;
+    const fgen = fecha_generacion ? new Date(fecha_generacion) : null;
+    try {
+      await withTenant(tenant, async (c) => {
+        await c.query(`CREATE TABLE IF NOT EXISTS ordenes (
+          id serial PRIMARY KEY,
+          numero_orden text,
+          codigo_producto text,
+          cantidad integer,
+          ciudad_destino text,
+          ubicacion_destino text,
+          cliente text,
+          fecha_generacion timestamptz
+        )`);
+        await c.query(
+          `UPDATE ordenes SET
+             numero_orden = COALESCE($2, numero_orden),
+             codigo_producto = $3,
+             cantidad = $4,
+             ciudad_destino = $5,
+             ubicacion_destino = $6,
+             cliente = $7,
+             fecha_generacion = COALESCE($8, fecha_generacion)
+           WHERE id = $1`,
+          [orderId, num, cod, cant, cdd, ubc, cli, fgen && !isNaN(fgen.getTime()) ? fgen.toISOString() : null]
+        );
+      });
+      if((req.headers['content-type']||'').includes('application/json')){
+        return res.json({ ok:true });
+      }
+      return res.redirect('/ordenes');
+    } catch(e:any){
+      if((req.headers['content-type']||'').includes('application/json')){
+        return res.status(500).json({ ok:false, error: e?.message||'Error actualizando orden' });
+      }
+      return res.status(500).send(e?.message||'Error actualizando orden');
+    }
+  }
+  ,
+  remove: async (req: Request, res: Response) => {
+    const t = (req as any).user?.tenant || resolveTenant(req);
+    if (!t) return res.status(400).json({ ok:false, error:'Tenant no especificado' });
+    const tenant = String(t).startsWith('tenant_') ? String(t) : `tenant_${t}`;
+    const { id } = (req.body || {}) as any;
+    const orderId = Number(id);
+    if(!Number.isFinite(orderId) || orderId<=0){ return res.status(400).json({ ok:false, error:'ID inválido' }); }
+    try {
+      await withTenant(tenant, async (c) => {
+        await c.query(`CREATE TABLE IF NOT EXISTS ordenes (
+          id serial PRIMARY KEY,
+          numero_orden text,
+          codigo_producto text,
+          cantidad integer,
+          ciudad_destino text,
+          ubicacion_destino text,
+          cliente text,
+          fecha_generacion timestamptz
+        )`);
+        // If an order is linked to cajas, we should not violate FK: order_id in acond_cajas is ON DELETE SET NULL
+        await c.query(`ALTER TABLE acond_cajas ADD COLUMN IF NOT EXISTS order_id integer`);
+        await c.query(`DO $$
+        BEGIN
+          IF NOT EXISTS (
+            SELECT 1 FROM pg_constraint
+             WHERE conrelid = 'acond_cajas'::regclass
+               AND conname = 'acond_cajas_order_id_fkey'
+          ) THEN
+            BEGIN
+              ALTER TABLE acond_cajas
+                ADD CONSTRAINT acond_cajas_order_id_fkey
+                FOREIGN KEY (order_id) REFERENCES ordenes(id) ON DELETE SET NULL;
+            EXCEPTION WHEN others THEN
+            END;
+          END IF;
+        END $$;`);
+        await c.query(`DELETE FROM ordenes WHERE id=$1`, [orderId]);
+      });
+      if((req.headers['content-type']||'').includes('application/json')){
+        return res.json({ ok:true });
+      }
+      return res.redirect('/ordenes');
+    } catch(e:any){
+      if((req.headers['content-type']||'').includes('application/json')){
+        return res.status(500).json({ ok:false, error: e?.message||'Error eliminando orden' });
+      }
+      return res.status(500).send(e?.message||'Error eliminando orden');
+    }
+  }
 };

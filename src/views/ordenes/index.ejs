@@ -27,6 +27,7 @@
             <th>Ubicación destino</th>
             <th>Cliente</th>
             <th>Fecha generación</th>
+            <th class="text-right">Acciones</th>
           </tr>
         </thead>
         <tbody>
@@ -44,6 +45,20 @@
                 <td><%= o.ubicacion_destino || '-' %></td>
                 <td><%= o.cliente || '-' %></td>
                 <td><%= o.fecha_generacion ? new Date(o.fecha_generacion).toLocaleString() : '-' %></td>
+                <td class="text-right">
+                  <div class="join join-horizontal justify-end">
+                    <button class="btn btn-xs btn-ghost join-item" data-edit
+                            data-id="<%= o.id %>"
+                            data-numero="<%= o.numero_orden||'' %>"
+                            data-codigo="<%= o.codigo_producto||'' %>"
+                            data-cantidad="<%= o.cantidad ?? '' %>"
+                            data-ciudad="<%= o.ciudad_destino||'' %>"
+                            data-ubicacion="<%= o.ubicacion_destino||'' %>"
+                            data-cliente="<%= o.cliente||'' %>"
+                            data-fecha="<%= o.fecha_generacion ? new Date(o.fecha_generacion).toISOString().slice(0,16) : '' %>">Editar</button>
+                    <button class="btn btn-xs btn-error btn-outline join-item" data-delete data-id="<%= o.id %>" data-numero="<%= o.numero_orden||'-' %>">Eliminar</button>
+                  </div>
+                </td>
               </tr>
             <% }) %>
           <% } %>
@@ -91,6 +106,67 @@
         <button type="button" class="btn btn-sm sm:btn-md" data-close>Cancelar</button>
         <button class="btn btn-sm sm:btn-md btn-primary">Agregar</button>
       </div>
+    </form>
+  </div>
+  <form method="dialog" class="modal-backdrop">
+    <button>close</button>
+  </form>
+</dialog>
+
+<!-- Modal editar orden -->
+<dialog id="modal-edit-order" class="modal">
+  <div class="modal-box w-11/12 max-w-3xl sm:w-full">
+    <h3 class="font-bold text-lg mb-2">Editar orden</h3>
+    <form id="form-edit-order" class="grid grid-cols-1 md:grid-cols-3 gap-3 sm:gap-4" action="/ordenes/update" method="post">
+      <input type="hidden" name="id" />
+      <div class="form-control">
+        <label class="label"><span class="label-text">Número de orden</span></label>
+        <input name="numero_orden" type="text" class="input input-sm input-bordered" required />
+      </div>
+      <div class="form-control">
+        <label class="label"><span class="label-text">Código producto</span></label>
+        <input name="codigo_producto" type="text" class="input input-sm input-bordered" />
+      </div>
+      <div class="form-control">
+        <label class="label"><span class="label-text">Cantidad</span></label>
+        <input name="cantidad" type="number" min="1" class="input input-sm input-bordered" />
+      </div>
+      <div class="form-control">
+        <label class="label"><span class="label-text">Ciudad destino</span></label>
+        <input name="ciudad_destino" type="text" class="input input-sm input-bordered" />
+      </div>
+      <div class="form-control">
+        <label class="label"><span class="label-text">Ubicación destino</span></label>
+        <input name="ubicacion_destino" type="text" class="input input-sm input-bordered" />
+      </div>
+      <div class="form-control">
+        <label class="label"><span class="label-text">Cliente</span></label>
+        <input name="cliente" type="text" class="input input-sm input-bordered" />
+      </div>
+      <div class="form-control md:col-span-2">
+        <label class="label"><span class="label-text">Fecha generación (opcional)</span></label>
+        <input name="fecha_generacion" type="datetime-local" class="input input-sm input-bordered" />
+      </div>
+      <div class="md:col-span-3 flex flex-col sm:flex-row items-stretch sm:items-end justify-end gap-2 mt-2">
+        <button type="button" class="btn btn-sm sm:btn-md" data-close>Cancelar</button>
+        <button class="btn btn-sm sm:btn-md btn-primary">Guardar</button>
+      </div>
+    </form>
+  </div>
+  <form method="dialog" class="modal-backdrop">
+    <button>close</button>
+  </form>
+</dialog>
+
+<!-- Modal eliminar orden -->
+<dialog id="modal-delete-order" class="modal">
+  <div class="modal-box max-w-md">
+    <h3 class="font-bold text-lg">Eliminar orden</h3>
+    <p class="py-2">¿Seguro que deseas eliminar la orden <span id="del-order-label" class="font-mono"></span>? Esta acción no se puede deshacer.</p>
+    <form id="form-delete-order" action="/ordenes/delete" method="post" class="flex gap-2 justify-end pt-2">
+      <input type="hidden" name="id" />
+      <button type="button" class="btn" data-close>Cancelar</button>
+      <button class="btn btn-error">Eliminar</button>
     </form>
   </div>
   <form method="dialog" class="modal-backdrop">

@@ -487,6 +487,8 @@ export const OperacionController = {
          ELSE 'otro' END AS rol,
        c.caja_id,
        c.lote AS caja_lote,
+       c.order_id AS order_id,
+       o.numero_orden AS order_num,
        act.started_at AS caja_started_at,
        act.duration_sec AS caja_duration_sec,
        act.active AS caja_active
@@ -494,6 +496,7 @@ export const OperacionController = {
      JOIN modelos m ON m.modelo_id = ic.modelo_id
      LEFT JOIN acond_caja_items aci ON aci.rfid = ic.rfid
      LEFT JOIN acond_cajas c ON c.caja_id = aci.caja_id
+     LEFT JOIN ordenes o ON o.id = c.order_id
      LEFT JOIN acond_caja_timers act ON act.caja_id = c.caja_id
     WHERE ic.estado='Operación' AND ic.sub_estado = 'Transito'
     ORDER BY ic.id DESC
@@ -530,6 +533,8 @@ export const OperacionController = {
           sub_estado: r.sub_estado,
           caja: r.caja_lote || null,
           caja_id: r.caja_id || null,
+          order_id: r.order_id || null,
+          order_num: r.order_num || null,
           timer
         };
       });
@@ -544,7 +549,9 @@ export const OperacionController = {
             codigoCaja: p.caja || ('CAJA-'+p.caja_id),
             timer: p.timer,
             componentes: [] as any[],
-            estado: p.sub_estado || p.estado
+            estado: p.sub_estado || p.estado,
+            orderId: p.order_id || null,
+            orderNumero: p.order_num || null
           };
         }
         g.componentes.push({ codigo: p.rfid, tipo: p.rol, estado: p.estado, sub_estado: p.sub_estado });
@@ -3183,7 +3190,10 @@ export const OperacionController = {
         const endsAt = new Date(new Date(startsAt).getTime() + timerRow.duration_sec*1000).toISOString();
         timer = { startsAt, endsAt, active: !!timerRow.active };
       }
-      res.json({ ok:true, caja: { id: cajaId, lote: cajaRow.lote, items, allListo, allOperacion, timer } });
+  // Fetch order info for caja
+  const orderQ = await withTenant(tenant, (c)=> c.query(`SELECT c.order_id, o.numero_orden AS order_num FROM acond_cajas c LEFT JOIN ordenes o ON o.id = c.order_id WHERE c.caja_id=$1`, [cajaId]));
+  const orderRow = orderQ.rowCount ? orderQ.rows[0] as any : { order_id: null, order_num: null };
+  res.json({ ok:true, caja: { id: cajaId, lote: cajaRow.lote, items, allListo, allOperacion, timer, order_id: orderRow.order_id ?? null, order_num: orderRow.order_num ?? null } });
     } catch(e:any){
       res.status(500).json({ ok:false, error: e.message||'Error lookup' });
     }
