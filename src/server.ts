@@ -61,9 +61,18 @@ app.get('/sw.js', (_req, res) => {
 // Serve static pre-sized icons if present; fallback to favicon
 app.get(['/icons/icon-192.png','/icons/icon-512.png'], (req, res) => {
 	const filename = req.path.endsWith('512.png') ? 'icon-512.png' : 'icon-192.png';
+	const vect = path.join(staticDir, 'images', 'vect.png');
 	const candidate = path.join(staticDir, 'images', filename);
 	const fallback = path.join(staticDir, 'images', 'favicon.png');
-	const fileToSend = fs.existsSync(candidate) ? candidate : fallback;
+	let fileToSend = candidate;
+	try {
+		const st = fs.statSync(candidate);
+		if (!st.isFile() || st.size < 1024) {
+			fileToSend = fs.existsSync(vect) ? vect : fallback;
+		}
+	} catch {
+		fileToSend = fs.existsSync(vect) ? vect : fallback;
+	}
 	res.type('image/png');
 	res.setHeader('Cache-Control', process.env.NODE_ENV === 'production' ? 'public, max-age=604800, immutable' : 'no-cache');
 	res.sendFile(fileToSend);
