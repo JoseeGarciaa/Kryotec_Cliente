@@ -2387,6 +2387,35 @@ export const OperacionController = {
   let cajasRows:any[] = []; let cajaItemsRows:any[];
   const nowRes = await withTenant(tenant, (c)=> c.query<{ now:string }>(`SELECT NOW()::timestamptz AS now`));
         try {
+          // Ensure ordenes table and acond_cajas.order_id column+FK exist (for older tenants)
+          await withTenant(tenant, async (c) => {
+            await c.query(`CREATE TABLE IF NOT EXISTS ordenes (
+              id serial PRIMARY KEY,
+              numero_orden text,
+              codigo_producto text,
+              cantidad integer,
+              ciudad_destino text,
+              ubicacion_destino text,
+              cliente text,
+              fecha_generacion timestamptz
+            )`);
+            await c.query(`ALTER TABLE acond_cajas ADD COLUMN IF NOT EXISTS order_id integer`);
+            await c.query(`DO $$
+            BEGIN
+              IF NOT EXISTS (
+                SELECT 1 FROM pg_constraint
+                 WHERE conrelid = 'acond_cajas'::regclass
+                   AND conname = 'acond_cajas_order_id_fkey'
+              ) THEN
+                BEGIN
+                  ALTER TABLE acond_cajas
+                    ADD CONSTRAINT acond_cajas_order_id_fkey
+                    FOREIGN KEY (order_id) REFERENCES ordenes(id) ON DELETE SET NULL;
+                EXCEPTION WHEN others THEN
+                END;
+              END IF;
+            END $$;`);
+          });
           const cajasQ = await withTenant(tenant, (c) => c.query(
             `WITH cajas_validas AS (
                SELECT c.caja_id, c.lote, c.created_at, c.order_id

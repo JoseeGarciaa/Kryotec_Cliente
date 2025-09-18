@@ -28,8 +28,13 @@ dotenv.config();
 
 const app = express();
 
+// Resolve views path robustly (src in repo; fallback to dist in production builds)
+const viewsSrc = path.join(process.cwd(), 'src', 'views');
+const viewsDist = path.join(process.cwd(), 'dist', 'views');
+const viewsPath = fs.existsSync(viewsSrc) ? viewsSrc : (fs.existsSync(viewsDist) ? viewsDist : viewsSrc);
+
 app.set('view engine', 'ejs');
-app.set('views', path.join(process.cwd(), 'src', 'views'));
+app.set('views', viewsPath);
 app.use(expressLayouts);
 app.set('layout', 'layouts/main');
 
