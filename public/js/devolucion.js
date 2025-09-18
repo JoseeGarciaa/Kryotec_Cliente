@@ -67,12 +67,17 @@
       timerBadge = `<span class='badge badge-outline badge-xs opacity-60'>Sin cronómetro</span>`;
     }
     const progress = Math.min(100, Math.max(0, pct));
+    // Formato de orden: si se conoce expected (>0) mostrar a/b, si no solo a
     const ordenStrBase = (caja.orderNumero ? caja.orderNumero : (caja.orderId ? ('#'+caja.orderId) : '—'));
     let ordenStr = ordenStrBase;
-    if(caja.orderId && (caja.orderCajaCount!=null || caja.orderCajaExpected!=null)){
-      const a = caja.orderCajaCount!=null? caja.orderCajaCount: '?';
-      const b = caja.orderCajaExpected!=null? caja.orderCajaExpected: '?';
-      ordenStr = `${ordenStrBase} (${a}${b!==null?'/'+b:''})`;
+    const haveCount = (caja.orderCajaCount!=null && caja.orderCajaCount>=0);
+    const haveExpected = (caja.orderCajaExpected!=null && caja.orderCajaExpected>0);
+    if(caja.orderId && haveCount){
+      if(haveExpected){
+        ordenStr = `${ordenStrBase} (${caja.orderCajaCount}/${caja.orderCajaExpected})`;
+      } else {
+        ordenStr = `${ordenStrBase} (${caja.orderCajaCount})`;
+      }
     }
   return `<div class='caja-card rounded-lg border border-base-300/40 bg-base-200/10 p-3 flex flex-col gap-2 hover:border-primary/60 transition cursor-pointer' data-caja-id='${caja.id}'>
       <div class='flex items-center justify-between text-[10px] tracking-wide uppercase opacity-60'><span>Caja</span><span class='font-mono'>${caja.codigoCaja||''}</span></div>
@@ -101,9 +106,11 @@
       else {
         resumenBox.innerHTML = entries.map(o=>{
           const a = o.cajas;
-          const b = (o.expected!=null? o.expected : '?');
-          const match = (o.expected!=null && a>=o.expected);
-          return `<span class='px-2 py-1 rounded border ${match?'border-success/60 text-success':'border-base-300/50'} bg-base-300/10 font-mono'>${o.numero_orden||('#'+o.order_id)}: ${a}/${b}</span>`;
+          const haveExpected = (o.expected!=null && o.expected>0);
+          const b = haveExpected? o.expected : null;
+          const match = (haveExpected && a>=o.expected);
+          const countStr = haveExpected? `${a}/${b}` : `${a}`;
+          return `<span class='px-2 py-1 rounded border ${match?'border-success/60 text-success':'border-base-300/50'} bg-base-300/10 font-mono'>${o.numero_orden||('#'+o.order_id)}: ${countStr}</span>`;
         }).join('');
       }
     }
