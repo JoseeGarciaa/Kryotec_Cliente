@@ -24,6 +24,7 @@ import { withTenant } from './db/pool';
 import { UsersModel } from './models/User';
 import { AlertsModel } from './models/Alerts';
 import fs from 'fs';
+import Jimp from 'jimp';
 
 dotenv.config();
 
@@ -66,23 +67,45 @@ app.get('/favicon.ico', (_req, res) => {
 });
 
 // Serve static pre-sized icons if present; fallback to favicon
-app.get(['/icons/icon-192.png','/icons/icon-512.png'], (req, res) => {
-	const filename = req.path.endsWith('512.png') ? 'icon-512.png' : 'icon-192.png';
-	const vect = path.join(staticDir, 'images', 'vect.png');
-	const candidate = path.join(staticDir, 'images', filename);
-	const fallback = path.join(staticDir, 'images', 'favicon.png');
-	let fileToSend = candidate;
+app.get(['/icons/icon-192.png','/icons/icon-512.png'], async (req, res) => {
+	// Always serve a correctly sized square PNG to satisfy install criteria
+	const size = req.path.endsWith('512.png') ? 512 : 192;
+	const cacheDir = path.join(staticDir, 'cache-icons');
+	const outPath = path.join(cacheDir, `icon-${size}.png`);
+	const sources = [
+		path.join(staticDir, 'images', `icon-${size}.png`), // pre-generated
+		path.join(staticDir, 'images', 'favicon.png'),
+		path.join(staticDir, 'images', 'vect.png'),
+	];
 	try {
-		const st = fs.statSync(candidate);
-		if (!st.isFile() || st.size < 1024) {
-			fileToSend = fs.existsSync(vect) ? vect : fallback;
+		// If a cached/generated file exists, serve it
+		if (fs.existsSync(outPath)) {
+			res.type('image/png');
+			res.setHeader('Cache-Control', process.env.NODE_ENV === 'production' ? 'public, max-age=604800, immutable' : 'no-cache');
+			return res.sendFile(outPath);
 		}
-	} catch {
-		fileToSend = fs.existsSync(vect) ? vect : fallback;
+		// Find first existing source
+		const src = sources.find(p => fs.existsSync(p));
+		if (!src) throw new Error('No icon source found');
+		// Ensure cache dir
+		if (!fs.existsSync(cacheDir)) fs.mkdirSync(cacheDir, { recursive: true });
+		// Load, resize to cover square, and write
+		const img = await Jimp.read(src);
+		// Create square by contain on transparent bg if needed
+		const canvas = new Jimp(size, size, 0x00000000);
+		img.contain(size, size, Jimp.HORIZONTAL_ALIGN_CENTER | Jimp.VERTICAL_ALIGN_MIDDLE);
+		canvas.composite(img, 0, 0);
+		await canvas.writeAsync(outPath);
+		res.type('image/png');
+		res.setHeader('Cache-Control', process.env.NODE_ENV === 'production' ? 'public, max-age=604800, immutable' : 'no-cache');
+		return res.sendFile(outPath);
+	} catch (err) {
+		// Last resort: fallback to favicon without resizing
+		const fallback = path.join(staticDir, 'images', 'favicon.png');
+		res.type('image/png');
+		res.setHeader('Cache-Control', 'no-cache');
+		return res.sendFile(fallback);
 	}
-	res.type('image/png');
-	res.setHeader('Cache-Control', process.env.NODE_ENV === 'production' ? 'public, max-age=604800, immutable' : 'no-cache');
-	res.sendFile(fileToSend);
 });
 
 // theme from cookie
