@@ -66,6 +66,7 @@
   }
   function fmt(sec){ if(sec==null) return '--:--'; const s=Math.max(0,sec); const h=Math.floor(s/3600); const m=Math.floor((s%3600)/60); const ss=s%60; return `${h}:${String(m).padStart(2,'0')}:${String(ss).padStart(2,'0')}`; }
   function fmtElapsed(ms){ const s=Math.max(0, Math.floor(ms/1000)); const h=Math.floor(s/3600); const m=Math.floor((s%3600)/60); const ss=s%60; return `${h}:${String(m).padStart(2,'0')}:${String(ss).padStart(2,'0')}`; }
+  function msRemainingGeneric(started_at, duration_sec){ if(!started_at||!duration_sec) return null; const end = new Date(started_at).getTime() + duration_sec*1000; return end - (Date.now()+serverOffset); }
   function msSinceStart(ts){ return Date.now()+serverOffset - new Date(ts).getTime(); }
   function renderTimers(){ if(!timersBox) return; const rows=[]; const all=[];
   const congSpan = document.getElementById('kb-cong-timer');
@@ -129,15 +130,26 @@
       opSpan.textContent = soonOp? fmt(soonOp.remaining_sec): '—';
       console.debug('[kanban] op placeholder timers', { op: (lastTimers.operacion||[]).length, acond: (lastTimers.acond||[]).length, chosen: soonOp? soonOp.lote:null });
     }
-    // Inspección: contar cajas y mostrar la de mayor tiempo (elapsed)
+    // Inspección: contar cajas y mostrar la que termina primero (countdown / remaining)
     const inspCnt = (lastTimers.inspeccion||[]).length;
     const inspCntEl = document.getElementById('kb-insp-cajas'); if(inspCntEl) inspCntEl.textContent = String(inspCnt);
     const inspSpan = document.getElementById('kb-insp-elapsed');
     if(inspSpan){
       if(!inspCnt){ inspSpan.textContent = '—'; }
       else {
-        const oldest = [...(lastTimers.inspeccion||[])].filter(t=> t.started_at).sort((a,b)=> new Date(a.started_at).getTime() - new Date(b.started_at).getTime())[0];
-        if(oldest){ inspSpan.textContent = fmtElapsed(msSinceStart(oldest.started_at)); inspSpan.setAttribute('data-kb-insp-id', String(oldest.caja_id)); }
+        // Preferir timers con duración para mostrar conteo regresivo; si falta remaining_sec, calcularlo
+        const timers = (lastTimers.inspeccion||[]).map(t=>{
+          if(t.remaining_sec==null && t.started_at && t.duration_sec){
+            t.remaining_sec = Math.max(0, Math.floor((msRemainingGeneric(t.started_at, t.duration_sec)||0)/1000));
+          }
+          return t;
+        });
+        let soonest = timers.filter(t=> (t.remaining_sec||0)>0).sort((a,b)=> (a.remaining_sec||999999)-(b.remaining_sec||999999))[0];
+        if(!soonest && timers.length){
+          // fallback: pick any with remaining_sec present (0 or null -> show dash)
+          soonest = timers.sort((a,b)=> (a.remaining_sec||999999)-(b.remaining_sec||999999))[0];
+        }
+        if(soonest && soonest.remaining_sec!=null){ inspSpan.textContent = fmt(soonest.remaining_sec); inspSpan.setAttribute('data-kb-insp-id', String(soonest.caja_id)); }
         else { inspSpan.textContent = '—'; inspSpan.removeAttribute('data-kb-insp-id'); }
       }
     }
@@ -203,15 +215,20 @@
       if(!soonOp && opTimers.length){ soonOp = opTimers.sort((a,b)=>(a.remaining_sec||999999)-(b.remaining_sec||999999))[0]; }
       opSpan2.textContent = soonOp? fmt(soonOp.remaining_sec): '—';
     }
-    // Tick Inspección elapsed (update the currently longest one)
+    // Tick Inspección countdown (update the soonest-to-finish)
     const inspSpan2 = document.getElementById('kb-insp-elapsed');
     if(inspSpan2){
-      const timers = (lastTimers.inspeccion||[]);
+      const timers = (lastTimers.inspeccion||[]).map(t=>{
+        if(t.remaining_sec==null && t.started_at && t.duration_sec){
+          t.remaining_sec = Math.max(0, Math.floor((msRemainingGeneric(t.started_at, t.duration_sec)||0)/1000));
+        }
+        return t;
+      });
       if(!timers.length){ inspSpan2.textContent='—'; inspSpan2.removeAttribute('data-kb-insp-id'); }
       else {
-        // Re-evaluate oldest in case a new older arrived
-        const oldest = [...timers].filter(t=> t.started_at).sort((a,b)=> new Date(a.started_at).getTime() - new Date(b.started_at).getTime())[0];
-        if(oldest){ inspSpan2.textContent = fmtElapsed(msSinceStart(oldest.started_at)); inspSpan2.setAttribute('data-kb-insp-id', String(oldest.caja_id)); }
+        let soonest = timers.filter(t=> (t.remaining_sec||0)>0).sort((a,b)=> (a.remaining_sec||999999)-(b.remaining_sec||999999))[0];
+        if(!soonest && timers.length){ soonest = timers.sort((a,b)=> (a.remaining_sec||999999)-(b.remaining_sec||999999))[0]; }
+        if(soonest && soonest.remaining_sec!=null){ inspSpan2.textContent = fmt(soonest.remaining_sec); inspSpan2.setAttribute('data-kb-insp-id', String(soonest.caja_id)); }
         else { inspSpan2.textContent='—'; inspSpan2.removeAttribute('data-kb-insp-id'); }
       }
     }
