@@ -1,5 +1,5 @@
 const STATIC_CACHE = 'kryo-static-v3';
-const OFFLINE_URL = '/';
+const OFFLINE_URL = '/auth/login';
 
 self.addEventListener('install', event => {
   event.waitUntil(

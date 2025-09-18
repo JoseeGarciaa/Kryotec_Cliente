@@ -24,7 +24,7 @@ import { withTenant } from './db/pool';
 import { UsersModel } from './models/User';
 import { AlertsModel } from './models/Alerts';
 import fs from 'fs';
-import Jimp from 'jimp';
+// Jimp can be ESM/CJS depending on version; defer/dynamic import in route
 
 dotenv.config();
 
@@ -90,10 +90,13 @@ app.get(['/icons/icon-192.png','/icons/icon-512.png'], async (req, res) => {
 		// Ensure cache dir
 		if (!fs.existsSync(cacheDir)) fs.mkdirSync(cacheDir, { recursive: true });
 		// Load, resize to cover square, and write
-		const img = await Jimp.read(src);
+	// Dynamic import for compatibility
+	// eslint-disable-next-line @typescript-eslint/no-var-requires
+	const JimpMod = await import('jimp').then(m => (m as any).default || (m as any));
+	const img = await JimpMod.read(src);
 		// Create square by contain on transparent bg if needed
-		const canvas = new Jimp(size, size, 0x00000000);
-		img.contain(size, size, Jimp.HORIZONTAL_ALIGN_CENTER | Jimp.VERTICAL_ALIGN_MIDDLE);
+	const canvas = new JimpMod(size, size, 0x00000000);
+	img.contain(size, size, JimpMod.HORIZONTAL_ALIGN_CENTER | JimpMod.VERTICAL_ALIGN_MIDDLE);
 		canvas.composite(img, 0, 0);
 		await canvas.writeAsync(outPath);
 		res.type('image/png');

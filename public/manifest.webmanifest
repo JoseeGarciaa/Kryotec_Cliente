@@ -2,7 +2,7 @@
   "name": "KryoSense",
   "short_name": "Kryo",
   "description": "Gestión de credocubes y operaciones Kryotec",
-  "start_url": "/",
+  "start_url": "/auth/login",
   "scope": "/",
   "display": "standalone",
   "background_color": "#0b1220",
