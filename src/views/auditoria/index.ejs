@@ -81,7 +81,7 @@
                 <td class="text-center">
                   <div class="flex items-center justify-end gap-2">
                     <button type="button" class="btn btn-ghost btn-xs" data-action="aud-edit" data-id="<%= row.id %>" data-auditada="<%= row.auditada ? 'true' : 'false' %>" data-comentarios="<%= row.comentarios||'' %>">Editar</button>
-                    <form method="post" action="/auditoria/<%= row.id %>/delete" onsubmit="return confirm('¿Eliminar registro de auditoría?');">
+                    <form method="post" action="/auditoria/<%= row.id %>/delete" data-action="aud-delete">
                       <button type="submit" class="btn btn-error btn-xs">Eliminar</button>
                     </form>
                   </div>
@@ -123,27 +123,4 @@
   
 </dialog>
 
-<script>
-  (function(){
-    const dlg = document.getElementById('aud-edit-modal');
-    const form = document.getElementById('aud-edit-form');
-    const sel = document.getElementById('aud-edit-auditada');
-    const com = document.getElementById('aud-edit-comentarios');
-    document.addEventListener('click', function(e){
-      const t = e.target;
-      if(!(t instanceof HTMLElement)) return;
-      if(t.matches('[data-action="aud-edit"]')){
-        const id = t.getAttribute('data-id');
-        const auditada = t.getAttribute('data-auditada') === 'true' ? 'true' : 'false';
-        const comentarios = t.getAttribute('data-comentarios') || '';
-        if(form && id){ form.action = '/auditoria/' + id + '/update'; }
-        if(sel){ sel.value = auditada; }
-        if(com){ com.value = comentarios; }
-        try{ dlg.showModal(); }catch{ dlg.classList.remove('hidden'); }
-      }
-      if(t.matches('[data-close]')){
-        try{ dlg.close(); }catch{ dlg.classList.add('hidden'); }
-      }
-    });
-  })();
- </script>
+<script src="/static/js/auditoria.js?v=<%= assetVersion %>" defer></script>
