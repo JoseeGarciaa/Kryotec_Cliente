@@ -1256,9 +1256,34 @@ export const OperacionController = {
           await c.query(`CREATE TRIGGER trg_inspeccion_nov_set_updated
             BEFORE UPDATE ON inspeccion_novedades FOR EACH ROW EXECUTE FUNCTION trg_set_actualizado_en()`);
 
-          await c.query(`INSERT INTO inspeccion_novedades (pieza_id, rfid, tipo, motivo, descripcion, severidad, inhabilita, creado_por)
-                         VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
-                         [piezaId, code, tp, mot, desc, sev, inh, (user.email||user.name||user.id||'sistema')]);
+          // Registrar novedad y obtener su ID
+          const novIns = await c.query(
+            `INSERT INTO inspeccion_novedades (pieza_id, rfid, tipo, motivo, descripcion, severidad, inhabilita, creado_por)
+             VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+             RETURNING novedad_id`,
+             [piezaId, code, tp, mot, desc, sev, inh, (user.email||user.name||user.id||'sistema')]
+          );
+          const createdNovedadId = Number(novIns.rows?.[0]?.novedad_id||0) || null;
+          // Asegurar tabla de auditoría y registrar evento vinculado a la novedad/pieza
+          await c.query(`
+            CREATE TABLE IF NOT EXISTS auditorias_credocubes (
+              id SERIAL PRIMARY KEY,
+              inventario_id INTEGER NULL,
+              novedad_id INTEGER NULL,
+              comentarios TEXT NULL,
+              auditada BOOLEAN NOT NULL DEFAULT FALSE,
+              fecha TIMESTAMP WITHOUT TIME ZONE NOT NULL DEFAULT NOW()
+            );
+            CREATE INDEX IF NOT EXISTS idx_auditorias_fecha ON auditorias_credocubes (fecha DESC);
+            CREATE INDEX IF NOT EXISTS idx_auditorias_auditada ON auditorias_credocubes (auditada, fecha DESC);
+            CREATE INDEX IF NOT EXISTS idx_auditorias_inv ON auditorias_credocubes (inventario_id);
+            CREATE INDEX IF NOT EXISTS idx_auditorias_nov ON auditorias_credocubes (novedad_id);
+          `);
+          await c.query(
+            `INSERT INTO auditorias_credocubes (inventario_id, novedad_id, comentarios, auditada, fecha)
+             VALUES ($1, $2, NULL, FALSE, NOW())`,
+            [piezaId, createdNovedadId]
+          );
           if(inh){
             await c.query(`UPDATE inventario_credocubes
                             SET estado='Inhabilitado', sub_estado=NULL, activo=false, lote=NULL
