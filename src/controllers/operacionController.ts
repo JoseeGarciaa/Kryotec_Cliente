@@ -3076,7 +3076,7 @@ export const OperacionController = {
   // Move entire caja to Lista para Despacho given one RFID (auto-detect caja)
   acondDespachoMove: async (req: Request, res: Response) => {
     const tenant = (req as any).user?.tenant;
-  const { rfid, durationSec } = req.body as any;
+  const { rfid, durationSec, order_id } = req.body as any;
   const code = typeof rfid === 'string' ? rfid.trim() : '';
   const dur = Number(durationSec);
   if(code.length !== 24) return res.status(400).json({ ok:false, error:'RFID inválido' });
@@ -3085,9 +3085,9 @@ export const OperacionController = {
       await withTenant(tenant, async (c) => {
         await c.query('BEGIN');
         try {
-      const cajaQ = await c.query(`SELECT c.caja_id, c.lote FROM acond_caja_items aci JOIN acond_cajas c ON c.caja_id=aci.caja_id WHERE aci.rfid=$1 LIMIT 1`, [code]);
+  const cajaQ = await c.query(`SELECT c.caja_id, c.lote, c.order_id FROM acond_caja_items aci JOIN acond_cajas c ON c.caja_id=aci.caja_id WHERE aci.rfid=$1 LIMIT 1`, [code]);
           if(!cajaQ.rowCount){ await c.query('ROLLBACK'); return res.status(404).json({ ok:false, error:'RFID no pertenece a caja' }); }
-          const cajaId = cajaQ.rows[0].caja_id; const lote = cajaQ.rows[0].lote;
+          const cajaId = cajaQ.rows[0].caja_id; const lote = cajaQ.rows[0].lote; const cajaOrderId = cajaQ.rows[0].order_id ?? null;
     // Bloquear si cronómetro de ensamblaje aún activo (no se ha marcado Ensamblado)
     const timerQ = await c.query(`SELECT active, started_at, duration_sec FROM acond_caja_timers WHERE caja_id=$1`, [cajaId]);
     if(timerQ.rowCount && timerQ.rows[0].active){ await c.query('ROLLBACK'); return res.status(400).json({ ok:false, error:'Cronómetro en progreso: espera a que termine (Ensamblado) antes de despachar' }); }
@@ -3163,6 +3163,17 @@ export const OperacionController = {
                WHERE ic.rfid IN (SELECT rfid FROM acond_caja_items WHERE caja_id=$1)
                  AND ic.estado='Acondicionamiento'
                  AND ic.sub_estado='Ensamblado'`, [cajaId]);
+          // Si viene order_id y la caja no tiene uno asignado todavía, asociarlo
+          if(order_id!=null && cajaOrderId==null){
+            const parsed = Number(order_id);
+            if(Number.isFinite(parsed) && parsed>0){
+              // Validar que la orden exista
+              const ordQ = await c.query(`SELECT 1 FROM ordenes WHERE id=$1`, [parsed]);
+              if(ordQ.rowCount){
+                try { await c.query(`UPDATE acond_cajas SET order_id=$1 WHERE caja_id=$2 AND order_id IS NULL`, [parsed, cajaId]); } catch(e){ /* ignore */ }
+              }
+            }
+          }
           await c.query('COMMIT');
           res.json({ ok:true, caja_id: cajaId, lote, moved: upd.rowCount, timer: { durationSec: dur } });
         } catch(e){ await c.query('ROLLBACK'); throw e; }

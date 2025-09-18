@@ -1145,6 +1145,10 @@
     const confirmBtn = document.getElementById('btn-despacho-confirm');
   const minInput = document.getElementById('despacho-min');
   const hrInput = document.getElementById('despacho-hr');
+  // Orden (vinculación opcional)
+  const linkOrderChk = document.getElementById('despacho-link-order');
+  const orderSelect = document.getElementById('despacho-order-select');
+  const orderHint = document.getElementById('despacho-order-hint');
     let lastCajaId = null; let lastRfid = '';
   function reset(){ lastCajaId=null; lastRfid=''; if(summary){ summary.classList.add('hidden'); summary.innerHTML=''; } if(msg) msg.textContent=''; if(confirmBtn) confirmBtn.disabled=true; if(input) input.value=''; if(minInput) { minInput.value=''; } if(hrInput){ hrInput.value=''; } }
     function updateConfirmState(){
@@ -1152,6 +1156,27 @@
       const hrs = Number(hrInput?.value||'0');
       const total = hrs*60 + mins;
       if(confirmBtn){ confirmBtn.disabled = !(lastCajaId && lastRfid && Number.isFinite(total) && total>0); }
+      if(orderSelect){ orderSelect.disabled = !(linkOrderChk && linkOrderChk.checked); }
+    }
+    async function loadOrdenesDespacho(){
+      if(!orderSelect) return;
+      orderSelect.innerHTML = `<option value="">Cargando órdenes…</option>`;
+      try {
+        const r = await fetch('/ordenes/list', { headers:{ 'Accept':'application/json' } });
+        const j = await r.json();
+        if(!r.ok || j.ok===false) throw new Error(j.error||'Error');
+        const items = Array.isArray(j.items) ? j.items : [];
+        const opts = [`<option value="">Selecciona una orden…</option>`]
+          .concat(items.map(o=>{
+            const num = (o.numero_orden||'').toString();
+            const cli = (o.cliente||'').toString();
+            const prod = (o.codigo_producto||'').toString();
+            const cant = (o.cantidad!=null? o.cantidad: '').toString();
+            const label = [num, cli, prod, cant?`x${cant}`:''].filter(Boolean).join(' · ');
+            return `<option value="${o.id}">${label}</option>`;
+          }));
+        orderSelect.innerHTML = opts.join('');
+      } catch(e){ orderSelect.innerHTML = `<option value="">No se pudo cargar órdenes</option>`; }
     }
     async function lookup(code){
       if(!code || code.length!==24) return; if(msg) msg.textContent='Buscando caja...';
@@ -1225,6 +1250,7 @@
     input?.addEventListener('keydown', e=>{ if(e.key==='Enter'){ e.preventDefault(); const v=input.value.trim(); if(v.length===24) lookup(v); }});
   minInput?.addEventListener('input', updateConfirmState);
   hrInput?.addEventListener('input', updateConfirmState);
+  linkOrderChk?.addEventListener('change', ()=>{ updateConfirmState(); if(linkOrderChk.checked){ loadOrdenesDespacho(); } });
     confirmBtn?.addEventListener('click', async ()=>{
       if(!lastCajaId || !lastRfid) return; 
   const mins = Number(minInput?.value||'0');
@@ -1232,9 +1258,12 @@
   const totalMin = hrs*60 + mins;
   if(!Number.isFinite(totalMin) || totalMin<=0){ if(msg) msg.textContent='Duración inválida'; return; }
   const durationSec = Math.round(totalMin*60);
+  // Optional order_id
+  let orderId = null;
+  if(linkOrderChk && linkOrderChk.checked && orderSelect && orderSelect.value){ const n=Number(orderSelect.value); if(Number.isFinite(n)) orderId = n; }
       confirmBtn.disabled=true; if(msg) msg.textContent='Marcando...';
       try {
-        const r = await fetch('/operacion/acond/despacho/move',{ method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ rfid: lastRfid, durationSec })});
+        const r = await fetch('/operacion/acond/despacho/move',{ method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ rfid: lastRfid, durationSec, order_id: orderId })});
         const j = await r.json();
         if(!j.ok){ if(msg) msg.textContent=j.error||'Error'; confirmBtn.disabled=false; return; }
   if(msg) msg.textContent='Caja movida a Despachando.';
@@ -1242,7 +1271,7 @@
         setTimeout(()=>{ try { dialog.close(); } catch{} }, 600);
       } catch(e){ if(msg) msg.textContent='Error moviendo'; confirmBtn.disabled=false; }
     });
-    btn.addEventListener('click', ()=>{ try { dialog.showModal(); } catch { dialog.classList.remove('hidden'); } reset(); setTimeout(()=>input?.focus(),50); });
+    btn.addEventListener('click', ()=>{ try { dialog.showModal(); } catch { dialog.classList.remove('hidden'); } reset(); setTimeout(()=>input?.focus(),50); if(linkOrderChk && linkOrderChk.checked){ loadOrdenesDespacho(); } });
     dialog?.addEventListener('close', reset);
   // Helper local si backend no envía roles (estimación básica por sufijo del modelo no disponible aquí)
   function inferRolFromCode(_rf){ return 'tic'; }

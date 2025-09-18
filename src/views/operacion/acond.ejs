@@ -196,6 +196,24 @@
       </div>
       <div id="despacho-timer-hint" class="text-xs opacity-60 mt-1">Ingresa un total &gt; 0 (horas*60 + minutos) para habilitar el botón.</div>
     </div>
+    <!-- Opcional: Vincular a una orden existente (similar a Ensamblaje) -->
+    <div class="mb-5 border border-base-300/40 rounded-lg p-3 bg-base-200/30">
+      <div class="form-control">
+        <label class="label cursor-pointer justify-start gap-3">
+          <input id="despacho-link-order" type="checkbox" class="checkbox checkbox-sm" />
+          <span class="label-text text-xs sm:text-sm">Vincular esta caja a una orden existente</span>
+        </label>
+      </div>
+      <div class="mt-2 grid grid-cols-1 gap-2">
+        <label class="form-control">
+          <span class="label-text text-xs">Orden</span>
+          <select id="despacho-order-select" class="select select-bordered select-sm" disabled>
+            <option value="">Selecciona una orden…</option>
+          </select>
+        </label>
+        <div id="despacho-order-hint" class="text-xs opacity-60">Activa la casilla para elegir una orden. Se asociará al mover la caja a Lista para Despacho.</div>
+      </div>
+    </div>
     <div class="flex gap-3 items-center">
       <button id="btn-despacho-confirm" class="btn btn-success btn-sm" disabled>Marcar como Listo</button>
       <span id="despacho-msg" class="text-xs opacity-70"></span>
