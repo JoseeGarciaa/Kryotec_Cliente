@@ -140,4 +140,62 @@ export const AlertsModel = {
       [data.inventario_id ?? null, data.tipo_alerta, data.descripcion ?? null]
     );
   },
+
+  // Grouping helper for preacond events: collapse multiple per-RFID alerts into a single
+  // unresolved alert per (tipo_alerta, lote). If an unresolved alert exists for the lote,
+  // increment the leading count in descripcion; otherwise create a new one with count=delta.
+  async createOrIncrementPreacondGroup(
+    client: PoolClient,
+    opts: { tipo_alerta: string; lote: string | null | undefined; nextState: 'Congelado' | 'Atemperado'; delta?: number }
+  ): Promise<void> {
+    await this.ensureTable(client);
+    const lote = (opts.lote || '').toString().trim();
+    const delta = Math.max(1, Number(opts.delta || 1) || 1);
+    const tipo = opts.tipo_alerta;
+    const nextState = opts.nextState;
+
+    // If lote is empty, fallback to a normal single alert (no grouping key)
+    if (!lote) {
+      const msg = `${delta} TIC${delta>1?'s':''} marcada${delta>1?'s':''} ${nextState}`;
+      await client.query(
+        `INSERT INTO alertas (inventario_id, tipo_alerta, descripcion, fecha_creacion, resuelta)
+         VALUES (NULL, $1, $2, NOW(), FALSE)`,
+        [tipo, msg]
+      );
+      return;
+    }
+
+    // Try find an unresolved alert for same (tipo, lote)
+    const like = `% (L: ${lote})%`;
+    const existing = await client.query<{ id: number; descripcion: string | null }>(
+      `SELECT id, descripcion
+         FROM alertas
+        WHERE resuelta = FALSE
+          AND tipo_alerta = $1
+          AND descripcion LIKE $2
+        ORDER BY id DESC
+        LIMIT 1`,
+      [tipo, like]
+    );
+
+    if (existing.rowCount) {
+      const row = existing.rows[0];
+      const current = (row.descripcion || '').toString();
+      // Expect format like: "N TIC(s) marcada(s) <State> (L: lote)"
+      const m = current.match(/^(\d+)\s+TIC/i);
+      const prev = Math.max(1, Number(m && m[1] ? m[1] : 1) || 1);
+      const n = prev + delta;
+      const newDesc = `${n} TIC${n>1?'s':''} marcada${n>1?'s':''} ${nextState} (L: ${lote})`;
+      await client.query(`UPDATE alertas SET descripcion = $1, fecha_creacion = NOW() WHERE id = $2`, [newDesc, row.id]);
+      return;
+    }
+
+    // Create new grouped alert for this lote
+    const newDesc = `${delta} TIC${delta>1?'s':''} marcada${delta>1?'s':''} ${nextState} (L: ${lote})`;
+    await client.query(
+      `INSERT INTO alertas (inventario_id, tipo_alerta, descripcion, fecha_creacion, resuelta)
+       VALUES (NULL, $1, $2, NOW(), FALSE)`,
+      [tipo, newDesc]
+    );
+  },
 };

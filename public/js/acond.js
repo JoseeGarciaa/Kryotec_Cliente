@@ -270,7 +270,11 @@
       if(allEnsamblado || /Ensamblado/i.test(c.estado||'')){
         timerBadge = `<span class='badge badge-success badge-xs'>Listo</span>`;
       } else {
-        timerBadge = `<span class='badge badge-outline badge-xs opacity-60'>Sin cronómetro</span>`;
+        // Sin cronómetro: ofrecer botón para iniciarlo nuevamente
+        timerBadge = `
+          <span class='badge badge-outline badge-xs opacity-60'>Sin cronómetro</span>
+          <button class='btn btn-ghost btn-xs px-1 h-4 shrink-0' data-action='timer-start' data-caja-id='${safeHTML(c.id)}' title='Iniciar'>▶</button>
+        `;
       }
     }
     const pct = Math.min(100, Math.max(0, progress));
@@ -679,7 +683,10 @@
     if(timerBox){
       let html='';
       if(!caja.timer){
-        html = '<div class="text-sm opacity-60 italic">(Sin cronómetro)</div>';
+        html = `<div class="flex items-center gap-2">
+          <span class="text-sm opacity-60 italic">(Sin cronómetro)</span>
+          <button class="btn btn-xs btn-primary" data-action="timer-start" data-caja-id="${safeHTML(caja.id)}">Iniciar</button>
+        </div>`;
       } else if(caja.timer.completedAt){
   html = '<div class="badge badge-success badge-sm">Cronómetro Listo</div>';
       } else if(caja.timer.startsAt && caja.timer.endsAt){

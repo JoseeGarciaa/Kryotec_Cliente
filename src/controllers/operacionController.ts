@@ -2182,13 +2182,22 @@ export const OperacionController = {
         const count = upd.rowCount || 0;
         if (count > 0) {
           const nextState = s === 'congelamiento' ? 'Congelado' : 'Atemperado';
-          const lotes = Array.from(new Set((upd.rows || []).map((r: any) => String(r.lote || '').trim()).filter(Boolean)));
-          const lotesMsg = lotes.length ? ` (Lote${lotes.length>1?'s':''}: ${lotes.join(', ')})` : '';
+          // Agrupar por lote y crear/incrementar una sola alerta por cada lote afectado
+          const byLote = new Map<string, number>();
+          for (const r of (upd.rows || []) as any[]) {
+            const lote = String(r.lote || '').trim();
+            const key = lote || '';
+            byLote.set(key, (byLote.get(key) || 0) + 1);
+          }
           try {
-            await AlertsModel.create(c, {
-              tipo_alerta: `inventario:preacond:${nextState.toLowerCase()}`,
-              descripcion: `${count} TIC${count>1?'s':''} marcada${count>1?'s':''} ${nextState}${lotesMsg}`
-            });
+            for (const [loteKey, n] of byLote.entries()) {
+              await AlertsModel.createOrIncrementPreacondGroup(c, {
+                tipo_alerta: `inventario:preacond:${nextState.toLowerCase()}`,
+                lote: loteKey || null,
+                nextState,
+                delta: n
+              });
+            }
           } catch {}
         }
       } catch (e) {
@@ -2226,9 +2235,11 @@ export const OperacionController = {
           const nextState = s === 'congelamiento' ? 'Congelado' : 'Atemperado';
           const row = (upd.rows || [])[0] as any;
           try {
-            await AlertsModel.create(c, {
+            await AlertsModel.createOrIncrementPreacondGroup(c, {
               tipo_alerta: `inventario:preacond:${nextState.toLowerCase()}`,
-              descripcion: `RFID ${row?.rfid || r} → ${nextState}${row?.lote? ' (L: '+row.lote+')' : ''}`
+              lote: String(row?.lote || '').trim() || null,
+              nextState,
+              delta: 1
             });
           } catch {}
         }
