@@ -130,3 +130,41 @@ export const AuditoriaModel = {
     await client.query(`DELETE FROM auditorias_credocubes WHERE id = $1`, [id]);
   }
 };
+
+export type InventarioLight = {
+  id: number;
+  rfid: string | null;
+  lote: string | null;
+  numero_orden: string | null;
+  estado: string | null;
+  sub_estado: string | null;
+};
+
+export const AuditoriaExtras = {
+  async create(
+    client: PoolClient,
+    data: { inventarioId: number; comentarios?: string | null; novedadId?: number | null; auditada?: boolean }
+  ): Promise<number> {
+    await AuditoriaModel.ensureTable(client);
+    const res = await client.query<{ id: number }>(
+      `INSERT INTO auditorias_credocubes (inventario_id, novedad_id, comentarios, auditada)
+       VALUES ($1, $2, $3, COALESCE($4, false))
+       RETURNING id`,
+      [data.inventarioId, data.novedadId ?? null, data.comentarios ?? null, typeof data.auditada === 'boolean' ? data.auditada : null]
+    );
+    return res.rows[0]?.id || 0;
+  },
+
+  async searchInventario(client: PoolClient, q: string, limit = 20): Promise<InventarioLight[]> {
+    const term = `%${q.trim()}%`;
+    const res = await client.query<InventarioLight>(
+      `SELECT id, rfid, lote, numero_orden, estado, sub_estado
+         FROM inventario_credocubes
+        WHERE ($1 = '' OR rfid ILIKE $2 OR lote ILIKE $2 OR numero_orden ILIKE $2)
+        ORDER BY id DESC
+        LIMIT $3`,
+      [q.trim() === '' ? '' : 'x', term, limit]
+    );
+    return res.rows;
+  }
+};

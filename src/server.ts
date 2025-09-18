@@ -15,7 +15,6 @@ import administracionRoutes from './routes/administracionRoutes';
 import auditoriaRoutes from './routes/auditoriaRoutes';
 import jwt from 'jsonwebtoken';
 import { config } from './config';
-import expressStatic from 'express';
 // @ts-ignore types optional
 import expressLayouts from 'express-ejs-layouts';
 import { restrictByRole } from './middleware/roles';
@@ -24,7 +23,6 @@ import { withTenant } from './db/pool';
 import { UsersModel } from './models/User';
 import { AlertsModel } from './models/Alerts';
 import fs from 'fs';
-// Jimp can be ESM/CJS depending on version; defer/dynamic import in route
 
 dotenv.config();
 
@@ -37,13 +35,15 @@ app.set('layout', 'layouts/main');
 
 // Helmet con HSTS deshabilitado en desarrollo para evitar forzar HTTPS (causa ERR_SSL_PROTOCOL_ERROR en http://localhost)
 app.use(helmet({
-	hsts: process.env.NODE_ENV === 'production' ? undefined : false
+	// Keep simple defaults; let platform terminate TLS and handle HSTS
+	hsts: false,
+	contentSecurityPolicy: false,
 } as any));
 app.use(express.urlencoded({ extended: true }));
 app.use(express.json());
 app.use(cookieParser());
 const staticDir = path.join(process.cwd(), 'public');
-app.use('/static', expressStatic.static(staticDir, {
+app.use('/static', express.static(staticDir, {
 	maxAge: process.env.NODE_ENV === 'production' ? '1d' : 0,
 	etag: true,
 }));
@@ -66,49 +66,17 @@ app.get('/favicon.ico', (_req, res) => {
 	res.sendFile(path.join(staticDir, 'images', 'favicon.png'));
 });
 
-// Serve static pre-sized icons if present; fallback to favicon
-app.get(['/icons/icon-192.png','/icons/icon-512.png'], async (req, res) => {
-	// Always serve a correctly sized square PNG to satisfy install criteria
-	const size = req.path.endsWith('512.png') ? 512 : 192;
-	const cacheDir = path.join(staticDir, 'cache-icons');
-	const outPath = path.join(cacheDir, `icon-${size}.png`);
-	const sources = [
-		path.join(staticDir, 'images', `icon-${size}.png`), // pre-generated
-		path.join(staticDir, 'images', 'favicon.png'),
-		path.join(staticDir, 'images', 'vect.png'),
-	];
-	try {
-		// If a cached/generated file exists, serve it
-		if (fs.existsSync(outPath)) {
-			res.type('image/png');
-			res.setHeader('Cache-Control', process.env.NODE_ENV === 'production' ? 'public, max-age=604800, immutable' : 'no-cache');
-			return res.sendFile(outPath);
-		}
-		// Find first existing source
-		const src = sources.find(p => fs.existsSync(p));
-		if (!src) throw new Error('No icon source found');
-		// Ensure cache dir
-		if (!fs.existsSync(cacheDir)) fs.mkdirSync(cacheDir, { recursive: true });
-		// Load, resize to cover square, and write
-	// Dynamic import for compatibility
-	// eslint-disable-next-line @typescript-eslint/no-var-requires
-	const JimpMod = await import('jimp').then(m => (m as any).default || (m as any));
-	const img = await JimpMod.read(src);
-		// Create square by contain on transparent bg if needed
-	const canvas = new JimpMod(size, size, 0x00000000);
-	img.contain(size, size, JimpMod.HORIZONTAL_ALIGN_CENTER | JimpMod.VERTICAL_ALIGN_MIDDLE);
-		canvas.composite(img, 0, 0);
-		await canvas.writeAsync(outPath);
-		res.type('image/png');
-		res.setHeader('Cache-Control', process.env.NODE_ENV === 'production' ? 'public, max-age=604800, immutable' : 'no-cache');
-		return res.sendFile(outPath);
-	} catch (err) {
-		// Last resort: fallback to favicon without resizing
-		const fallback = path.join(staticDir, 'images', 'favicon.png');
-		res.type('image/png');
-		res.setHeader('Cache-Control', 'no-cache');
-		return res.sendFile(fallback);
-	}
+// Serve icons directly if present; otherwise fallback to favicon (no runtime processing)
+app.get(['/icons/icon-192.png','/icons/icon-512.png'], (req, res) => {
+  const size = req.path.endsWith('512.png') ? 512 : 192;
+  const candidates = [
+    path.join(staticDir, 'images', `icon-${size}.png`),
+    path.join(staticDir, 'images', 'favicon.png'),
+  ];
+  const found = candidates.find(p => fs.existsSync(p)) || path.join(staticDir, 'images', 'favicon.png');
+  res.type('image/png');
+  res.setHeader('Cache-Control', process.env.NODE_ENV === 'production' ? 'public, max-age=604800, immutable' : 'no-cache');
+  return res.sendFile(found);
 });
 
 // theme from cookie
@@ -166,6 +134,12 @@ app.use('/auditoria', auditoriaRoutes);
 app.use('/administracion', administracionRoutes);
 app.get('/', (_req: Request, res: Response) => res.redirect('/auth/login'));
 app.get('/health', (_req: Request, res: Response) => res.json({ ok: true, env: process.env.NODE_ENV, port: process.env.PORT }));
+
+// Robots
+app.get('/robots.txt', (_req, res) => {
+	res.type('text/plain');
+	res.send('User-agent: *\nDisallow:');
+});
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log(`Server running on http://localhost:${PORT}`));
