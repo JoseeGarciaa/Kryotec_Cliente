@@ -1145,10 +1145,7 @@
     const confirmBtn = document.getElementById('btn-despacho-confirm');
   const minInput = document.getElementById('despacho-min');
   const hrInput = document.getElementById('despacho-hr');
-  // Orden (vinculación opcional)
-  const linkOrderChk = document.getElementById('despacho-link-order');
-  const orderSelect = document.getElementById('despacho-order-select');
-  const orderHint = document.getElementById('despacho-order-hint');
+  // (Orden ya no se vincula aquí; se mueve a detalle de caja)
     let lastCajaId = null; let lastRfid = '';
   function reset(){ lastCajaId=null; lastRfid=''; if(summary){ summary.classList.add('hidden'); summary.innerHTML=''; } if(msg) msg.textContent=''; if(confirmBtn) confirmBtn.disabled=true; if(input) input.value=''; if(minInput) { minInput.value=''; } if(hrInput){ hrInput.value=''; } }
     function updateConfirmState(){
@@ -1156,27 +1153,6 @@
       const hrs = Number(hrInput?.value||'0');
       const total = hrs*60 + mins;
       if(confirmBtn){ confirmBtn.disabled = !(lastCajaId && lastRfid && Number.isFinite(total) && total>0); }
-      if(orderSelect){ orderSelect.disabled = !(linkOrderChk && linkOrderChk.checked); }
-    }
-    async function loadOrdenesDespacho(){
-      if(!orderSelect) return;
-      orderSelect.innerHTML = `<option value="">Cargando órdenes…</option>`;
-      try {
-        const r = await fetch('/ordenes/list', { headers:{ 'Accept':'application/json' } });
-        const j = await r.json();
-        if(!r.ok || j.ok===false) throw new Error(j.error||'Error');
-        const items = Array.isArray(j.items) ? j.items : [];
-        const opts = [`<option value="">Selecciona una orden…</option>`]
-          .concat(items.map(o=>{
-            const num = (o.numero_orden||'').toString();
-            const cli = (o.cliente||'').toString();
-            const prod = (o.codigo_producto||'').toString();
-            const cant = (o.cantidad!=null? o.cantidad: '').toString();
-            const label = [num, cli, prod, cant?`x${cant}`:''].filter(Boolean).join(' · ');
-            return `<option value="${o.id}">${label}</option>`;
-          }));
-        orderSelect.innerHTML = opts.join('');
-      } catch(e){ orderSelect.innerHTML = `<option value="">No se pudo cargar órdenes</option>`; }
     }
     async function lookup(code){
       if(!code || code.length!==24) return; if(msg) msg.textContent='Buscando caja...';
@@ -1250,7 +1226,6 @@
     input?.addEventListener('keydown', e=>{ if(e.key==='Enter'){ e.preventDefault(); const v=input.value.trim(); if(v.length===24) lookup(v); }});
   minInput?.addEventListener('input', updateConfirmState);
   hrInput?.addEventListener('input', updateConfirmState);
-  linkOrderChk?.addEventListener('change', ()=>{ updateConfirmState(); if(linkOrderChk.checked){ loadOrdenesDespacho(); } });
     confirmBtn?.addEventListener('click', async ()=>{
       if(!lastCajaId || !lastRfid) return; 
   const mins = Number(minInput?.value||'0');
@@ -1258,12 +1233,9 @@
   const totalMin = hrs*60 + mins;
   if(!Number.isFinite(totalMin) || totalMin<=0){ if(msg) msg.textContent='Duración inválida'; return; }
   const durationSec = Math.round(totalMin*60);
-  // Optional order_id
-  let orderId = null;
-  if(linkOrderChk && linkOrderChk.checked && orderSelect && orderSelect.value){ const n=Number(orderSelect.value); if(Number.isFinite(n)) orderId = n; }
       confirmBtn.disabled=true; if(msg) msg.textContent='Marcando...';
       try {
-        const r = await fetch('/operacion/acond/despacho/move',{ method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ rfid: lastRfid, durationSec, order_id: orderId })});
+        const r = await fetch('/operacion/acond/despacho/move',{ method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ rfid: lastRfid, durationSec })});
         const j = await r.json();
         if(!j.ok){ if(msg) msg.textContent=j.error||'Error'; confirmBtn.disabled=false; return; }
   if(msg) msg.textContent='Caja movida a Despachando.';
@@ -1271,9 +1243,78 @@
         setTimeout(()=>{ try { dialog.close(); } catch{} }, 600);
       } catch(e){ if(msg) msg.textContent='Error moviendo'; confirmBtn.disabled=false; }
     });
-    btn.addEventListener('click', ()=>{ try { dialog.showModal(); } catch { dialog.classList.remove('hidden'); } reset(); setTimeout(()=>input?.focus(),50); if(linkOrderChk && linkOrderChk.checked){ loadOrdenesDespacho(); } });
+    btn.addEventListener('click', ()=>{ try { dialog.showModal(); } catch { dialog.classList.remove('hidden'); } reset(); setTimeout(()=>input?.focus(),50); });
     dialog?.addEventListener('close', reset);
   // Helper local si backend no envía roles (estimación básica por sufijo del modelo no disponible aquí)
   function inferRolFromCode(_rf){ return 'tic'; }
   })();
+
+  // =================== NUEVA VINCULACIÓN DE ORDEN EN DETALLE ===================
+  async function loadOrdenesForDetalle(selectEl){
+    if(!selectEl) return;
+    selectEl.innerHTML = '<option value="">Cargando órdenes…</option>';
+    try {
+      const r = await fetch('/ordenes/list', { headers:{ 'Accept':'application/json' } });
+      const j = await r.json();
+      if(!r.ok || j.ok===false) throw new Error(j.error||'Error');
+      const items = Array.isArray(j.items)? j.items:[];
+      const opts = ['<option value="">Selecciona una orden…</option>'].concat(items.map(o=>{
+        const num = (o.numero_orden||'').toString();
+        const cli = (o.cliente||'').toString();
+        const prod = (o.codigo_producto||'').toString();
+        const cant = (o.cantidad!=null? o.cantidad: '').toString();
+        const label = [num, cli, prod, cant?`x${cant}`:''].filter(Boolean).join(' · ');
+        return `<option value="${o.id}">${label}</option>`;
+      }));
+      selectEl.innerHTML = opts.join('');
+    } catch(e){ selectEl.innerHTML = '<option value="">No se pudo cargar órdenes</option>'; }
+  }
+  // Extender openCajaDetalle para inyectar UI de orden
+  const _origOpenCajaDetalle = openCajaDetalle;
+  openCajaDetalle = function(id){
+    _origOpenCajaDetalle(id);
+    const wrap = document.getElementById('detalle-order-actions');
+    const ordenSpan = document.getElementById('detalle-caja-orden');
+    if(!wrap || !ordenSpan) return;
+    const currentTxt = ordenSpan.textContent?.trim();
+    // Si ya tiene una orden (no '—'), permitir cambiarla también
+    wrap.innerHTML = `
+      <div class='border border-base-300/40 rounded-lg p-3 bg-base-200/30 space-y-3'>
+        <div class='flex items-center justify-between'>
+          <span class='font-semibold'>Orden</span>
+          <button class='btn btn-ghost btn-xs' id='detalle-refresh-orden' title='Recargar'>↻</button>
+        </div>
+        <div class='text-[11px] opacity-70'>${currentTxt && currentTxt!=='—' ? 'Cambiar la orden asociada' : 'Vincular esta caja a una orden existente'}</div>
+        <div class='flex items-center gap-2'>
+          <select id='detalle-orden-select' class='select select-bordered select-sm flex-1'>
+            <option value=''>Selecciona una orden…</option>
+          </select>
+          <button class='btn btn-sm btn-primary' id='detalle-orden-aplicar'>Guardar</button>
+        </div>
+        <div id='detalle-orden-msg' class='text-[11px] opacity-70 min-h-[14px]'></div>
+      </div>`;
+    const sel = document.getElementById('detalle-orden-select');
+    const msg = document.getElementById('detalle-orden-msg');
+    const applyBtn = document.getElementById('detalle-orden-aplicar');
+    const refreshBtn = document.getElementById('detalle-refresh-orden');
+    loadOrdenesForDetalle(sel);
+    applyBtn?.addEventListener('click', async ()=>{
+      const val = sel && sel.value ? Number(sel.value) : null;
+      if(!val){ if(msg) msg.textContent='Selecciona una orden'; return; }
+      applyBtn.disabled=true; if(msg) msg.textContent='Aplicando...';
+      try {
+        const r = await fetch('/operacion/acond/caja/set-order',{ method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ caja_id: id, order_id: val })});
+        const j = await r.json();
+        if(!j.ok) throw new Error(j.error||'Error');
+        if(msg) msg.textContent='Orden vinculada';
+        // Refrescar data general
+        await loadData();
+        // Actualizar texto de orden en meta
+        ordenSpan.textContent = j.order_num ? j.order_num : ('#'+val);
+        ordenSpan.classList.remove('opacity-60');
+      } catch(e){ if(msg) msg.textContent=e.message||'Error'; }
+      finally { applyBtn.disabled=false; }
+    });
+    refreshBtn?.addEventListener('click', ()=> loadOrdenesForDetalle(sel));
+  };
 })();

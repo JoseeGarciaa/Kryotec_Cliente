@@ -3241,6 +3241,36 @@ export const OperacionController = {
       res.json({ ok:true, moved });
     } catch(e:any){ res.status(500).json({ ok:false, error: e.message||'Error moviendo caja' }); }
   },
+  // Set or change order for an existing caja (any estado) and propagate numero_orden to its items
+  acondCajaSetOrder: async (req: Request, res: Response) => {
+    const tenant = (req as any).user?.tenant;
+    const { caja_id, order_id } = req.body as any;
+    const cajaId = Number(caja_id);
+    const orderId = Number(order_id);
+    if(!Number.isFinite(cajaId) || cajaId<=0) return res.status(400).json({ ok:false, error:'caja_id inválido' });
+    if(!Number.isFinite(orderId) || orderId<=0) return res.status(400).json({ ok:false, error:'order_id inválido' });
+    try {
+      let orderNum: string | null = null;
+      await withTenant(tenant, async (c)=>{
+        await c.query('BEGIN');
+        try {
+          const cajaQ = await c.query(`SELECT caja_id, order_id FROM acond_cajas WHERE caja_id=$1 FOR UPDATE`, [cajaId]);
+          if(!cajaQ.rowCount){ await c.query('ROLLBACK'); return res.status(404).json({ ok:false, error:'Caja no existe' }); }
+          const ordQ = await c.query(`SELECT id, numero_orden FROM ordenes WHERE id=$1`, [orderId]);
+          if(!ordQ.rowCount){ await c.query('ROLLBACK'); return res.status(404).json({ ok:false, error:'Orden no existe' }); }
+          orderNum = ordQ.rows[0].numero_orden || null;
+          // Actualizar caja (permitir cambiar de orden también)
+          await c.query(`UPDATE acond_cajas SET order_id=$1 WHERE caja_id=$2`, [orderId, cajaId]);
+          if(orderNum){
+            // Propagar numero_orden a items de inventario
+            await c.query(`UPDATE inventario_credocubes SET numero_orden=$2 WHERE rfid IN (SELECT rfid FROM acond_caja_items WHERE caja_id=$1)`, [cajaId, orderNum]);
+          }
+          await c.query('COMMIT');
+        } catch(e){ await c.query('ROLLBACK'); throw e; }
+      });
+      res.json({ ok:true, caja_id: cajaId, order_id: orderId, order_num: orderNum });
+    } catch(e:any){ res.status(500).json({ ok:false, error: e.message||'Error asignando orden' }); }
+  },
 
   // ============================= OPERACIÓN · CAJA LOOKUP & MOVE =============================
   // Lookup caja by either a component RFID (24 chars) or the caja lote code (e.g. CAJA001-05092025)

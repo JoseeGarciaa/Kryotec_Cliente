@@ -29,6 +29,7 @@ router.post('/acond/caja/timer/complete', requireAuth, OperacionController.acond
 router.post('/acond/despacho/lookup', requireAuth, OperacionController.acondDespachoLookup);
 router.post('/acond/despacho/move', requireAuth, OperacionController.acondDespachoMove);
 router.post('/acond/despacho/move-caja', requireAuth, OperacionController.acondDespachoMoveCaja);
+router.post('/acond/caja/set-order', requireAuth, OperacionController.acondCajaSetOrder as any);
 router.get('/operacion', requireAuth, OperacionController.operacion);
 // Operación phase caja scan / timers (legacy prefixed paths kept for backward compatibility)
 router.get('/operacion/data', requireAuth, OperacionController.operacionData);

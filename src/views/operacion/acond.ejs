@@ -196,24 +196,6 @@
       </div>
       <div id="despacho-timer-hint" class="text-xs opacity-60 mt-1">Ingresa un total &gt; 0 (horas*60 + minutos) para habilitar el botón.</div>
     </div>
-    <!-- Opcional: Vincular a una orden existente (similar a Ensamblaje) -->
-    <div class="mb-5 border border-base-300/40 rounded-lg p-3 bg-base-200/30">
-      <div class="form-control">
-        <label class="label cursor-pointer justify-start gap-3">
-          <input id="despacho-link-order" type="checkbox" class="checkbox checkbox-sm" />
-          <span class="label-text text-xs sm:text-sm">Vincular esta caja a una orden existente</span>
-        </label>
-      </div>
-      <div class="mt-2 grid grid-cols-1 gap-2">
-        <label class="form-control">
-          <span class="label-text text-xs">Orden</span>
-          <select id="despacho-order-select" class="select select-bordered select-sm" disabled>
-            <option value="">Selecciona una orden…</option>
-          </select>
-        </label>
-        <div id="despacho-order-hint" class="text-xs opacity-60">Activa la casilla para elegir una orden. Se asociará al mover la caja a Lista para Despacho.</div>
-      </div>
-    </div>
     <div class="flex gap-3 items-center">
       <button id="btn-despacho-confirm" class="btn btn-success btn-sm" disabled>Marcar como Listo</button>
       <span id="despacho-msg" class="text-xs opacity-70"></span>
@@ -221,25 +203,36 @@
   </div>
 </dialog>
 
-<!-- Modal Detalle Caja -->
+<!-- Modal Detalle Caja (responsive unificado) -->
 <div id="modal-caja-detalle" class="hidden">
-  <div class="fixed inset-0 bg-black/60 z-40 flex items-start justify-center overflow-auto py-10" data-close="detalle">
-    <div class="bg-base-200 border border-base-300/50 rounded-xl shadow-xl w-full max-w-3xl p-5 relative z-50" role="dialog" aria-modal="true">
-      <div class="flex items-start justify-between mb-3">
-        <h3 id="detalle-caja-titulo" class="text-lg font-semibold">Caja</h3>
-        <button class="btn btn-xs btn-ghost" data-close="detalle">✕</button>
-      </div>
-      <div class="grid sm:grid-cols-2 md:grid-cols-3 gap-3 text-xs mb-4" id="detalle-meta">
-        <div><span class="opacity-60">Nombre caja:</span> <span id="detalle-caja-lote" class="font-mono"></span></div>
-        <div><span class="opacity-60">ID interno:</span> <span id="detalle-caja-id" class="font-mono"></span></div>
-        <div><span class="opacity-60">Composición:</span> <span id="detalle-caja-comp"></span></div>
-        <div><span class="opacity-60">Orden:</span> <span id="detalle-caja-orden" class="font-mono"></span></div>
-        <div><span class="opacity-60">Creada:</span> <span id="detalle-caja-fecha"></span></div>
-      </div>
-      <div id="detalle-caja-items" class="grid sm:grid-cols-2 md:grid-cols-3 gap-4 mb-2"></div>
-  <div id="detalle-caja-timer-box" class="mb-4"></div>
-      <div class="flex justify-end pt-2">
-        <button class="btn btn-sm" data-close="detalle">Cerrar</button>
+  <div class="fixed inset-0 bg-black/60 z-40 flex items-start justify-center py-6 md:py-10 px-2 md:px-4" data-close="detalle">
+    <div class="relative w-full max-w-5xl mx-auto" data-stop-prop>
+      <div class="bg-base-200 border border-base-300/50 rounded-xl shadow-xl flex flex-col max-h-[90vh]" role="dialog" aria-modal="true">
+        <!-- Header -->
+        <div class="flex items-start justify-between gap-4 px-5 pt-4 pb-3 border-b border-base-300/40">
+          <h3 id="detalle-caja-titulo" class="text-lg font-semibold">Caja</h3>
+          <button class="btn btn-xs btn-ghost" data-close="detalle">✕</button>
+        </div>
+        <!-- Scroll content -->
+        <div class="overflow-y-auto custom-scroll px-5 pb-5 pt-4 space-y-5" id="detalle-scroll">
+          <div class="grid gap-3 text-xs sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-5" id="detalle-meta">
+            <div><span class="opacity-60">Nombre caja:</span> <span id="detalle-caja-lote" class="font-mono"></span></div>
+            <div><span class="opacity-60">ID interno:</span> <span id="detalle-caja-id" class="font-mono"></span></div>
+            <div><span class="opacity-60">Composición:</span> <span id="detalle-caja-comp"></span></div>
+            <div id="detalle-caja-orden-wrap"><span class="opacity-60">Orden:</span> <span id="detalle-caja-orden" class="font-mono"></span></div>
+            <div><span class="opacity-60">Creada:</span> <span id="detalle-caja-fecha"></span></div>
+          </div>
+          <div id="detalle-order-actions" class="text-xs"></div>
+          <div>
+            <div class="text-xs font-semibold mb-2 opacity-70">Componentes</div>
+            <div id="detalle-caja-items" class="grid gap-3 grid-cols-1 xs:grid-cols-2 md:grid-cols-3 lg:grid-cols-4"></div>
+          </div>
+          <div id="detalle-caja-timer-box"></div>
+        </div>
+        <!-- Footer -->
+        <div class="flex justify-end gap-3 px-5 py-3 border-t border-base-300/40">
+          <button class="btn btn-sm" data-close="detalle">Cerrar</button>
+        </div>
       </div>
     </div>
   </div>
