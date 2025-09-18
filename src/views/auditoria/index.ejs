@@ -80,14 +80,7 @@
                 </td>
                 <td class="text-center">
                   <div class="flex items-center justify-end gap-2">
-                    <form method="post" action="/auditoria/<%= row.id %>/update" class="flex items-center gap-2">
-                      <select name="auditada" class="select select-bordered select-xs">
-                        <option value="false" <%= (!row.auditada?'selected':'') %>>Pendiente</option>
-                        <option value="true" <%= (row.auditada?'selected':'') %>>Auditada</option>
-                      </select>
-                      <input type="text" name="comentarios" class="input input-bordered input-xs w-44" placeholder="Comentario" value="<%= row.comentarios||'' %>" />
-                      <button type="submit" class="btn btn-primary btn-xs">Guardar</button>
-                    </form>
+                    <button type="button" class="btn btn-ghost btn-xs" data-action="aud-edit" data-id="<%= row.id %>" data-auditada="<%= row.auditada ? 'true' : 'false' %>" data-comentarios="<%= row.comentarios||'' %>">Editar</button>
                     <form method="post" action="/auditoria/<%= row.id %>/delete" onsubmit="return confirm('¿Eliminar registro de auditoría?');">
                       <button type="submit" class="btn btn-error btn-xs">Eliminar</button>
                     </form>
@@ -103,3 +96,54 @@
     </div>
   </div>
 </div>
+
+<!-- Modal Editar Auditoría -->
+<dialog id="aud-edit-modal" class="modal">
+  <div class="modal-box">
+    <h3 class="font-semibold mb-3">Editar auditoría</h3>
+    <form id="aud-edit-form" method="post" action="/auditoria/0/update" class="space-y-3">
+      <div class="form-control">
+        <label class="label"><span class="label-text">Estado auditoría</span></label>
+        <select name="auditada" id="aud-edit-auditada" class="select select-bordered select-sm">
+          <option value="false">Pendiente</option>
+          <option value="true">Auditada</option>
+        </select>
+      </div>
+      <div class="form-control">
+        <label class="label"><span class="label-text">Comentarios</span></label>
+        <input type="text" name="comentarios" id="aud-edit-comentarios" class="input input-bordered input-sm" maxlength="2000" placeholder="Comentario" />
+      </div>
+      <div class="modal-action">
+        <button type="button" class="btn" data-close>Cancelar</button>
+        <button type="submit" class="btn btn-primary">Guardar cambios</button>
+      </div>
+    </form>
+  </div>
+  <form method="dialog" class="modal-backdrop"><button>close</button></form>
+  
+</dialog>
+
+<script>
+  (function(){
+    const dlg = document.getElementById('aud-edit-modal');
+    const form = document.getElementById('aud-edit-form');
+    const sel = document.getElementById('aud-edit-auditada');
+    const com = document.getElementById('aud-edit-comentarios');
+    document.addEventListener('click', function(e){
+      const t = e.target;
+      if(!(t instanceof HTMLElement)) return;
+      if(t.matches('[data-action="aud-edit"]')){
+        const id = t.getAttribute('data-id');
+        const auditada = t.getAttribute('data-auditada') === 'true' ? 'true' : 'false';
+        const comentarios = t.getAttribute('data-comentarios') || '';
+        if(form && id){ form.action = '/auditoria/' + id + '/update'; }
+        if(sel){ sel.value = auditada; }
+        if(com){ com.value = comentarios; }
+        try{ dlg.showModal(); }catch{ dlg.classList.remove('hidden'); }
+      }
+      if(t.matches('[data-close]')){
+        try{ dlg.close(); }catch{ dlg.classList.add('hidden'); }
+      }
+    });
+  })();
+ </script>
