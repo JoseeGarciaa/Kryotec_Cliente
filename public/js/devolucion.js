@@ -36,7 +36,7 @@
   const piAccept = qs('#dev-pi-accept');
   const piCancel = qs('#dev-pi-cancel');
   let piCajaId = null;
-  let data = { cajas: [], serverNow: null };
+  let data = { cajas: [], serverNow: null, ordenes: {} };
   let serverOffset = 0; // serverNow - Date.now()
   let tick = null; let poll = null;
 
@@ -67,7 +67,13 @@
       timerBadge = `<span class='badge badge-outline badge-xs opacity-60'>Sin cronómetro</span>`;
     }
     const progress = Math.min(100, Math.max(0, pct));
-    const ordenStr = (caja.orderNumero ? caja.orderNumero : (caja.orderId ? ('#'+caja.orderId) : '—'));
+    const ordenStrBase = (caja.orderNumero ? caja.orderNumero : (caja.orderId ? ('#'+caja.orderId) : '—'));
+    let ordenStr = ordenStrBase;
+    if(caja.orderId && (caja.orderCajaCount!=null || caja.orderCajaExpected!=null)){
+      const a = caja.orderCajaCount!=null? caja.orderCajaCount: '?';
+      const b = caja.orderCajaExpected!=null? caja.orderCajaExpected: '?';
+      ordenStr = `${ordenStrBase} (${a}${b!==null?'/'+b:''})`;
+    }
   return `<div class='caja-card rounded-lg border border-base-300/40 bg-base-200/10 p-3 flex flex-col gap-2 hover:border-primary/60 transition cursor-pointer' data-caja-id='${caja.id}'>
       <div class='flex items-center justify-between text-[10px] tracking-wide uppercase opacity-60'><span>Caja</span><span class='font-mono'>${caja.codigoCaja||''}</span></div>
       <div class='font-semibold text-xs leading-tight break-all pr-2' title='${caja.codigoCaja||''}'>${caja.codigoCaja||''}</div>
@@ -86,12 +92,27 @@
     if(!grid) return; const cajas = data.cajas||[];
     if(!cajas.length){ grid.innerHTML = `<div class='col-span-full py-10 text-center text-xs opacity-60'>Sin cajas elegibles (Operación · Tránsito)</div>`; return; }
     grid.innerHTML = cajas.map(c=> cardHTML(c)).join('');
+    // Render resumen por orden
+    const resumenBox = document.getElementById('dev-orden-resumen');
+    if(resumenBox){
+      const ordenes = data.ordenes||{};
+      const entries = Object.values(ordenes);
+      if(!entries.length){ resumenBox.innerHTML = `<span class='opacity-50'>Sin órdenes asociadas</span>`; }
+      else {
+        resumenBox.innerHTML = entries.map(o=>{
+          const a = o.cajas;
+          const b = (o.expected!=null? o.expected : '?');
+          const match = (o.expected!=null && a>=o.expected);
+          return `<span class='px-2 py-1 rounded border ${match?'border-success/60 text-success':'border-base-300/50'} bg-base-300/10 font-mono'>${o.numero_orden||('#'+o.order_id)}: ${a}/${b}</span>`;
+        }).join('');
+      }
+    }
   }
   async function load(){
     try { spin?.classList.remove('hidden');
       const r = await fetch('/operacion/devolucion/data');
       const j = await r.json();
-      if(j.ok){ data = j; if(j.serverNow){ serverOffset = new Date(j.serverNow).getTime() - Date.now(); } }
+  if(j.ok){ data = j; if(j.serverNow){ serverOffset = new Date(j.serverNow).getTime() - Date.now(); } }
       else { data = { cajas:[], serverNow:null }; }
       render(); ensureTick();
     } catch(e){ console.error('[Devolución] load error', e); }

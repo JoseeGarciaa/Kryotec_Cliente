@@ -557,7 +557,22 @@ export const OperacionController = {
         g.componentes.push({ codigo: p.rfid, tipo: p.rol, estado: p.estado, sub_estado: p.sub_estado });
       }
       const cajas = Object.values(cajasMap);
-      res.json({ ok:true, serverNow: nowIso, pendientes, cajas, stats:{ cubes: statsRow.cubes, vips: statsRow.vips, tics: statsRow.tics, total: (statsRow.cubes||0)+(statsRow.vips||0)+(statsRow.tics||0) } });
+      // ==== Agregación por orden (conteo de cajas y esperado) ====
+      // Obtener order_id únicos
+      const orderIds = [...new Set(cajas.filter(c=> c.orderId).map(c=> c.orderId))];
+  let ordenesInfo: Record<string, { order_id:number; numero_orden:string|null; cajas:number; expected:number|null; }> = {};
+      if(orderIds.length){
+        // Contar cajas por order_id (ya las tenemos en memoria) y traer expected (cantidad) y numero_orden
+        const counts: Record<string, number> = {};
+        cajas.forEach(c=>{ if(c.orderId){ counts[c.orderId] = (counts[c.orderId]||0)+1; } });
+        const ordRows = await withTenant(tenant, (c)=> c.query(`SELECT id, numero_orden, cantidad FROM ordenes WHERE id = ANY($1::int[])`, [orderIds]));
+        for(const r of ordRows.rows as any[]){
+          ordenesInfo[String(r.id)] = { order_id:r.id, numero_orden: r.numero_orden||null, cajas: counts[r.id]||0, expected: (r.cantidad!=null? Number(r.cantidad): null) };
+        }
+        // Enriquecer cada caja con contadores
+        cajas.forEach(c=>{ if(c.orderId && ordenesInfo[String(c.orderId)]){ const meta = ordenesInfo[String(c.orderId)]; c.orderCajaCount = meta.cajas; c.orderCajaExpected = meta.expected; c.orderNumero = meta.numero_orden || c.orderNumero; } });
+      }
+      res.json({ ok:true, serverNow: nowIso, pendientes, cajas, ordenes: ordenesInfo, stats:{ cubes: statsRow.cubes, vips: statsRow.vips, tics: statsRow.tics, total: (statsRow.cubes||0)+(statsRow.vips||0)+(statsRow.tics||0) } });
     } catch(e:any){ res.status(500).json({ ok:false, error: e.message||'Error devolucion data' }); }
   },
   // Nueva: devolver caja completa (todas sus piezas) a Bodega desde Operación (cualquier sub_estado)
@@ -2791,9 +2806,11 @@ export const OperacionController = {
           END IF;
         END $$;`);
         // Validate provided order_id exists (if provided)
+        let orderNumero: string | null = null;
         if(orderId != null){
-          const chk = await c.query(`SELECT 1 FROM ordenes WHERE id=$1`, [orderId]);
+          const chk = await c.query(`SELECT numero_orden FROM ordenes WHERE id=$1`, [orderId]);
           if(!chk.rowCount){ throw new Error('Orden seleccionada no existe'); }
+          orderNumero = chk.rows[0].numero_orden || null;
         }
         let rCaja; let retries=0;
         while(true){
@@ -2820,7 +2837,11 @@ export const OperacionController = {
           await c.query(`UPDATE inventario_credocubes SET lote = NULL WHERE rfid = ANY($1::text[])`, [ticRfids]);
         }
         // Assign lote & move to Acondicionamiento/Ensamblaje
-        await c.query(`UPDATE inventario_credocubes SET estado='Acondicionamiento', sub_estado='Ensamblaje', lote=$1 WHERE rfid = ANY($2::text[])`, [loteNuevo, codes]);
+        if(orderNumero){
+          await c.query(`UPDATE inventario_credocubes SET estado='Acondicionamiento', sub_estado='Ensamblaje', lote=$1, numero_orden=$3 WHERE rfid = ANY($2::text[])`, [loteNuevo, codes, orderNumero]);
+        } else {
+          await c.query(`UPDATE inventario_credocubes SET estado='Acondicionamiento', sub_estado='Ensamblaje', lote=$1 WHERE rfid = ANY($2::text[])`, [loteNuevo, codes]);
+        }
         // Cleanup: remove any leftover preacond timers for these TICs (they left Pre Acond)
         if(ticRfids.length){
           await c.query(`DELETE FROM preacond_item_timers WHERE rfid = ANY($1::text[])`, [ticRfids]);
@@ -3167,10 +3188,14 @@ export const OperacionController = {
           if(order_id!=null && cajaOrderId==null){
             const parsed = Number(order_id);
             if(Number.isFinite(parsed) && parsed>0){
-              // Validar que la orden exista
-              const ordQ = await c.query(`SELECT 1 FROM ordenes WHERE id=$1`, [parsed]);
+              // Obtener numero_orden
+              const ordQ = await c.query(`SELECT numero_orden FROM ordenes WHERE id=$1`, [parsed]);
               if(ordQ.rowCount){
+                const numOrd = ordQ.rows[0].numero_orden || null;
                 try { await c.query(`UPDATE acond_cajas SET order_id=$1 WHERE caja_id=$2 AND order_id IS NULL`, [parsed, cajaId]); } catch(e){ /* ignore */ }
+                if(numOrd){
+                  try { await c.query(`UPDATE inventario_credocubes SET numero_orden=$2 WHERE rfid IN (SELECT rfid FROM acond_caja_items WHERE caja_id=$1)`, [cajaId, numOrd]); } catch(e){ /* ignore */ }
+                }
               }
             }
           }
