@@ -943,8 +943,11 @@
         openCajaDetalle(rowEl.getAttribute('data-caja-id'));
       }
 
-      // Cerrar modal detalle
-      if(t.matches('[data-close="detalle"]') || t.closest('[data-close="detalle"]')){
+      // Cerrar modal detalle SOLO si el click es directamente sobre el overlay
+      // o en un botón que explícitamente tenga el atributo data-close="detalle".
+      // (Antes se usaba closest() y cualquier click dentro cerraba el modal.)
+      if(t.matches('[data-close="detalle"]')){
+        // Si es el overlay (tiene el atributo) o el botón de cerrar también con el atributo
         closeCajaDetalle();
       }
 
