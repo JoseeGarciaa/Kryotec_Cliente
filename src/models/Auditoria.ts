@@ -112,5 +112,21 @@ export const AuditoriaModel = {
     }
     params.push(id);
     await client.query(`UPDATE auditorias_credocubes SET ${fields.map((f,i)=>`${f} = $${i+1}`).join(', ')} WHERE id = $${params.length}`, params);
+  },
+
+  async update(client: PoolClient, id: number, data: { comentarios?: string | null; auditada?: boolean }): Promise<void> {
+    await this.ensureTable(client);
+    const sets: string[] = [];
+    const params: any[] = [];
+    if (typeof data.comentarios === 'string') { sets.push(`comentarios = $${params.length+1}`); params.push(data.comentarios); }
+    if (typeof data.auditada === 'boolean') { sets.push(`auditada = $${params.length+1}`); params.push(data.auditada); }
+    if (!sets.length) return; // nothing to update
+    params.push(id);
+    await client.query(`UPDATE auditorias_credocubes SET ${sets.join(', ')} WHERE id = $${params.length}`, params);
+  },
+
+  async remove(client: PoolClient, id: number): Promise<void> {
+    await this.ensureTable(client);
+    await client.query(`DELETE FROM auditorias_credocubes WHERE id = $1`, [id]);
   }
 };

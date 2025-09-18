@@ -45,4 +45,39 @@ export const AuditoriaController = {
       return res.redirect('/auditoria');
     }
   }
+  ,
+  async update(req: Request, res: Response) {
+    const u: any = (res.locals as any).user || (req as any).user || {};
+    const tRaw = u?.tenant || resolveTenant(req);
+    const t = tRaw || process.env.DEFAULT_TENANT || null;
+    const tenantSchema = t ? (String(t).startsWith('tenant_') ? String(t) : `tenant_${t}`) : null;
+    const id = Number(req.params.id || 0);
+    const comentarios = ((req.body as any)?.comentarios || '').toString().slice(0, 2000) || null;
+    const auditadaRaw = (req.body as any)?.auditada;
+    const auditada = typeof auditadaRaw === 'string' ? (auditadaRaw === 'true') : (typeof auditadaRaw === 'boolean' ? auditadaRaw : undefined);
+    if (!tenantSchema || !id) return res.redirect('/auditoria');
+    try {
+      await withTenant(tenantSchema, (client) => AuditoriaModel.update(client, id, { comentarios, auditada }));
+      return res.redirect('/auditoria');
+    } catch (e) {
+      console.error('[auditoria][update] error:', e);
+      return res.redirect('/auditoria');
+    }
+  }
+  ,
+  async remove(req: Request, res: Response) {
+    const u: any = (res.locals as any).user || (req as any).user || {};
+    const tRaw = u?.tenant || resolveTenant(req);
+    const t = tRaw || process.env.DEFAULT_TENANT || null;
+    const tenantSchema = t ? (String(t).startsWith('tenant_') ? String(t) : `tenant_${t}`) : null;
+    const id = Number(req.params.id || 0);
+    if (!tenantSchema || !id) return res.redirect('/auditoria');
+    try {
+      await withTenant(tenantSchema, (client) => AuditoriaModel.remove(client, id));
+      return res.redirect('/auditoria');
+    } catch (e) {
+      console.error('[auditoria][remove] error:', e);
+      return res.redirect('/auditoria');
+    }
+  }
 };

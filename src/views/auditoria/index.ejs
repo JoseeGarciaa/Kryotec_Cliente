@@ -47,7 +47,7 @@
             <th class="whitespace-nowrap">Novedad</th>
             <th>Comentarios</th>
             <th class="text-center">Auditada</th>
-            <th></th>
+            <th class="text-center">Acciones</th>
           </tr>
         </thead>
         <tbody>
@@ -78,12 +78,20 @@
                     <span class="badge badge-warning badge-sm">Pendiente</span>
                   <% } %>
                 </td>
-                <td class="text-right">
-                  <form method="post" action="/auditoria/<%= row.id %>/auditar" class="flex items-center gap-2">
-                    <input type="hidden" name="auditada" value="<%= row.auditada ? 'false' : 'true' %>" />
-                    <input type="text" name="comentarios" class="input input-bordered input-xs w-44" placeholder="Comentario" />
-                    <button type="submit" class="btn btn-ghost btn-xs"><%= row.auditada ? 'Desmarcar' : 'Marcar auditada' %></button>
-                  </form>
+                <td class="text-center">
+                  <div class="flex items-center justify-end gap-2">
+                    <form method="post" action="/auditoria/<%= row.id %>/update" class="flex items-center gap-2">
+                      <select name="auditada" class="select select-bordered select-xs">
+                        <option value="false" <%= (!row.auditada?'selected':'') %>>Pendiente</option>
+                        <option value="true" <%= (row.auditada?'selected':'') %>>Auditada</option>
+                      </select>
+                      <input type="text" name="comentarios" class="input input-bordered input-xs w-44" placeholder="Comentario" value="<%= row.comentarios||'' %>" />
+                      <button type="submit" class="btn btn-primary btn-xs">Guardar</button>
+                    </form>
+                    <form method="post" action="/auditoria/<%= row.id %>/delete" onsubmit="return confirm('¿Eliminar registro de auditoría?');">
+                      <button type="submit" class="btn btn-error btn-xs">Eliminar</button>
+                    </form>
+                  </div>
                 </td>
               </tr>
             <% }) %>
