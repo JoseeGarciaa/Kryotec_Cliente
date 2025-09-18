@@ -58,6 +58,13 @@ app.get('/sw.js', (_req, res) => {
 	res.sendFile(path.join(staticDir, 'sw.js'));
 });
 
+// Favicon at root path for browsers and platform error pages
+app.get('/favicon.ico', (_req, res) => {
+	res.type('image/png');
+	res.setHeader('Cache-Control', process.env.NODE_ENV === 'production' ? 'public, max-age=604800, immutable' : 'no-cache');
+	res.sendFile(path.join(staticDir, 'images', 'favicon.png'));
+});
+
 // Serve static pre-sized icons if present; fallback to favicon
 app.get(['/icons/icon-192.png','/icons/icon-512.png'], (req, res) => {
 	const filename = req.path.endsWith('512.png') ? 'icon-512.png' : 'icon-192.png';
