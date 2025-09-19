@@ -856,7 +856,9 @@ export const OperacionController = {
         try {
           // 1. Mover items de la caja nuevamente a Acondicionamiento · Lista para Despacho (conservar cronómetro existente)
           await c.query(`UPDATE inventario_credocubes SET estado='Acondicionamiento', sub_estado='Lista para Despacho' WHERE rfid = ANY($1::text[]) AND estado='Operación'`, [rfids]);
-          // 2. Desasociar la orden previa: se reutiliza la caja para otro posible pedido; no tocamos timer.
+          // 2. Limpiar número de orden a nivel de inventario (numero_orden) para cada item reutilizado.
+          await c.query(`UPDATE inventario_credocubes SET numero_orden=NULL WHERE rfid = ANY($1::text[])`, [rfids]);
+          // 3. Desasociar la orden previa en la caja (order_id) para liberar la caja.
           await c.query(`UPDATE acond_cajas SET order_id = NULL WHERE caja_id=$1`, [cajaId]);
           // (Opcional) podríamos limpiar algún timer de operacion si existiera, pero el flujo indica conservar el de acond.
           await c.query('COMMIT');
