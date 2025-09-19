@@ -854,11 +854,15 @@ export const OperacionController = {
       await withTenant(tenant, async (c)=>{
         await c.query('BEGIN');
         try {
+          // 1. Mover items de la caja nuevamente a Acondicionamiento · Lista para Despacho (conservar cronómetro existente)
           await c.query(`UPDATE inventario_credocubes SET estado='Acondicionamiento', sub_estado='Lista para Despacho' WHERE rfid = ANY($1::text[]) AND estado='Operación'`, [rfids]);
+          // 2. Desasociar la orden previa: se reutiliza la caja para otro posible pedido; no tocamos timer.
+          await c.query(`UPDATE acond_cajas SET order_id = NULL WHERE caja_id=$1`, [cajaId]);
+          // (Opcional) podríamos limpiar algún timer de operacion si existiera, pero el flujo indica conservar el de acond.
           await c.query('COMMIT');
         } catch(e){ await c.query('ROLLBACK'); throw e; }
       });
-      res.json({ ok:true });
+      res.json({ ok:true, caja_id: cajaId, order_id: null, reusada: true });
     } catch(e:any){ res.status(500).json({ ok:false, error: e.message||'Error reutilizando caja' }); }
   },
   // Acción explícita: enviar a Inspección y desactivar cronómetro
