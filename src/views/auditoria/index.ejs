@@ -5,7 +5,7 @@
     <div class="card-body grid grid-cols-1 md:grid-cols-3 gap-3">
       <div class="form-control md:col-span-2">
         <div class="label"><span class="label-text">Escanee o escriba el RFID</span></div>
-        <input autofocus name="q" value="<%= (typeof item !== 'undefined' && item && item.rfid) ? item.rfid : '' %>" class="input input-bordered input-md font-mono" placeholder="XXXXXXXXXXXXXXXXXXXXXXXX" maxlength="32" autocomplete="off" />
+  <input autofocus name="q" value="<%= (typeof item !== 'undefined' && item && item.rfid) ? item.rfid : '' %>" class="input input-bordered input-md font-mono" placeholder="XXXXXXXXXXXXXXXXXXXXXXXX" maxlength="24" autocomplete="off" data-rfid-input />
       </div>
       <div class="flex items-end">
         <button type="submit" class="btn btn-primary">Buscar</button>
@@ -179,4 +179,15 @@
   </dialog>
 
   <script src="/static/js/auditoria.js?v=<%= assetVersion %>" defer></script>
+  <script>
+    (function(){
+      const el = document.querySelector('[data-rfid-input]');
+      if(!el) return;
+      const MAX = 24;
+      function clamp(){ if(el.value.length > MAX) el.value = el.value.slice(0, MAX); }
+      el.addEventListener('input', clamp);
+      el.addEventListener('paste', function(){ requestAnimationFrame(clamp); });
+      clamp();
+    })();
+  </script>
 </div>
