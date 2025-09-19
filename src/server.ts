@@ -119,15 +119,14 @@ async function generateIcon(size: number): Promise<Buffer> {
 		// fallback solid color
 		return ICON_CACHE[key] = buildPng(size, { r: 0x6d, g: 0x5e, b: 0xfc, a: 255 });
 	}
-	base.contain(size, size, Jimp.HORIZONTAL_ALIGN_CENTER | Jimp.VERTICAL_ALIGN_MIDDLE);
-	// Optional: add app name small caption on large icon
-	if (size >= 512) {
-		try {
-			const font = await Jimp.loadFont(Jimp.FONT_SANS_32_WHITE);
-			base.print(font, 0, size - 64, { text: 'KryoSense', alignmentX: Jimp.HORIZONTAL_ALIGN_CENTER, alignmentY: Jimp.VERTICAL_ALIGN_MIDDLE }, size, 64);
-		} catch {}
-	}
-	const buf = await base.getBufferAsync('image/png');
+		// Create a square canvas with transparent background then composite vect centered (no text overlay)
+		const canvas = new Jimp(size, size, 0x00000000);
+		base.scaleToFit(size * 0.9, size * 0.9); // leave small padding
+		const x = (size - base.bitmap.width) / 2;
+		const y = (size - base.bitmap.height) / 2;
+		canvas.composite(base, x, y);
+		const finalImg = canvas;
+		const buf = await finalImg.getBufferAsync('image/png');
 	ICON_CACHE[key] = buf;
 	return buf;
 }
