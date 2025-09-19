@@ -140,6 +140,27 @@ app.use('/administracion', administracionRoutes);
 app.get('/', (_req: Request, res: Response) => res.redirect('/auth/login'));
 app.get('/health', (_req: Request, res: Response) => res.json({ ok: true, env: process.env.NODE_ENV, port: process.env.PORT }));
 
+// Minimal landing page used as PWA start_url (avoids heavy DB/middleware work before SW installs)
+app.get('/pwa-start', (_req: Request, res: Response) => {
+	res.type('html').send(`<!DOCTYPE html>
+	<html lang="es"><head>
+		<meta charset="utf-8" />
+		<title>KryoSense</title>
+		<link rel="manifest" href="/manifest.webmanifest" />
+		<meta name="viewport" content="width=device-width,initial-scale=1" />
+		<link rel="icon" type="image/png" href="/static/images/favicon.png" />
+		<link rel="stylesheet" href="/static/css/app.css?v=${(Date.now())}" />
+	</head>
+	<body class="min-h-screen flex items-center justify-center">
+		<div class="text-center text-sm opacity-70">
+			<p>Inicializando aplicación…</p>
+			<p class="mt-2">Si ves esta pantalla más de 3s, recarga o visita <a class="link" href="/auth/login">/auth/login</a>.</p>
+		</div>
+		<script src="/static/js/pwa.js" defer></script>
+		<script>setTimeout(()=>{ if(!sessionStorage.getItem('kryo_auto_nav')){ sessionStorage.setItem('kryo_auto_nav','1'); location.replace('/auth/login'); } }, 2500);</script>
+	</body></html>`);
+});
+
 // Robots
 app.get('/robots.txt', (_req, res) => {
 	res.type('text/plain');
