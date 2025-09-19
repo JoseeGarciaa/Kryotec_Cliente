@@ -24,6 +24,7 @@ import { UsersModel } from './models/User';
 import { AlertsModel } from './models/Alerts';
 import fs from 'fs';
 import zlib from 'zlib';
+import Jimp from 'jimp';
 
 dotenv.config();
 
@@ -72,8 +73,7 @@ app.get('/favicon.ico', (_req, res) => {
 	res.sendFile(path.join(staticDir, 'images', 'favicon.png'));
 });
 
-// --- Dynamic PNG icon generation (ensures exact 192x192 & 512x512 to satisfy PWA heuristics) ---
-// Build and cache solid-color PNGs without external deps.
+// --- Dynamic PNG icon generation using base image vect.png (fallback solid) ---
 function crc32(buf: Buffer): number {
 	let c = ~0; for (let i = 0; i < buf.length; i++) { c = (c >>> 8) ^ CRC_TABLE[(c ^ buf[i]) & 0xFF]; } return ~c >>> 0;
 }
@@ -105,21 +105,45 @@ function buildPng(size: number, color: {r:number;g:number;b:number;a:number}): B
 	return Buffer.concat([signature, ihdrChunk, idatChunk, iendChunk]);
 }
 const ICON_CACHE: Record<string, Buffer> = {};
-function getIcon(size: number): Buffer {
+async function generateIcon(size: number): Promise<Buffer> {
 	const key = String(size);
-	if (!ICON_CACHE[key]) {
-		// Brand color base (#6d5efc) with full opacity
-		ICON_CACHE[key] = buildPng(size, { r: 0x6d, g: 0x5e, b: 0xfc, a: 255 });
+	if (ICON_CACHE[key]) return ICON_CACHE[key];
+	const vectPath = path.join(staticDir, 'images', 'vect.png');
+		let base: any = null; // Jimp instance
+	try {
+		if (fs.existsSync(vectPath)) {
+			base = await Jimp.read(vectPath);
+		}
+	} catch {}
+	if (!base) {
+		// fallback solid color
+		return ICON_CACHE[key] = buildPng(size, { r: 0x6d, g: 0x5e, b: 0xfc, a: 255 });
 	}
-	return ICON_CACHE[key];
+	base.contain(size, size, Jimp.HORIZONTAL_ALIGN_CENTER | Jimp.VERTICAL_ALIGN_MIDDLE);
+	// Optional: add app name small caption on large icon
+	if (size >= 512) {
+		try {
+			const font = await Jimp.loadFont(Jimp.FONT_SANS_32_WHITE);
+			base.print(font, 0, size - 64, { text: 'KryoSense', alignmentX: Jimp.HORIZONTAL_ALIGN_CENTER, alignmentY: Jimp.VERTICAL_ALIGN_MIDDLE }, size, 64);
+		} catch {}
+	}
+	const buf = await base.getBufferAsync('image/png');
+	ICON_CACHE[key] = buf;
+	return buf;
 }
-app.get(['/icons/icon-192.png','/icons/icon-512.png'], (req, res) => {
+app.get(['/icons/icon-192.png','/icons/icon-512.png'], async (req, res) => {
 	const size = req.path.endsWith('512.png') ? 512 : 192;
-	const buf = getIcon(size);
-	res.setHeader('Content-Type','image/png');
-	res.setHeader('Content-Length', String(buf.length));
-	res.setHeader('Cache-Control', process.env.NODE_ENV === 'production' ? 'public, max-age=604800, immutable' : 'no-cache');
-	res.end(buf);
+	try {
+		const buf = await generateIcon(size);
+		res.setHeader('Content-Type','image/png');
+		res.setHeader('Content-Length', String(buf.length));
+		res.setHeader('Cache-Control', process.env.NODE_ENV === 'production' ? 'public, max-age=604800, immutable' : 'no-cache');
+		return res.end(buf);
+	} catch (e) {
+		// fallback solid if jimp error
+		const fallback = buildPng(size, { r: 0x6d, g: 0x5e, b: 0xfc, a: 255 });
+		return res.end(fallback);
+	}
 });
 
 // theme from cookie
