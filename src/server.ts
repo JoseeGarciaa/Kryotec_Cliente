@@ -24,7 +24,7 @@ import { UsersModel } from './models/User';
 import { AlertsModel } from './models/Alerts';
 import fs from 'fs';
 import zlib from 'zlib';
-import Jimp from 'jimp';
+import sharp from 'sharp';
 
 dotenv.config();
 
@@ -73,7 +73,7 @@ app.get('/favicon.ico', (_req, res) => {
 	res.sendFile(path.join(staticDir, 'images', 'favicon.png'));
 });
 
-// --- Dynamic PNG icon generation using base image vect.png (fallback solid) ---
+// --- Dynamic PNG icon generation using base image (prefers EO_4PPKL_400x400.webp) ---
 function crc32(buf: Buffer): number {
 	let c = ~0; for (let i = 0; i < buf.length; i++) { c = (c >>> 8) ^ CRC_TABLE[(c ^ buf[i]) & 0xFF]; } return ~c >>> 0;
 }
@@ -105,30 +105,39 @@ function buildPng(size: number, color: {r:number;g:number;b:number;a:number}): B
 	return Buffer.concat([signature, ihdrChunk, idatChunk, iendChunk]);
 }
 const ICON_CACHE: Record<string, Buffer> = {};
+let ICON_LOG_DONE = false;
 async function generateIcon(size: number): Promise<Buffer> {
 	const key = String(size);
 	if (ICON_CACHE[key]) return ICON_CACHE[key];
-	const vectPath = path.join(staticDir, 'images', 'vect.png');
-		let base: any = null; // Jimp instance
-	try {
-		if (fs.existsSync(vectPath)) {
-			base = await Jimp.read(vectPath);
-		}
-	} catch {}
-	if (!base) {
-		// fallback solid color
+	const candidates = [
+		'vect.png', // now preferred
+		'EO_4PPKL_400x400.webp',
+		'logo_d6297621114f270d1502ecd0e1337992_1x.webp',
+		'favicon.png'
+	].map(f => path.join(staticDir, 'images', f));
+	let chosen: string | null = null;
+	for (const p of candidates) { if (fs.existsSync(p)) { chosen = p; break; } }
+	if (!ICON_LOG_DONE && chosen) { console.log('[PWA] icon source =', path.basename(chosen)); ICON_LOG_DONE = true; }
+	if (!chosen) {
 		return ICON_CACHE[key] = buildPng(size, { r: 0x6d, g: 0x5e, b: 0xfc, a: 255 });
 	}
-		// Create a square canvas with transparent background then composite vect centered (no text overlay)
-		const canvas = new Jimp(size, size, 0x00000000);
-		base.scaleToFit(size * 0.9, size * 0.9); // leave small padding
-		const x = (size - base.bitmap.width) / 2;
-		const y = (size - base.bitmap.height) / 2;
-		canvas.composite(base, x, y);
-		const finalImg = canvas;
-		const buf = await finalImg.getBufferAsync('image/png');
-	ICON_CACHE[key] = buf;
-	return buf;
+	try {
+		// Resize inside a square with padding (10%) and transparent background
+		const PADDING = 0.10;
+		const innerSize = Math.round(size * (1 - PADDING * 2));
+		const resized = await sharp(chosen)
+			.resize(innerSize, innerSize, { fit: 'contain', background: { r:0, g:0, b:0, alpha:0 } })
+			.png();
+		const rBuf = await resized.toBuffer();
+		// Create base transparent square and composite
+		const base = sharp({ create: { width: size, height: size, channels: 4, background: { r:0, g:0, b:0, alpha:0 } } });
+		const composite = await base.composite([{ input: rBuf, left: Math.round(size*PADDING), top: Math.round(size*PADDING) }]).png().toBuffer();
+		ICON_CACHE[key] = composite;
+		return composite;
+	} catch (e) {
+		console.warn('[PWA] sharp icon generation failed, fallback solid', e);
+		return ICON_CACHE[key] = buildPng(size, { r: 0x6d, g: 0x5e, b: 0xfc, a: 255 });
+	}
 }
 app.get(['/icons/icon-192.png','/icons/icon-512.png'], async (req, res) => {
 	const size = req.path.endsWith('512.png') ? 512 : 192;
@@ -136,10 +145,25 @@ app.get(['/icons/icon-192.png','/icons/icon-512.png'], async (req, res) => {
 		const buf = await generateIcon(size);
 		res.setHeader('Content-Type','image/png');
 		res.setHeader('Content-Length', String(buf.length));
-		res.setHeader('Cache-Control', process.env.NODE_ENV === 'production' ? 'public, max-age=604800, immutable' : 'no-cache');
+		res.setHeader('Cache-Control', 'no-cache');
 		return res.end(buf);
 	} catch (e) {
 		// fallback solid if jimp error
+		const fallback = buildPng(size, { r: 0x6d, g: 0x5e, b: 0xfc, a: 255 });
+		return res.end(fallback);
+	}
+});
+
+// New cache-busting endpoints for updated manifest
+app.get(['/icons/app-192.png','/icons/app-512.png'], async (req, res) => {
+	const size = req.path.endsWith('512.png') ? 512 : 192;
+	try {
+		const buf = await generateIcon(size);
+		res.setHeader('Content-Type','image/png');
+		res.setHeader('Content-Length', String(buf.length));
+		res.setHeader('Cache-Control', 'no-cache');
+		return res.end(buf);
+	} catch {
 		const fallback = buildPng(size, { r: 0x6d, g: 0x5e, b: 0xfc, a: 255 });
 		return res.end(fallback);
 	}
