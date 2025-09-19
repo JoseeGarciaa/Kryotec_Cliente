@@ -16,7 +16,8 @@ export const config: AppConfig = {
     port: Number(process.env.DB_PORT || 5432),
     user: process.env.DB_USER || 'kryosenseadmin',
     password: process.env.DB_PASSWORD || 'kryosense2025',
-    database: process.env.DB_NAME || 'kryosense_test',
+  // Main branch: use production schema 'kryosense' (DEV branch should keep 'kryosense_test')
+  database: process.env.DB_NAME || 'kryosense',
   },
   jwtSecret: process.env.JWT_SECRET || 'dev_secret_change_me',
   defaultTenant: process.env.DEFAULT_TENANT,
