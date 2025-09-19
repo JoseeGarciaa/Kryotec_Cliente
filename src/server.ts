@@ -155,16 +155,17 @@ app.get(['/icons/icon-192.png','/icons/icon-512.png'], async (req, res) => {
 });
 
 // New cache-busting endpoints for updated manifest
-app.get(['/icons/app-192.png','/icons/app-512.png'], async (req, res) => {
+app.get(['/icons/app-192.png','/icons/app-512.png','/icons/app-180.png'], async (req, res) => {
 	const size = req.path.endsWith('512.png') ? 512 : 192;
+	const finalSize = req.path.endsWith('180.png') ? 180 : size;
 	try {
-		const buf = await generateIcon(size);
+		const buf = await generateIcon(finalSize);
 		res.setHeader('Content-Type','image/png');
 		res.setHeader('Content-Length', String(buf.length));
 		res.setHeader('Cache-Control', 'no-cache');
 		return res.end(buf);
 	} catch {
-		const fallback = buildPng(size, { r: 0x6d, g: 0x5e, b: 0xfc, a: 255 });
+		const fallback = buildPng(finalSize, { r: 0x6d, g: 0x5e, b: 0xfc, a: 255 });
 		return res.end(fallback);
 	}
 });

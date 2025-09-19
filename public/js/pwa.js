@@ -54,4 +54,53 @@
     if (btn) btn.style.display='none';
     deferredPrompt = null;
   });
+
+  // iOS / macOS Safari fallback (no beforeinstallprompt)
+  function isIOS(){ return /iphone|ipad|ipod/i.test(navigator.userAgent); }
+  function isStandalone(){ return (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches) || (window.navigator.standalone === true); }
+  function isSafari(){
+    var ua = navigator.userAgent;
+    return /Safari/i.test(ua) && !/Chrome|CriOS|FxiOS|EdgiOS/i.test(ua);
+  }
+
+  function ensureIOSHelp(){
+    if (deferredPrompt) return; // native prompt available
+    if (!(isIOS() || isSafari()) || isStandalone()) return;
+    ensureButton();
+    if (!btn) return;
+    btn.textContent = 'Cómo instalar';
+    btn.style.display='inline-flex';
+    btn.onclick = function(){ showInstructions(); };
+  }
+
+  function showInstructions(){
+    var existing = document.getElementById('kryo-ios-help');
+    if (existing) { existing.remove(); }
+    var wrap = document.createElement('div');
+    wrap.id = 'kryo-ios-help';
+    wrap.style.position='fixed';wrap.style.inset='0';wrap.style.background='rgba(0,0,0,.55)';wrap.style.zIndex='1001';
+    wrap.innerHTML = '<div style="max-width:440px;margin:60px auto;background:#121826;padding:24px;border-radius:16px;font:14px system-ui;color:#fff;line-height:1.5;box-shadow:0 10px 30px -5px rgba(0,0,0,.6);">'
+      + '<div style="font-size:17px;font-weight:600;margin-bottom:10px;">Instalar KryoSense</div>'
+      + '<ol style="padding-left:18px;margin:0 0 14px;">'
+      + (isIOS() ? (
+          '<li>Abre en Safari (no en navegador interno).</li>'+
+          '<li>Toca el botón compartir (cuadro con flecha ↑).</li>'+
+          '<li>Selecciona "Agregar a pantalla de inicio".</li>'+
+          '<li>Confirma el nombre y pulsa Añadir.</li>'
+        ) : (
+          '<li>En Safari macOS abre el menú "Archivo".</li>'+
+          '<li>Elige "Agregar al Dock" (o "Add to Dock").</li>'+
+          '<li>Opcional: Ajusta el nombre y confirma.</li>'
+        ))
+      + '</ol>'
+      + '<div style="opacity:.7;font-size:12px;">Esta guía aparece porque tu navegador no expone el prompt de instalación estándar.</div>'
+      + '<div style="margin-top:16px;text-align:right"><button id="kryo-ios-help-close" style="background:#6d5efc;border:0;padding:8px 16px;color:#fff;border-radius:8px;cursor:pointer;font-weight:600;">Cerrar</button></div>'
+      + '</div>';
+    document.body.appendChild(wrap);
+    wrap.addEventListener('click', function(e){ if (e.target === wrap) wrap.remove(); });
+    document.getElementById('kryo-ios-help-close').addEventListener('click', function(){ wrap.remove(); });
+  }
+
+  // Delay to allow beforeinstallprompt (if any) else fallback
+  setTimeout(ensureIOSHelp, 2500);
 })();
