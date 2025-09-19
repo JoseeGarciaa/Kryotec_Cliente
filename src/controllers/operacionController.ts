@@ -2604,16 +2604,25 @@ export const OperacionController = {
     if(!codes.length) return res.status(400).json({ ok:false, error:'Sin RFIDs' });
   // Limpieza rápida de asignaciones obsoletas (items que ya no están en Ensamblaje/Ensamblado)
     await withTenant(tenant, async (c)=>{
-      // Limpieza: eliminar sólo asociaciones de items que YA NO pertenecen al flujo de Acondicionamiento.
-  // Antes sólo se consideraban ('Ensamblaje','Ensamblado'), ahora también conservamos 'Lista para Despacho' para no perder asociaciones
-      // se borraran los items de la caja y por cascada el timer. Ahora incluimos todas las fases válidas para conservar el timer.
+      // Limpieza (versión endurecida):
+      // Problema original: Al crear una nueva caja se borraban timers de cajas ya armadas porque algún item
+      // cambiaba momentáneamente de sub_estado y la condición estricta lo excluía, provocando DELETE y cascade.
+      // Nueva estrategia: Sólo borrar asociaciones cuyo RFID ya NO esté en ninguno de los estados del flujo
+      // Acondicionamiento u Operación. Es decir, mientras el item siga en cualquier fase conocida de estos
+      // macro-estados lo conservamos (sin mirar sub_estado, evitando ventanas de carrera con NULL / transición).
+      // Además, evitamos borrar items de una caja que tenga un timer activo o definido, como salvaguarda extra.
+      // Nota: Si en el futuro hay estados terminales adicionales, este DELETE seguirá siendo seguro porque
+      // requiere que el item abandone completamente ambos estados antes de eliminar la asociación.
       await c.query(`DELETE FROM acond_caja_items aci
                        WHERE NOT EXISTS (
                          SELECT 1 FROM inventario_credocubes ic
                           WHERE ic.rfid = aci.rfid
-                            AND ic.estado='Acondicionamiento'
-                            AND ic.sub_estado IN ('Ensamblaje','Ensamblado','Lista para Despacho')
-                       )`);
+                            AND ic.estado IN ('Acondicionamiento','Operación')
+                       )
+                         AND NOT EXISTS (
+                           SELECT 1 FROM acond_caja_timers t WHERE t.caja_id = aci.caja_id
+                         )`);
+      // Eliminar cajas huérfanas (sin items). No elimina timers activos porque arriba no se borran sus items.
       await c.query(`DELETE FROM acond_cajas c WHERE NOT EXISTS (SELECT 1 FROM acond_caja_items aci WHERE aci.caja_id=c.caja_id)`);
     });
     const rows = await withTenant(tenant, (c)=> c.query(
@@ -2683,14 +2692,16 @@ export const OperacionController = {
   if(maybeTicCount > 6){ return res.status(400).json({ ok:false, error:'No se permiten más de 6 TICs', message:'No se permiten más de 6 TICs' }); }
   // Re-validate using same logic (include Ensamblado retention)
     await withTenant(tenant, async (c)=>{
-      // Igual que en validate: mantener cajas que estén en cualquier sub_estado válido (incluyendo despacho)
+      // Limpieza conservadora (misma lógica que en validate). Ver comentarios allí.
       await c.query(`DELETE FROM acond_caja_items aci
                        WHERE NOT EXISTS (
                          SELECT 1 FROM inventario_credocubes ic
                           WHERE ic.rfid = aci.rfid
-                            AND ic.estado='Acondicionamiento'
-                            AND ic.sub_estado IN ('Ensamblaje','Ensamblado','Lista para Despacho')
-                       )`);
+                            AND ic.estado IN ('Acondicionamiento','Operación')
+                       )
+                         AND NOT EXISTS (
+                           SELECT 1 FROM acond_caja_timers t WHERE t.caja_id = aci.caja_id
+                         )`);
       await c.query(`DELETE FROM acond_cajas c WHERE NOT EXISTS (SELECT 1 FROM acond_caja_items aci WHERE aci.caja_id=c.caja_id)`);
     });
     const rows = await withTenant(tenant, (c) => c.query(
