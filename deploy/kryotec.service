@@ -1,0 +1,20 @@
+[Unit]
+Description=Kryotec Node App
+After=network.target
+
+[Service]
+Type=simple
+User=www-data
+WorkingDirectory=/var/www/kryotec
+Environment=NODE_ENV=production
+EnvironmentFile=/var/www/kryotec/.env
+ExecStart=/usr/bin/node dist/server.js
+Restart=on-failure
+RestartSec=5
+# Hardening (ajusta según necesidades)
+NoNewPrivileges=true
+PrivateTmp=true
+LimitNOFILE=65535
+
+[Install]
+WantedBy=multi-user.target

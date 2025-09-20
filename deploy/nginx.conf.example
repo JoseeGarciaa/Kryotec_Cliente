@@ -1,0 +1,28 @@
+server {
+    listen 80;
+    listen [::]:80;
+    server_name kryotecsense.com www.kryotecsense.com;
+
+    # Redirigir HTTP a HTTPS si ya tienes SSL
+    # return 301 https://$host$request_uri;
+
+    root /var/www/kryotec/public;
+    index index.html;
+
+    location /static/ {
+        alias /var/www/kryotec/public/;
+        access_log off;
+        expires 30d;
+    }
+
+    location / {
+        proxy_pass http://127.0.0.1:3000;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_cache_bypass $http_upgrade;
+    }
+}
