@@ -71,4 +71,20 @@ export const UsersModel = {
   async remove(client: PoolClient, id: number): Promise<void> {
     await client.query('DELETE FROM usuarios WHERE id = $1', [id]);
   },
+
+  /** Cuenta el total de usuarios cuyo rol es admin/administrador (case-insensitive) */
+  async countAdmins(client: PoolClient): Promise<number> {
+    const { rows } = await client.query<{ count: string }>(
+      `SELECT COUNT(*)::text AS count FROM usuarios WHERE LOWER(rol) IN ('admin','administrador')`
+    );
+    return parseInt(rows[0]?.count || '0', 10);
+  },
+
+  /** Cuenta administradores activos */
+  async countActiveAdmins(client: PoolClient): Promise<number> {
+    const { rows } = await client.query<{ count: string }>(
+      `SELECT COUNT(*)::text AS count FROM usuarios WHERE activo = true AND LOWER(rol) IN ('admin','administrador')`
+    );
+    return parseInt(rows[0]?.count || '0', 10);
+  },
 };
