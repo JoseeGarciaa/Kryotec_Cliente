@@ -55,7 +55,7 @@
                 </td>
                 <td class="text-xs"><%= u.telefono || '-' %></td>
                 <td>
-                  <% const roleMap = { 'Preacond': 'Acondicionador', 'Operacion': 'Operador', 'Bodega': 'Bodeguero', 'Inspeccion': 'Inspeccionador', 'Admin': 'Administrador' }; %>
+                  <% const roleMap = { 'Preacond': 'Acondicionador', 'Operacion': 'Operador', 'Bodega': 'Bodeguero', 'Inspeccion': 'Inspeccionador', 'Administrador': 'Admin', 'Admin': 'Admin' }; %>
                   <% const displayRole = roleMap[u.rol] || u.rol; %>
                   <span class="badge badge-outline <%= ['Admin','Administrador'].includes(u.rol)?'badge-primary':'' %>"><%= displayRole %></span>
                 </td>
@@ -73,7 +73,7 @@
         data-telefono="<%- u.telefono || '' %>" 
         data-rol="<%- u.rol %>" 
         data-activo="<%= u.activo ? 'true' : 'false' %>">✏️</button>
-      <button class="btn btn-ghost btn-xs text-error btn-del-user" data-id="<%= u.id %>">🗑️</button>
+  <button class="btn btn-ghost btn-xs text-error btn-del-user" title="Inhabilitar usuario" aria-label="Inhabilitar usuario" data-id="<%= u.id %>">🗑️</button>
                 </td>
               </tr>
             <% }) %>
@@ -97,7 +97,7 @@
         <option value="Operador">Operador</option>
         <option value="Bodeguero">Bodeguero</option>
         <option value="Inspeccionador">Inspeccionador</option>
-        <option value="Administrador">Administrador</option>
+  <option value="Admin">Admin</option>
       </select>
       <div class="modal-action">
         <button type="submit" class="btn btn-primary btn-sm">Guardar</button>
@@ -120,7 +120,7 @@
         <option value="Operador">Operador</option>
         <option value="Bodeguero">Bodeguero</option>
         <option value="Inspeccionador">Inspeccionador</option>
-        <option value="Administrador">Administrador</option>
+  <option value="Admin">Admin</option>
       </select>
       <select name="activo" class="select select-sm select-bordered w-full">
         <option value="true">Activo</option>

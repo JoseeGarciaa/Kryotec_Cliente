@@ -37,14 +37,22 @@
     });
   });
 
-  // Eliminar
+  // Inhabilitar en lugar de eliminar (soft-delete lógico)
   qsa('.btn-del-user').forEach(btn => {
     btn.addEventListener('click', async () => {
       const id = btn.dataset.id;
-      if(!confirm('¿Eliminar usuario?')) return;
+      if(!confirm('¿Inhabilitar este usuario?')) return;
       try {
-        const res = await fetch(`/administracion/${id}`, { method:'DELETE' });
+        const res = await fetch(`/administracion/${id}/estado`, { 
+          method:'POST', 
+          headers:{'Content-Type':'application/json'}, 
+          body: JSON.stringify({ activo: false }) 
+        });
         if(res.ok) location.reload();
+        else {
+          const data = await res.json().catch(()=>({}));
+          alert(data.error || 'No se pudo inhabilitar');
+        }
       } catch(e){ console.error(e); }
     });
   });

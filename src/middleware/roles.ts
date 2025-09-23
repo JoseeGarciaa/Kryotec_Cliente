@@ -2,15 +2,18 @@ import { Request, Response, NextFunction } from 'express';
 
 // Nuevos nombres visibles: Administrador, Acondicionador, Operador, Bodeguero, Inspeccionador
 // Aceptamos todavía valores legacy (Admin, Preacond, Operacion, Bodega, Inspeccion)
+// Canonizamos ahora 'Admin' como etiqueta principal para administradores.
 export const ALLOWED_ROLES = [
-  'Administrador', 'Acondicionador', 'Operador', 'Bodeguero', 'Inspeccionador',
-  // legacy (para validación y transición; se pueden remover luego)
-  'Admin', 'Preacond', 'Operacion', 'Bodega', 'Inspeccion'
+  'Admin', 'Acondicionador', 'Operador', 'Bodeguero', 'Inspeccionador',
+  // legacy / alias aceptados para transición
+  'Administrador', 'Preacond', 'Operacion', 'Bodega', 'Inspeccion'
 ];
 
 // Mapeo legacy -> nuevo
+// Mapeos a forma canónica (minúscula). Ambas variantes 'admin'/'administrador' -> 'admin'.
 const LEGACY_ALIAS: Record<string,string> = {
-  'admin': 'administrador',
+  'admin': 'admin',
+  'administrador': 'admin',
   'preacond': 'acondicionador',
   'operacion': 'operador',
   'bodega': 'bodeguero',
@@ -55,7 +58,7 @@ export function restrictByRole(req: Request, res: Response, next: NextFunction) 
   if (!user) return next();
   const raw = (user.rol || '').toLowerCase();
   const rolLower = LEGACY_ALIAS[raw] || raw; // normalizado a nuevo naming
-  if (rolLower === 'administrador') return next();
+  if (rolLower === 'admin') return next();
 
   const allowed = ROLE_ACCESS[rolLower];
   if (!allowed) return next(); // Rol no reconocido: dejar pasar (o se podría bloquear)
