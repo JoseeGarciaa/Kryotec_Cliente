@@ -2,11 +2,11 @@ import { Request, Response, NextFunction } from 'express';
 
 // Nuevos nombres visibles: Administrador, Acondicionador, Operador, Bodeguero, Inspeccionador
 // Aceptamos todavía valores legacy (Admin, Preacond, Operacion, Bodega, Inspeccion)
-// Canonizamos ahora 'Admin' como etiqueta principal para administradores.
+// Canonizamos ahora 'admin' (minúsculas) como etiqueta principal.
 export const ALLOWED_ROLES = [
-  'Admin', 'Acondicionador', 'Operador', 'Bodeguero', 'Inspeccionador',
+  'admin', 'Acondicionador', 'Operador', 'Bodeguero', 'Inspeccionador',
   // legacy / alias aceptados para transición
-  'Administrador', 'Preacond', 'Operacion', 'Bodega', 'Inspeccion'
+  'Admin', 'Administrador', 'Preacond', 'Operacion', 'Bodega', 'Inspeccion'
 ];
 
 // Mapeo legacy -> nuevo

@@ -31,7 +31,9 @@
       formEdit.nombre.value = ds.nombre || '';
       formEdit.correo.value = ds.correo || '';
       formEdit.telefono.value = ds.telefono || '';
-      formEdit.rol.value = ds.rol || 'User';
+  let rol = ds.rol || '';
+  if(['Admin','Administrador','admin'].includes(rol)) rol = 'admin';
+  formEdit.rol.value = rol || 'Acondicionador';
       formEdit.activo.value = ds.activo === 'false' ? 'false' : 'true';
       dlgEdit.showModal();
     });

@@ -34,7 +34,7 @@ export const AdminController = {
       const hashed = password ? await bcrypt.hash(password, 10) : await bcrypt.hash('Cambio123', 10);
       const rolFinal = (() => {
         let r = (rol || 'Acondicionador').trim();
-        if (r === 'Administrador') r = 'Admin';
+        if (['Administrador','Admin','admin'].includes(r)) r = 'admin';
         return ALLOWED_ROLES.includes(r) ? r : 'Acondicionador';
       })();
       await withTenant(tenant, (client) => UsersModel.create(client, { nombre: nombre.trim(), correo: correoNorm, telefono, password: hashed, rol: rolFinal, activo: true }));
@@ -75,13 +75,13 @@ export const AdminController = {
       const hashed = password ? await bcrypt.hash(password, 10) : null;
       const rolFinal = (() => {
         let r = (rol || 'Acondicionador').trim();
-        if (r === 'Administrador') r = 'Admin';
+        if (['Administrador','Admin','admin'].includes(r)) r = 'admin';
         return ALLOWED_ROLES.includes(r) ? r : 'Acondicionador';
       })();
       const nuevoActivo = activo === 'true' || activo === true;
 
       // Validar: no permitir que el último admin quede sin admin (desactivado o cambio de rol)
-  const isCurrentlyAdmin = ['admin'].includes((currentUser.rol || '').toLowerCase()) || (currentUser.rol || '').toLowerCase()==='administrador';
+  const isCurrentlyAdmin = ['admin','administrador'].includes((currentUser.rol || '').toLowerCase());
   const willBeAdmin = ['admin'].includes((rolFinal || '').toLowerCase());
       if (isCurrentlyAdmin && (!willBeAdmin || !nuevoActivo)) {
         const lastAdminCount = await withTenant(tenant, (client) => UsersModel.countActiveAdmins(client));
