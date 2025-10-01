@@ -21,10 +21,12 @@ export const OrdenesController = {
           cliente text,
           fecha_generacion timestamptz
         )`);
+        await c.query(`ALTER TABLE ordenes ADD COLUMN IF NOT EXISTS habilitada boolean NOT NULL DEFAULT true`);
       });
       const q = await withTenant(tenant, (c) => c.query(
         `SELECT id, numero_orden, codigo_producto, cantidad, ciudad_destino, ubicacion_destino, cliente, fecha_generacion
            FROM ordenes
+          WHERE COALESCE(habilitada, true)
           ORDER BY id DESC
           LIMIT 200`
       ));
@@ -57,10 +59,12 @@ export const OrdenesController = {
           cliente text,
           fecha_generacion timestamptz
         )`);
+        await c.query(`ALTER TABLE ordenes ADD COLUMN IF NOT EXISTS habilitada boolean NOT NULL DEFAULT true`);
       });
       const q = await withTenant(tenant, (c) => c.query(
         `SELECT id, numero_orden, codigo_producto, cantidad, ciudad_destino, ubicacion_destino, cliente, fecha_generacion
            FROM ordenes
+          WHERE COALESCE(habilitada, true)
           ORDER BY id DESC
           LIMIT 200`
       ));
@@ -109,6 +113,7 @@ export const OrdenesController = {
           cliente text,
           fecha_generacion timestamptz
         )`);
+        await c.query(`ALTER TABLE ordenes ADD COLUMN IF NOT EXISTS habilitada boolean NOT NULL DEFAULT true`);
         await c.query(
           `INSERT INTO ordenes (numero_orden, codigo_producto, cantidad, ciudad_destino, ubicacion_destino, cliente, fecha_generacion)
            VALUES ($1,$2,$3,$4,$5,$6, COALESCE($7, NOW()))`,
@@ -167,6 +172,7 @@ export const OrdenesController = {
           cliente text,
           fecha_generacion timestamptz
         )`);
+        await c.query(`ALTER TABLE ordenes ADD COLUMN IF NOT EXISTS habilitada boolean NOT NULL DEFAULT true`);
         await c.query(
           `UPDATE ordenes SET
              numero_orden = COALESCE($2, numero_orden),
@@ -211,6 +217,7 @@ export const OrdenesController = {
           cliente text,
           fecha_generacion timestamptz
         )`);
+        await c.query(`ALTER TABLE ordenes ADD COLUMN IF NOT EXISTS habilitada boolean NOT NULL DEFAULT true`);
         // If an order is linked to cajas, we should not violate FK: order_id in acond_cajas is ON DELETE SET NULL
         await c.query(`ALTER TABLE acond_cajas ADD COLUMN IF NOT EXISTS order_id integer`);
         await c.query(`DO $$
