@@ -70,6 +70,105 @@
     const rx=/[A-Z0-9]{24}/g; let m; while((m=rx.exec(s))){ const c=m[0]; if(!out.includes(c)) out.push(c); }
     return out;
   }
+
+  const atemperamientoCache = { map: new Map(), fetchedAt: 0, pending: null };
+  const ATEMP_CACHE_TTL_MS = 30000;
+
+  function resetAtemperamientoCache(){
+    atemperamientoCache.map = new Map();
+    atemperamientoCache.fetchedAt = 0;
+    atemperamientoCache.pending = null;
+  }
+
+  async function loadAtemperamientoMap(force){
+    if(!force){
+      if(atemperamientoCache.pending) return atemperamientoCache.pending;
+      if(atemperamientoCache.map.size && (Date.now() - atemperamientoCache.fetchedAt) < ATEMP_CACHE_TTL_MS){
+        return atemperamientoCache.map;
+      }
+    }
+    const fetchPromise = (async ()=>{
+      try {
+        const res = await fetch('/operacion/preacond/data', { headers:{ 'Accept':'application/json' } });
+        let data;
+        try { data = await res.json(); } catch(parseErr){
+          throw new Error('Respuesta no valida al consultar preacondicion');
+        }
+        if(!res.ok || data?.ok === false){
+          throw new Error((data && data.error) || 'Error consultando preacondicion');
+        }
+        const map = new Map();
+        if(Array.isArray(data?.atemperamiento)){
+          data.atemperamiento.forEach(item => {
+            const code = String(item?.rfid || '').toUpperCase();
+            if(code) map.set(code, item);
+          });
+        }
+        atemperamientoCache.map = map;
+        atemperamientoCache.fetchedAt = Date.now();
+        return map;
+      } finally {
+        atemperamientoCache.pending = null;
+      }
+    })();
+    atemperamientoCache.pending = fetchPromise;
+    return fetchPromise;
+  }
+
+  async function getAtemperamientoInfo(code){
+    if(!code) return null;
+    try {
+      const map = await loadAtemperamientoMap(false);
+      return map.get(String(code).toUpperCase()) || null;
+    } catch(err){
+      console.error('[Acond] No se pudo consultar Atemperamiento', err);
+      return null;
+    }
+  }
+
+  async function completeAtemperamientoTimer(code){
+    const res = await fetch('/operacion/preacond/item-timer/complete', {
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ section:'atemperamiento', rfid: code })
+    });
+    let json = null;
+    try { json = await res.json(); } catch { json = null; }
+    if(!res.ok || (json && json.ok === false)){
+      const msg = (json && json.error) || 'No se pudo completar el cronometro';
+      throw new Error(msg);
+    }
+    resetAtemperamientoCache();
+  }
+
+  async function maybeResolveAtemperamiento(code, opts){
+    const options = opts || {};
+    const info = await getAtemperamientoInfo(code);
+    if(!info) return true;
+    const sub = String(info.sub_estado||'').toLowerCase();
+    if(sub !== 'atemperamiento') return true;
+    const active = info.item_active === true || info.active === true;
+    const hasTimer = active || (!!info.started_at && Number(info.duration_sec || 0) > 0);
+    if(!hasTimer) return true;
+    const confirmMessage = typeof options.confirmMessage === 'function'
+      ? options.confirmMessage(code, info)
+      : `El TIC ${code} esta en Atemperamiento con cronometro activo. Deseas completarlo para usarlo en Acondicionamiento?`;
+    const confirmFn = typeof options.confirmFn === 'function' ? options.confirmFn : null;
+    const proceed = confirmFn ? await confirmFn(confirmMessage, code, info) : window.confirm(confirmMessage);
+    if(!proceed){
+      if(typeof options.onCancel === 'function') options.onCancel();
+      return false;
+    }
+    try {
+      await completeAtemperamientoTimer(code);
+      if(typeof options.onComplete === 'function') options.onComplete();
+      return true;
+    } catch(err){
+      if(typeof options.onError === 'function') options.onError(err);
+      else alert(err?.message || 'No se pudo completar el cronometro');
+      return false;
+    }
+  }
   function ensureTableWhenMulti(isMulti){
     if(isMulti && viewMode !== 'table'){
       viewMode = 'table';
@@ -723,12 +822,14 @@
     ul.innerHTML = scanBuffer.map(s=> `<li class=\"text-xs font-mono flex justify-between items-center\">${safeHTML(s.codigo)} <button class=\"btn btn-ghost btn-xs\" data-action=\"scan-remove\" data-codigo=\"${safeHTML(s.codigo)}\">✕</button></li>`).join('');
   }
 
-  function processScan(code){
+  async function processScan(code){
     if(!code) return;
-    code = code.trim();
-    if(!code) return;
-    if(scanBuffer.some(s=> s.codigo === code)) return; // ignore duplicates
-    scanBuffer.push({ codigo: code });
+    const clean = String(code).trim().toUpperCase();
+    if(!clean) return;
+    if(scanBuffer.some(s=> s.codigo === clean)) return; // ignore duplicates
+    const proceed = await maybeResolveAtemperamiento(clean);
+    if(!proceed) return;
+    scanBuffer.push({ codigo: clean });
     refreshScanList();
   }
 
@@ -894,7 +995,14 @@
     const form = qs(sel.scanForm);
     const input = qs(sel.scanInput);
     if(form && input){
-      form.addEventListener('submit', e => { e.preventDefault(); processScan(input.value); input.value=''; input.focus(); });
+      form.addEventListener('submit', async e => {
+        e.preventDefault();
+        const raw = (input.value || '').trim();
+        input.value = '';
+        if(!raw){ input.focus(); return; }
+        await processScan(raw);
+        input.focus();
+      });
     }
 
     // Buttons validar / crear
@@ -1037,7 +1145,7 @@
       // Orden select state
       if(linkOrderChk && orderSelect){ orderSelect.disabled = !linkOrderChk.checked; }
     }
-  function resetAll(){ ticSet.clear(); vipSet.clear(); cubeSet.clear(); scannedSet.clear(); renderLists(); updateStatus(); if(msg) msg.textContent=''; if(orderSelect){ orderSelect.innerHTML = `<option value="">Selecciona una orden…</option>`; } if(linkOrderChk){ linkOrderChk.checked=false; } }
+  function resetAll(){ ticSet.clear(); vipSet.clear(); cubeSet.clear(); scannedSet.clear(); scanProcessQueue = Promise.resolve(); renderLists(); updateStatus(); if(msg) msg.textContent=''; if(orderSelect){ orderSelect.innerHTML = `<option value=\"\">Selecciona una orden�</option>`; } if(linkOrderChk){ linkOrderChk.checked=false; } }
 
     async function loadOrdenes(){
       if(!orderSelect) return;
@@ -1090,23 +1198,74 @@
       } catch(e){ if(msg) msg.textContent = e.message||'Error'; }
     }
     function scheduleValidate(){ if(_validateTimer){ clearTimeout(_validateTimer); } _validateTimer = setTimeout(()=>{ _validateTimer=0; validateAll(); }, 120); }
-    function processBuffer(str){
+    let scanProcessQueue = Promise.resolve();
+
+    function extractScanTokens(str){
       let v = (str||'').replace(/\s+/g,'').toUpperCase();
-      while(v.length>=24){ const chunk=v.slice(0,24); if(chunk.length===24) scannedSet.add(chunk); v=v.slice(24); }
-      return v;
+      const tokens = [];
+      while(v.length>=24){
+        tokens.push(v.slice(0,24));
+        v = v.slice(24);
+      }
+      return { tokens, rest: v };
     }
+
+    function queueScannedTokens(tokens){
+      if(!tokens.length) return;
+      scanProcessQueue = scanProcessQueue.then(async ()=>{
+        let added = false;
+        for(const code of tokens){
+          if(scannedSet.has(code)) continue;
+          const proceed = await maybeResolveAtemperamiento(code, {
+            confirmMessage: (rfid)=> 'El TIC ' + rfid + ' esta en Atemperamiento con cronometro activo. Deseas completarlo para usarlo aqui?',
+            onError: err => { if(msg) msg.textContent = err?.message || 'No se pudo completar el cronometro'; }
+          });
+          if(!proceed) continue;
+          scannedSet.add(code);
+          added = true;
+        }
+        if(added){
+          renderLists();
+          updateStatus();
+          scheduleValidate();
+          if(msg) msg.textContent = '';
+        }
+      }).catch(err=>{
+        console.error('[Ensamblaje] error procesando escaneo', err);
+        if(msg) msg.textContent = err?.message || 'Error procesando escaneo';
+      });
+    }
+
     function handleScan(force){
       if(!scanInput) return;
-      let raw = (scanInput.value||'').toUpperCase();
-      if(!raw) return;
-      if(force && raw.length>0){ raw = processBuffer(raw); scanInput.value = raw; scheduleValidate(); return; }
-      const rest = processBuffer(raw);
+      const raw = (scanInput.value||'');
+      if(!raw.trim()){
+        if(force && msg){ msg.textContent = 'RFID incompleto'; }
+        return;
+      }
+      const { tokens, rest } = extractScanTokens(raw);
       scanInput.value = rest;
-      scheduleValidate();
+      if(force && !tokens.length && rest.length){
+        if(msg) msg.textContent = 'RFID incompleto';
+      }
+      if(tokens.length) queueScannedTokens(tokens);
     }
-    scanInput?.addEventListener('input', ()=>handleScan(false));
-    scanInput?.addEventListener('paste', (e)=>{ const t=e.clipboardData?.getData('text')||''; if(t){ e.preventDefault(); const rest=processBuffer(t); scanInput.value = rest; scheduleValidate(); } });
-    scanInput?.addEventListener('keydown', e=>{ if(e.key==='Enter'){ e.preventDefault(); handleScan(true); }});
+
+    scanInput?.addEventListener('input', ()=> handleScan(false));
+    scanInput?.addEventListener('paste', e=>{
+      const text = e.clipboardData?.getData('text') || '';
+      if(!text) return;
+      e.preventDefault();
+      const { tokens, rest } = extractScanTokens(text);
+      scanInput.value = rest;
+      if(tokens.length) queueScannedTokens(tokens);
+    });
+    scanInput?.addEventListener('keydown', e=>{
+      if(e.key==='Enter'){
+        e.preventDefault();
+        handleScan(true);
+      }
+    });
     horas?.addEventListener('input', updateStatus);
     minutos?.addEventListener('input', updateStatus);
     limpiarBtn?.addEventListener('click', ()=>{ resetAll(); scanInput?.focus(); });

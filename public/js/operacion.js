@@ -388,29 +388,50 @@
     addItemsWrap.innerHTML = addQueue.map(entry => {
       const isActive = entry.id === selectedCajaId;
       const orderLabel = entry.orderNum ? entry.orderNum : (entry.orderId ? `#${entry.orderId}` : '-');
+      const summaryCount = entry.roles?.length || 0;
       const itemsHtml = (entry.roles||[]).map(ro=>{
         const cls = badgeForRol(ro.rol);
         const label = String(ro.rol||'').toUpperCase();
         return `<div class='flex items-center justify-between gap-2 px-2 py-1 bg-base-200 rounded'><span class='badge ${cls} badge-xs font-semibold uppercase'>${label}</span><span class='font-mono text-[10px]'>${ro.rfid}</span></div>`;
       }).join('');
-      return `<div class='border rounded-lg p-3 bg-base-200/20 ${isActive ? 'border-primary' : 'border-base-300/60'} flex flex-col gap-2 cursor-pointer' data-select-caja='${entry.id}'>
-        <div class='flex items-center justify-between gap-2'>
-          <div class='text-xs font-semibold'>${entry.lote}</div>
-          <div class='flex items-center gap-2 text-[10px] uppercase'>
+      const chevron = isActive ? 'v' : '>';
+
+      const details = isActive ? `<div class='mt-2 grid gap-1'>${itemsHtml || "<span class='text-[10px] opacity-60'>Sin items</span>"}</div>` : '';
+      return `<div class='border rounded-lg bg-base-200/20 ${isActive ? 'border-primary' : 'border-base-300/60'} flex flex-col cursor-pointer transition-colors' data-select-caja='${entry.id}'>
+        <div class='flex items-center justify-between gap-3 px-3 py-2'>
+          <div class='flex items-center gap-2 text-xs font-semibold'>
+            <span class='text-[10px] opacity-70'>${chevron}</span>
+            <span>${entry.lote}</span>
+          </div>
+          <div class='flex items-center gap-3 text-[10px] uppercase opacity-70'>
             <span>Orden: ${orderLabel}</span>
-            <button type='button' class='btn btn-ghost btn-xs' data-remove-caja='${entry.id}'>✕</button>
+            <span>${summaryCount} items</span>
+            <button type='button' class='btn btn-ghost btn-xs' data-remove-caja='${entry.id}'>&times;</button>
           </div>
         </div>
-        <div class='grid gap-1'>${itemsHtml || "<span class='text-[10px] opacity-60'>Sin items</span>"}</div>
+        ${details}
       </div>`;
     }).join('');
   }
   async function lookupAdd(code){
-    if(!code) return; if(addMsg) addMsg.textContent='Buscando...';
+    if(!code) return false;
+    if(addMsg) addMsg.textContent='Buscando...';
     try {
-      const r= await fetch('/operacion/add/lookup',{ method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ code })});
-      const j = await r.json();
-      if(!j.ok){ if(addMsg) addMsg.textContent=j.error||'Error'; return; }
+      const res = await fetch('/operacion/add/lookup',{ method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ code })});
+      const ct = res.headers.get('content-type') || '';
+      if(!ct.includes('application/json')){
+        const raw = await res.text();
+        console.error('[Operacion] lookupAdd respuesta no JSON', { status: res.status, body: raw });
+        if(addMsg) addMsg.textContent = 'Respuesta inesperada (' + res.status + ')'; 
+        return false;
+      }
+      const j = await res.json();
+      if(!res.ok || j?.ok === false){
+        const message = j?.error || j?.message || ('Error (' + res.status + ')'); 
+        if(addMsg) addMsg.textContent = message;
+        console.error('[Operacion] lookupAdd error', { status: res.status, body: j });
+        return false;
+      }
       const entry = {
         id: j.caja_id,
         lote: j.lote,
@@ -426,9 +447,15 @@
         addQueue.push(entry);
       }
       setSelectedCaja(entry.id);
-    } catch(e){ if(addMsg) addMsg.textContent='Error'; }
+      return true;
+    } catch(e){
+      console.error('[Operacion] lookupAdd exception', e);
+      if(addMsg) addMsg.textContent = e?.message ? ('Error: ' + e.message) : 'Error';
+      return false;
+    }
   }
-  addScan?.addEventListener('input', ()=>{
+  }
+  addScan?.addEventListener('input', async ()=>{
     const raw = (addScan.value || '').toUpperCase();
     const tokens = parseRfids(raw);
     if(!tokens.length){
@@ -437,10 +464,10 @@
     const code = tokens[tokens.length-1];
     if(code === lastLookupCode) return;
     addScan.value = '';
-    lastLookupCode = code;
-    lookupAdd(code);
+    const success = await lookupAdd(code);
+    if(success) lastLookupCode = code;
   });
-  addScan?.addEventListener('keydown', e=>{ if(e.key==='Enter'){ e.preventDefault(); const raw=(addScan.value||'').toUpperCase(); const tokens=parseRfids(raw); if(tokens.length){ const code=tokens[tokens.length-1]; if(code === lastLookupCode) return; addScan.value=''; lastLookupCode=code; lookupAdd(code); } }});
+  addScan?.addEventListener('keydown', async e=>{ if(e.key==='Enter'){ e.preventDefault(); const raw=(addScan.value||'').toUpperCase(); const tokens=parseRfids(raw); if(tokens.length){ const code=tokens[tokens.length-1]; if(code === lastLookupCode) return; addScan.value=''; const success = await lookupAdd(code); if(success) lastLookupCode = code; } }});
   // Inputs de duración removidos
   addClear?.addEventListener('click', resetAdd);
   addConfirm?.addEventListener('click', async ()=>{
@@ -471,3 +498,21 @@
   // Init
   load(); startPolling();
 })();
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

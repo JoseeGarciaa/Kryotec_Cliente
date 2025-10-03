@@ -26,6 +26,7 @@
         // Lock body scroll when detail modal is open
         (function(){
           const modal = document.getElementById('modal-caja-detalle');
+          if(!modal) return;
           const html = document.documentElement; const body = document.body;
           const observer = new MutationObserver(()=>{
             const open = !modal.classList.contains('hidden');
@@ -256,3 +257,4 @@
     </div>
   </div>
 </div>
+
