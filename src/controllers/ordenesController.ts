@@ -9,6 +9,7 @@ export const OrdenesController = {
     const tenant = String(t).startsWith('tenant_') ? String(t) : `tenant_${t}`;
 
     // Ensure table exists per provided schema and then fetch recent orders
+    let stateFilter: 'all' | 'active' | 'inactive' = 'all';
     try {
       await withTenant(tenant, async (c) => {
         await c.query(`CREATE TABLE IF NOT EXISTS ordenes (
@@ -19,20 +20,33 @@ export const OrdenesController = {
           ciudad_destino text,
           ubicacion_destino text,
           cliente text,
-          fecha_generacion timestamptz
+          fecha_generacion timestamptz,
+          estado_orden boolean DEFAULT true
         )`);
-        await c.query(`ALTER TABLE ordenes ADD COLUMN IF NOT EXISTS habilitada boolean NOT NULL DEFAULT true`);
+        await c.query(`ALTER TABLE ordenes ADD COLUMN IF NOT EXISTS estado_orden boolean DEFAULT true`);
       });
-      const q = await withTenant(tenant, (c) => c.query(
-        `SELECT id, numero_orden, codigo_producto, cantidad, ciudad_destino, ubicacion_destino, cliente, fecha_generacion
-           FROM ordenes
-          WHERE COALESCE(habilitada, true)
-          ORDER BY id DESC
-          LIMIT 200`
-      ));
+      const rawState = (req.query.state || '').toString().toLowerCase();
+      let whereClause = '';
+      if(['activa','activas','active','true'].includes(rawState)) {
+        stateFilter = 'active';
+        whereClause = 'WHERE COALESCE(estado_orden, true) = true';
+      } else if(['inhabilitada','inhabilitadas','inactive','false','inhabilitado','inhabilitados'].includes(rawState)) {
+        stateFilter = 'inactive';
+        whereClause = 'WHERE estado_orden = false';
+      }
+      const whereSql = whereClause ? `${whereClause}
+` : '';
+      const queryText = `
+        SELECT id, numero_orden, codigo_producto, cantidad, ciudad_destino, ubicacion_destino, cliente, fecha_generacion, estado_orden
+          FROM ordenes
+        ${whereSql}ORDER BY id DESC
+         LIMIT 200
+      `;
+      const q = await withTenant(tenant, (c) => c.query(queryText));
       res.render('ordenes/index', {
         title: 'Órdenes',
         items: q.rows || [],
+        stateFilter,
       });
     } catch (e: any) {
       res.render('ordenes/index', {
@@ -57,14 +71,15 @@ export const OrdenesController = {
           ciudad_destino text,
           ubicacion_destino text,
           cliente text,
-          fecha_generacion timestamptz
+          fecha_generacion timestamptz,
+          estado_orden boolean DEFAULT true
         )`);
-        await c.query(`ALTER TABLE ordenes ADD COLUMN IF NOT EXISTS habilitada boolean NOT NULL DEFAULT true`);
+        await c.query(`ALTER TABLE ordenes ADD COLUMN IF NOT EXISTS estado_orden boolean DEFAULT true`);
       });
       const q = await withTenant(tenant, (c) => c.query(
         `SELECT id, numero_orden, codigo_producto, cantidad, ciudad_destino, ubicacion_destino, cliente, fecha_generacion
            FROM ordenes
-          WHERE COALESCE(habilitada, true)
+          WHERE COALESCE(estado_orden, true)
           ORDER BY id DESC
           LIMIT 200`
       ));
@@ -111,12 +126,13 @@ export const OrdenesController = {
           ciudad_destino text,
           ubicacion_destino text,
           cliente text,
-          fecha_generacion timestamptz
+          fecha_generacion timestamptz,
+          estado_orden boolean DEFAULT true
         )`);
-        await c.query(`ALTER TABLE ordenes ADD COLUMN IF NOT EXISTS habilitada boolean NOT NULL DEFAULT true`);
+        await c.query(`ALTER TABLE ordenes ADD COLUMN IF NOT EXISTS estado_orden boolean DEFAULT true`);
         await c.query(
-          `INSERT INTO ordenes (numero_orden, codigo_producto, cantidad, ciudad_destino, ubicacion_destino, cliente, fecha_generacion)
-           VALUES ($1,$2,$3,$4,$5,$6, COALESCE($7, NOW()))`,
+          `INSERT INTO ordenes (numero_orden, codigo_producto, cantidad, ciudad_destino, ubicacion_destino, cliente, fecha_generacion, estado_orden)
+           VALUES ($1,$2,$3,$4,$5,$6, COALESCE($7, NOW()), true)`,
           [num, cod, cant, cdd, ubc, cli, fgen && !isNaN(fgen.getTime()) ? fgen.toISOString() : null]
         );
       });
@@ -170,9 +186,10 @@ export const OrdenesController = {
           ciudad_destino text,
           ubicacion_destino text,
           cliente text,
-          fecha_generacion timestamptz
+          fecha_generacion timestamptz,
+          estado_orden boolean DEFAULT true
         )`);
-        await c.query(`ALTER TABLE ordenes ADD COLUMN IF NOT EXISTS habilitada boolean NOT NULL DEFAULT true`);
+        await c.query(`ALTER TABLE ordenes ADD COLUMN IF NOT EXISTS estado_orden boolean DEFAULT true`);
         await c.query(
           `UPDATE ordenes SET
              numero_orden = COALESCE($2, numero_orden),
@@ -215,9 +232,10 @@ export const OrdenesController = {
           ciudad_destino text,
           ubicacion_destino text,
           cliente text,
-          fecha_generacion timestamptz
+          fecha_generacion timestamptz,
+          estado_orden boolean DEFAULT true
         )`);
-        await c.query(`ALTER TABLE ordenes ADD COLUMN IF NOT EXISTS habilitada boolean NOT NULL DEFAULT true`);
+        await c.query(`ALTER TABLE ordenes ADD COLUMN IF NOT EXISTS estado_orden boolean DEFAULT true`);
         // If an order is linked to cajas, we should not violate FK: order_id in acond_cajas is ON DELETE SET NULL
         await c.query(`ALTER TABLE acond_cajas ADD COLUMN IF NOT EXISTS order_id integer`);
         await c.query(`DO $$
@@ -249,3 +267,4 @@ export const OrdenesController = {
     }
   }
 };
+

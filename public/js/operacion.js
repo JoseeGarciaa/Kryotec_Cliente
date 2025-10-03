@@ -30,15 +30,18 @@
   let polling=null; let ticking=null; let serverOffset=0;
   // Focus de caja al escanear un RFID (igual patrón que acond.js)
   let focusCajaId = null; // number | null
+  let filterLastScanRfid = ''; // last scanned code for focus
+  let addQueue = [];
+  let selectedCajaId = null;
 
   // Parse RFIDs de 24 chars consecutivos (permite bursts del lector)
   function parseRfids(raw){
-    const s = String(raw||'').toUpperCase().replace(/\s+/g,'');
+    const original = String(raw||'').toUpperCase();
+    const s = original.replace(/\s+/g,'');
     const out = [];
-    // chunks exactos cada 24
     for(let i=0;i+24<=s.length;i+=24){ out.push(s.slice(i,i+24)); }
-    // regex rescatando overlap / mezclados
     const rx=/[A-Z0-9]{24}/g; let m; while((m=rx.exec(s))){ const c=m[0]; if(!out.includes(c)) out.push(c); }
+    const cajaRx=/CAJA-[0-9]{8}-[A-Z0-9]{4,8}/g; let mc; while((mc=cajaRx.exec(original))){ const code=mc[0]; if(!out.includes(code)) out.push(code); }
     return out;
   }
 
@@ -133,13 +136,18 @@
   function render(){
     if(!tbody) return;
     const raw = (filterInput?.value||'');
-    const firstRfid = parseRfids(raw)[0] || '';
+    const tokens = parseRfids(raw);
+    const activeCode = tokens[0] || filterLastScanRfid || '';
     const f = raw.trim().toLowerCase();
     const activos = dataCajas.filter(c=> c.estado!=='Completado');
 
-    // Determinar focusCajaId si el primer token es un RFID válido
-    if(firstRfid){
-      const hit = activos.find(c=> (c.componentes||[]).some(it=> String(it.codigo||'').toUpperCase() === firstRfid));
+    // Determinar focusCajaId si el token escaneado corresponde a un RFID o codigo de caja
+    if(activeCode){
+      const target = activeCode.toUpperCase();
+      const hit = activos.find(c=> {
+        if(String(c.codigoCaja||'').toUpperCase() === target) return true;
+        return (c.componentes||[]).some(it=> String(it.codigo||'').toUpperCase() === target);
+      });
       focusCajaId = hit ? hit.id : null;
     } else {
       focusCajaId = null;
@@ -277,7 +285,54 @@
   function startPolling(){ if(polling) clearInterval(polling); polling = setInterval(load, 10000); }
 
   // Events
-  filterInput?.addEventListener('input', render);
+  const handleFilterInput = ()=>{
+    if(!filterInput) return;
+    const raw = filterInput.value || '';
+    const tokens = parseRfids(raw);
+    if(tokens.length){
+      filterLastScanRfid = tokens[tokens.length-1].toUpperCase();
+      filterInput.value = '';
+    } else {
+      filterLastScanRfid = '';
+    }
+    render();
+  };
+  if(filterInput){
+    filterInput.addEventListener('input', handleFilterInput);
+    filterInput.addEventListener('keydown', (ev)=>{
+      const key = ev.key || ev.code;
+      if(key === 'Enter' || key === 'NumpadEnter'){
+        ev.preventDefault();
+        handleFilterInput();
+      } else if(key === 'Escape'){
+        filterLastScanRfid = '';
+        focusCajaId = null;
+        filterInput.value = '';
+        render();
+      }
+    });
+  }
+
+  addItemsWrap?.addEventListener('click', (ev)=>{
+    const removeBtn = ev.target.closest('[data-remove-caja]');
+    if(removeBtn){
+      ev.preventDefault();
+      ev.stopPropagation();
+      const id = Number(removeBtn.getAttribute('data-remove-caja')) || 0;
+      if(id){
+        addQueue = addQueue.filter(q=> q.id !== id);
+        const nextId = selectedCajaId === id ? (addQueue[addQueue.length-1]?.id || null) : selectedCajaId;
+        setSelectedCaja(nextId);
+      }
+      return;
+    }
+    const card = ev.target.closest('[data-select-caja]');
+    if(card){
+      const id = Number(card.getAttribute('data-select-caja')) || 0;
+      if(id){ setSelectedCaja(id); }
+    }
+  });
+
   // Vista tarjetas/lista
   function activateCards(){ if(!gridWrapper||!tableWrapper) return; gridWrapper.classList.remove('hidden'); tableWrapper.classList.add('hidden'); btnViewCards?.classList.add('btn-active'); btnViewList?.classList.remove('btn-active'); }
   function activateList(){ if(!gridWrapper||!tableWrapper) return; tableWrapper.classList.remove('hidden'); gridWrapper.classList.add('hidden'); btnViewList?.classList.add('btn-active'); btnViewCards?.classList.remove('btn-active'); }
@@ -288,75 +343,104 @@
   function openAddModal(){ try { modal.showModal(); } catch{ modal.classList.remove('hidden'); } resetAdd(); setTimeout(()=> addScan?.focus(), 40); }
   btnAdd?.addEventListener('click', openAddModal);
   function resetAdd(){
-  addCajaId=null; addElegibles=[]; addRoles=[]; addFirstScan=null; addScanLocked=false; lastLookupCode=null;
-  if(addScan){ addScan.value=''; addScan.readOnly=false; } // readOnly ya no se usa, pero aseguramos editable
+    addQueue = [];
+    selectedCajaId = null;
+    addCajaId = null;
+    addElegibles = [];
+    addRoles = [];
+    addFirstScan = null;
+    addScanLocked = false;
+    lastLookupCode = null;
+    if(addScan){ addScan.value=''; addScan.readOnly=false; }
     if(addItemsWrap) addItemsWrap.innerHTML='';
     if(addSummary) addSummary.classList.add('hidden');
     if(addMsg) addMsg.textContent='';
     if(addConfirm) addConfirm.disabled=true;
   }
   function updateCounts(){
-    // Ahora solo habilita el botón si hay caja detectada (roles > 0)
-    addConfirm.disabled = !(addCajaId && addRoles.length>0);
+    const entry = selectedCajaId ? addQueue.find(q=> q.id === selectedCajaId) : null;
+    addConfirm.disabled = !(entry && entry.roles.length>0);
+  }
+  function setSelectedCaja(id){
+    selectedCajaId = id || null;
+    const entry = selectedCajaId ? addQueue.find(q=> q.id === selectedCajaId) : null;
+    if(entry){
+      addCajaId = entry.id;
+      addRoles = entry.roles.slice();
+      if(addMsg){ addMsg.textContent = `Cajas escaneadas: ${addQueue.length}. Seleccionada ${entry.lote}`; }
+    } else {
+      addCajaId = null;
+      addRoles = [];
+      if(addMsg){ addMsg.textContent = addQueue.length ? `Cajas escaneadas: ${addQueue.length}` : ''; }
+    }
+    renderQueue();
+    updateCounts();
+  }
+  function renderQueue(){
+    if(!addItemsWrap) return;
+    if(!addQueue.length){
+      addItemsWrap.innerHTML='';
+      if(addSummary) addSummary.classList.add('hidden');
+      return;
+    }
+    if(addSummary) addSummary.classList.remove('hidden');
+    addItemsWrap.className = 'flex flex-col gap-2 max-h-48 overflow-auto';
+    addItemsWrap.innerHTML = addQueue.map(entry => {
+      const isActive = entry.id === selectedCajaId;
+      const orderLabel = entry.orderNum ? entry.orderNum : (entry.orderId ? `#${entry.orderId}` : '-');
+      const itemsHtml = (entry.roles||[]).map(ro=>{
+        const cls = badgeForRol(ro.rol);
+        const label = String(ro.rol||'').toUpperCase();
+        return `<div class='flex items-center justify-between gap-2 px-2 py-1 bg-base-200 rounded'><span class='badge ${cls} badge-xs font-semibold uppercase'>${label}</span><span class='font-mono text-[10px]'>${ro.rfid}</span></div>`;
+      }).join('');
+      return `<div class='border rounded-lg p-3 bg-base-200/20 ${isActive ? 'border-primary' : 'border-base-300/60'} flex flex-col gap-2 cursor-pointer' data-select-caja='${entry.id}'>
+        <div class='flex items-center justify-between gap-2'>
+          <div class='text-xs font-semibold'>${entry.lote}</div>
+          <div class='flex items-center gap-2 text-[10px] uppercase'>
+            <span>Orden: ${orderLabel}</span>
+            <button type='button' class='btn btn-ghost btn-xs' data-remove-caja='${entry.id}'>✕</button>
+          </div>
+        </div>
+        <div class='grid gap-1'>${itemsHtml || "<span class='text-[10px] opacity-60'>Sin items</span>"}</div>
+      </div>`;
+    }).join('');
   }
   async function lookupAdd(code){
     if(!code) return; if(addMsg) addMsg.textContent='Buscando...';
     try {
-  const r= await fetch('/operacion/add/lookup',{ method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ code })});
+      const r= await fetch('/operacion/add/lookup',{ method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ code })});
       const j = await r.json();
-      if(!j.ok){ if(addMsg) addMsg.textContent=j.error||'Error'; addCajaId=null; return; }
-      addCajaId = j.caja_id;
-      // Backend ya filtra solo sub_estado 'Lista para Despacho'
-      addRoles = Array.isArray(j.roles)? j.roles.slice(): [];
-      if(addSummary) addSummary.classList.remove('hidden');
-      if(addItemsWrap){
-        // Usar nuevo diseño: fila con badge de rol (color) y RFID monoespaciado
-        addItemsWrap.className = 'grid grid-cols-2 gap-1 max-h-40 overflow-auto';
-        const badgeForRol = (rol)=>{
-          rol = String(rol||'').toLowerCase();
-          if(rol==='vip') return 'badge-info';
-          if(rol==='cube') return 'badge-accent';
-          return 'badge-warning'; // tic por defecto
-        };
-        addItemsWrap.innerHTML = addRoles.map(ro=>{
-          const cls = badgeForRol(ro.rol);
-          const label = String(ro.rol||'').toUpperCase();
-          return `<span class='flex items-center justify-between gap-2 px-2 py-1 bg-base-200 rounded' data-rfid='${ro.rfid}' data-rol='${ro.rol}'>
-            <span class='badge ${cls} badge-xs font-semibold uppercase'>${label}</span>
-            <span class='font-mono text-[10px]'>${ro.rfid}</span>
-          </span>`;
-        }).join('');
+      if(!j.ok){ if(addMsg) addMsg.textContent=j.error||'Error'; return; }
+      const entry = {
+        id: j.caja_id,
+        lote: j.lote,
+        orderId: j.order_id ?? null,
+        orderNum: j.order_num ?? null,
+        roles: Array.isArray(j.roles)? j.roles.slice(): [],
+        timer: j.timer || null
+      };
+      const existingIndex = addQueue.findIndex(q=> q.id === entry.id);
+      if(existingIndex >= 0){
+        addQueue[existingIndex] = entry;
+      } else {
+        addQueue.push(entry);
       }
-      if(addSummary){
-        const ordenTxt = j.order_num ? String(j.order_num) : (j.order_id ? `#${j.order_id}` : '—');
-        // Insertar/actualizar bloque de info general sobre la caja (incluye orden)
-        const infoId = 'op-add-info';
-        let infoEl = document.getElementById(infoId);
-        const html = `<div id="${infoId}" class="text-xs opacity-80 mt-2">Orden: <span class="font-mono">${ordenTxt}</span></div>`;
-        if(infoEl){ infoEl.outerHTML = html; }
-        else { addSummary.insertAdjacentHTML('afterbegin', html); }
-      }
-      if(addMsg){
-        const chrono = (j.timer && j.timer.endsAt) ? ' · cronómetro activo' : '';
-        addMsg.textContent = `Caja ${j.lote} detectada · ${addRoles.length} items${chrono}`;
-      }
-  updateCounts();
+      setSelectedCaja(entry.id);
     } catch(e){ if(addMsg) addMsg.textContent='Error'; }
   }
-  addScan?.addEventListener('input', ()=>{ 
-    if(addScan.value.length>24){ addScan.value = addScan.value.slice(0,24); }
-    const v = addScan.value.trim();
-    // Si el usuario borra (menos de 24) reiniciamos estado (pero no borramos el texto que tenga)
-    if(v.length<24 && addCajaId){
-      addCajaId=null; addRoles=[]; if(addItemsWrap) addItemsWrap.innerHTML=''; if(addSummary) addSummary.classList.add('hidden'); if(addMsg) addMsg.textContent=''; updateCounts();
+  addScan?.addEventListener('input', ()=>{
+    const raw = (addScan.value || '').toUpperCase();
+    const tokens = parseRfids(raw);
+    if(!tokens.length){
+      return;
     }
-    if((v.length===24 || /^CAJA\d+-\d{8}$/i.test(v))){
-      if(v===lastLookupCode) return; // evita spam
-      lastLookupCode = v;
-      lookupAdd(v);
-    }
+    const code = tokens[tokens.length-1];
+    if(code === lastLookupCode) return;
+    addScan.value = '';
+    lastLookupCode = code;
+    lookupAdd(code);
   });
-  addScan?.addEventListener('keydown', e=>{ if(e.key==='Enter'){ e.preventDefault(); const v=addScan.value.trim(); if(v) lookupAdd(v); }});
+  addScan?.addEventListener('keydown', e=>{ if(e.key==='Enter'){ e.preventDefault(); const raw=(addScan.value||'').toUpperCase(); const tokens=parseRfids(raw); if(tokens.length){ const code=tokens[tokens.length-1]; if(code === lastLookupCode) return; addScan.value=''; lastLookupCode=code; lookupAdd(code); } }});
   // Inputs de duración removidos
   addClear?.addEventListener('click', resetAdd);
   addConfirm?.addEventListener('click', async ()=>{
@@ -368,8 +452,11 @@
       const j= await r.json();
       if(!j.ok){ if(addMsg) addMsg.textContent=j.error||'Error'; addConfirm.disabled=false; return; }
       if(addMsg) addMsg.textContent='Caja movida';
+      addQueue = addQueue.filter(q=> q.id !== selectedCajaId);
+      const nextId = addQueue[0]?.id || null;
+      setSelectedCaja(nextId);
+      if(!addQueue.length){ setTimeout(()=>{ try { modal.close(); } catch{} }, 600); }
       await load();
-      setTimeout(()=>{ try { modal.close(); } catch{} }, 600);
     } catch(e){ if(addMsg) addMsg.textContent='Error moviendo'; addConfirm.disabled=false; }
   });
   modal?.addEventListener('close', resetAdd);

@@ -1,4 +1,5 @@
 <% title = title || 'Órdenes' %>
+<% const currentStateFilter = (typeof stateFilter === 'string' ? stateFilter : 'all'); %>
 
 <div class="flex items-center justify-between mb-2">
   <div>
@@ -16,6 +17,15 @@
 <!-- Tabla de órdenes -->
 <div class="card bg-base-200 shadow">
   <div class="card-body">
+    <div class="flex items-center gap-2 text-xs mb-3">
+      <span class="uppercase tracking-wide opacity-60">Estado:</span>
+      <div class="join">
+        <a class="btn btn-xs join-item <%= currentStateFilter==='all' ? 'btn-primary' : 'btn-ghost' %>" href="/ordenes">Todas</a>
+        <a class="btn btn-xs join-item <%= currentStateFilter==='active' ? 'btn-primary' : 'btn-ghost' %>" href="/ordenes?state=activa">Activas</a>
+        <a class="btn btn-xs join-item <%= currentStateFilter==='inactive' ? 'btn-primary' : 'btn-ghost' %>" href="/ordenes?state=inhabilitada">Inhabilitadas</a>
+      </div>
+    </div>
+
     <div class="overflow-x-auto">
       <table class="table table-zebra">
         <thead>
@@ -26,6 +36,7 @@
             <th>Ciudad destino</th>
             <th>Ubicación destino</th>
             <th>Cliente</th>
+            <th>Estado</th>
             <th>Fecha generación</th>
             <th class="text-right">Acciones</th>
           </tr>
@@ -33,7 +44,15 @@
         <tbody>
           <% if ((items||[]).length === 0) { %>
             <tr>
-              <td colspan="7" class="text-center opacity-60">No hay órdenes por ahora.</td>
+              <td colspan="8" class="text-center opacity-60">
+                <% if (currentStateFilter === 'inactive') { %>
+                  No hay órdenes inhabilitadas.
+                <% } else if (currentStateFilter === 'active') { %>
+                  No hay órdenes activas.
+                <% } else { %>
+                  No hay órdenes por ahora.
+                <% } %>
+              </td>
             </tr>
           <% } else { %>
             <% items.forEach(o => { %>
@@ -44,6 +63,12 @@
                 <td><%= o.ciudad_destino || '-' %></td>
                 <td><%= o.ubicacion_destino || '-' %></td>
                 <td><%= o.cliente || '-' %></td>
+                <td>
+                  <% const estadoActivo = o.estado_orden !== false; %>
+                  <span class="badge badge-sm <%= estadoActivo ? 'badge-primary badge-outline' : 'badge-error badge-outline' %>">
+                    <%= estadoActivo ? 'Activa' : 'Inhabilitada' %>
+                  </span>
+                </td>
                 <td><%= o.fecha_generacion ? new Date(o.fecha_generacion).toLocaleString() : '-' %></td>
                 <td class="text-right">
                   <div class="join join-horizontal justify-end">

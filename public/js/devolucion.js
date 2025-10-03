@@ -68,7 +68,7 @@
     }
     const progress = Math.min(100, Math.max(0, pct));
     // Formato de orden: si se conoce expected (>0) mostrar a/b, si no solo a
-    const ordenStrBase = (caja.orderNumero ? caja.orderNumero : (caja.orderId ? ('#'+caja.orderId) : '—'));
+    const ordenStrBase = (caja.orderNumero ? caja.orderNumero : (caja.orderId ? ('#'+caja.orderId) : '-'));
     let ordenStr = ordenStrBase;
     const haveCount = (caja.orderCajaCount!=null && caja.orderCajaCount>=0);
     const haveExpected = (caja.orderCajaExpected!=null && caja.orderCajaExpected>0);
@@ -119,9 +119,9 @@
     try { spin?.classList.remove('hidden');
       const r = await fetch('/operacion/devolucion/data');
       const j = await r.json();
-  if(j.ok){ data = j; if(j.serverNow){ serverOffset = new Date(j.serverNow).getTime() - Date.now(); } }
-      else { data = { cajas:[], serverNow:null }; }
-      render(); ensureTick();
+  if(j.ok){ data = j; if(j.serverNow){ serverOffset = new Date(j.serverNow).getTime() - Date.now(); } syncScannedFromData(j); }
+      else { data = { cajas:[], serverNow:null }; syncScannedFromData({ cajas: [] }); }
+      render(); renderScannedList(); ensureTick();
     } catch(e){ console.error('[Devolución] load error', e); }
     finally { spin?.classList.add('hidden'); }
   }
@@ -135,88 +135,253 @@
 
   document.addEventListener('click', e=>{
     const target = e.target instanceof HTMLElement ? e.target : null;
-    const btn = target ? target.closest('[data-process-caja]') : null;
-    if(btn){ const id = btn.getAttribute('data-process-caja'); if(id){ processCaja(id); } }
-    const card = target ? target.closest('.caja-card') : null;
+    if(!target) return;
+    const removeBtn = target.closest('[data-scan-remove]');
+    if(removeBtn){ const id = removeBtn.getAttribute('data-scan-remove'); if(id){ removeScanned(id); } return; }
+    const scanProcessBtn = target.closest('[data-scan-process]');
+    if(scanProcessBtn){ const id = scanProcessBtn.getAttribute('data-scan-process'); if(id){ processCaja(id); } return; }
+    const btn = target.closest('[data-process-caja]');
+    if(btn){ const id = btn.getAttribute('data-process-caja'); if(id){ processCaja(id); } return; }
+    const card = target.closest('.caja-card');
     if(card && card.getAttribute('data-caja-id')){ openModal(card.getAttribute('data-caja-id')); }
   });
 
   // ---- Scan / Identificar Caja ----
+  const multiWrap = qs('#dev-multi');
+  const multiList = qs('#dev-multi-list');
+  const multiCount = qs('#dev-multi-count');
+  const multiClear = qs('#dev-multi-clear');
+
+  const scannedCajas = new Map();
+  const scannedCodes = new Set();
+  const scanningCodes = new Set();
+  const lookupQueue = [];
+  let lookupBusy = false;
+  let scanBuffer = '';
+
   function inferTipo(nombre){ const n=(nombre||'').toLowerCase(); if(n.includes('vip')) return 'vip'; if(n.includes('tic')) return 'tic'; if(n.includes('cube')||n.includes('cubo')) return 'cube'; return 'otro'; }
   function miniCardHTML(c){
-    const ordenStr = (c.orderNumero ? c.orderNumero : (c.orderId ? ('#'+c.orderId) : (c.order_num ? c.order_num : (c.order_id ? ('#'+c.order_id) : '—'))));
+    const ordenStr = (c.orderNumero ? c.orderNumero : (c.orderId ? ('#'+c.orderId) : (c.order_num ? c.order_num : (c.order_id ? ('#'+c.order_id) : '-'))));
     return `<div class='text-xs'>
       <div class='flex items-center justify-between text-[10px] uppercase opacity-60 mb-1'><span>Caja</span><span class='font-mono'>${c.codigoCaja||''}</span></div>
       <div class='font-semibold text-[11px] break-all mb-2'>${c.codigoCaja||''}</div>
       <div class='text-[10px] opacity-70 mb-1'>Orden: <span class='font-mono'>${ordenStr}</span></div>
       <div class='flex flex-wrap gap-1 mb-2'>${(c.componentes||[]).map(it=>{ let cls='badge-ghost'; if(it.tipo==='vip') cls='badge-info'; else if(it.tipo==='tic') cls='badge-warning'; else if(it.tipo==='cube') cls='badge-accent'; return `<span class='badge ${cls} badge-xs'>${(it.tipo||'').toUpperCase()}</span>`; }).join('') || "<span class='badge badge-ghost badge-xs'>Sin items</span>"}</div>
-  <div class='text-[10px] font-mono opacity-70'>${c.timer? (c.timer.completedAt? 'Listo' : 'Cronómetro activo') : 'Sin cronómetro'}</div>
-  <div class='mt-2'><button class='btn btn-xs btn-primary btn-outline w-full' data-process-caja='${c.id}'>➜ Procesar devolución</button></div>
+      <div class='text-[10px] font-mono opacity-70'>${c.timer? (c.timer.completedAt? 'Listo' : 'Cronómetro activo') : 'Sin cronómetro'}</div>
+      <div class='mt-2'><button class='btn btn-xs btn-primary btn-outline w-full' data-process-caja='${c.id}'>➜ Procesar devolución</button></div>
     </div>`;
   }
+
+  function componentesBadges(lista){
+    if(!Array.isArray(lista) || !lista.length){ return "<span class='badge badge-ghost badge-xs'>Sin items</span>"; }
+    return lista.map(it=>{
+      const tipo = (it.tipo||'').toLowerCase();
+      let cls = 'badge-ghost';
+      if(tipo === 'vip') cls = 'badge-info';
+      else if(tipo === 'tic') cls = 'badge-warning';
+      else if(tipo === 'cube') cls = 'badge-accent';
+      return `<span class='badge ${cls} badge-xs'>${(tipo||'').toUpperCase()}</span>`;
+    }).join('');
+  }
+
+  function syncScannedFromData(payload){
+    const latest = new Map((payload.cajas||[]).map(c=> [String(c.id), c]));
+    const toRemove = [];
+    scannedCajas.forEach((entry, key)=>{
+      const next = latest.get(key);
+      if(!next){
+        toRemove.push(key);
+        return;
+      }
+      scannedCajas.set(key, {
+        ...entry,
+        codigoCaja: next.codigoCaja || next.caja || entry.codigoCaja,
+        orderId: next.orderId ?? next.order_id ?? entry.orderId ?? null,
+        orderNumero: next.orderNumero ?? next.order_num ?? entry.orderNumero ?? null,
+        timer: next.timer || null,
+        componentes: Array.isArray(next.componentes) ? next.componentes : entry.componentes
+      });
+    });
+    toRemove.forEach(key=>{
+      const entry = scannedCajas.get(key);
+      if(entry && entry.code) scannedCodes.delete(entry.code);
+      scannedCajas.delete(key);
+    });
+    renderScannedList();
+  }
+
+  function renderScannedList(){
+    if(!multiList) return;
+    const entries = Array.from(scannedCajas.values());
+    if(!entries.length){
+      multiWrap?.classList.add('hidden');
+      multiList.innerHTML='';
+      if(multiCount) multiCount.textContent = '0';
+      return;
+    }
+    multiWrap?.classList.remove('hidden');
+    if(multiCount) multiCount.textContent = String(entries.length);
+    multiList.innerHTML = entries.map(entry=>{
+      const ordenStr = entry.orderNumero ? entry.orderNumero : (entry.orderId ? ('#'+entry.orderId) : '-');
+      return `<div class='border border-base-300/40 rounded-lg p-3 space-y-2' data-scan-entry='${entry.id}'>
+        <div class='flex items-center justify-between gap-2'>
+          <span class='font-mono text-xs break-all'>${entry.codigoCaja||''}</span>
+          <button class='btn btn-ghost btn-xs' data-scan-remove='${entry.id}' title='Quitar'>✕</button>
+        </div>
+        <div class='text-[10px] opacity-70'>Orden: <span class='font-mono'>${ordenStr}</span></div>
+        <div class='flex flex-wrap gap-1 text-[9px]'>${componentesBadges(entry.componentes)}</div>
+        <button class='btn btn-xs btn-primary w-full' data-scan-process='${entry.id}'>Procesar</button>
+      </div>`;
+    }).join('');
+  }
+
+  function removeScanned(id){
+    const key = String(id);
+    const entry = scannedCajas.get(key);
+    if(entry){
+      scannedCajas.delete(key);
+      if(entry.code) scannedCodes.delete(entry.code);
+    }
+    renderScannedList();
+  }
+
+  function addScannedCaja(caja, code){
+    const key = String(caja.id);
+    if(scannedCajas.has(key)){
+      if(scanMsg) scanMsg.textContent = 'Caja ya escaneada';
+      return false;
+    }
+    scannedCajas.set(key, {
+      id: caja.id,
+      codigoCaja: caja.codigoCaja || caja.lote || '',
+      orderId: caja.orderId ?? caja.order_id ?? null,
+      orderNumero: caja.orderNumero ?? caja.order_num ?? null,
+      timer: caja.timer || null,
+      componentes: Array.isArray(caja.componentes) ? caja.componentes : [],
+      code
+    });
+    scannedCodes.add(code);
+    renderScannedList();
+    return true;
+  }
+
+  function enqueueLookup(code){
+    if(!code || code.length!==24) return;
+    const upper = code.toUpperCase();
+    if(scannedCodes.has(upper)){
+      if(scanMsg) scanMsg.textContent = 'Caja ya escaneada';
+      return;
+    }
+    if(scanningCodes.has(upper)) return;
+    scanningCodes.add(upper);
+    lookupQueue.push(upper);
+    if(!lookupBusy) runLookupQueue();
+  }
+
+  async function runLookupQueue(){
+    if(lookupBusy) return;
+    lookupBusy = true;
+    while(lookupQueue.length){
+      const code = lookupQueue.shift();
+      try {
+        await lookupCaja(code);
+      } finally {
+        scanningCodes.delete(code);
+      }
+    }
+    lookupBusy = false;
+  }
+
   function clearScanUI(msg){
+    scanBuffer = '';
     if(scanInput) scanInput.value='';
     if(scanCardBox) scanCardBox.innerHTML='';
     if(scanExtra) scanExtra.textContent='';
     if(scanResult) scanResult.classList.add('hidden');
-    if(typeof msg==='string' && scanMsg) scanMsg.textContent = msg; else if(scanMsg) scanMsg.textContent='';
+    if(scanMsg) scanMsg.textContent = typeof msg === 'string' ? msg : '';
   }
+
   async function lookupCaja(code){
-    if(scanMsg) scanMsg.textContent='Buscando...'; if(scanResult) scanResult.classList.add('hidden');
+    if(scanMsg) scanMsg.textContent = `Buscando ${code}...`;
+    if(scanResult) scanResult.classList.add('hidden');
     try {
       const r = await fetch('/operacion/caja/lookup',{ method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ code })});
       const j = await r.json();
-      if(!j.ok){ if(scanMsg) scanMsg.textContent = j.error || 'No encontrado'; return; }
+      if(!j.ok){ if(scanMsg) scanMsg.textContent = j.error || 'No encontrado'; return false; }
       const cajaId = j.caja.id;
       let caja = (data.cajas||[]).find(c=> String(c.id)===String(cajaId));
       if(!caja){
         caja = { id: cajaId, codigoCaja: j.caja.lote, orderId: j.caja.order_id || null, orderNumero: j.caja.order_num || null, timer: j.caja.timer? { startsAt: j.caja.timer.startsAt, endsAt: j.caja.timer.endsAt, completedAt: j.caja.timer.active===false? j.caja.timer.endsAt:null }: null, componentes: (j.caja.items||[]).map(it=> ({ codigo: it.rfid, tipo: inferTipo(it.nombre_modelo||it.nombre||'') })) };
       }
-      // Elegibilidad estricta: todos los items en Operación · Transito
       const items = (j.caja.items||[]);
       const eligible = items.length>0 && items.every(it=> it.estado==='Operación' && it.sub_estado==='Transito');
       if(!eligible){
-        clearScanUI('Caja no elegible: requiere Operación · Transito');
-        return;
+        if(scanMsg) scanMsg.textContent='Caja no elegible: requiere Operación · Tránsito';
+        return false;
       }
+      const added = addScannedCaja(caja, code);
       if(scanCardBox) scanCardBox.innerHTML = miniCardHTML(caja);
       if(scanExtra) scanExtra.textContent = `Items: ${(caja.componentes||[]).length} · ID ${caja.id}`;
       if(scanResult) scanResult.classList.remove('hidden');
-      if(scanMsg) scanMsg.textContent='';
-    } catch(e){ if(scanMsg) scanMsg.textContent='Error'; }
-  }
-  function triggerLookup(){ if(!scanInput) return; const val = (scanInput.value||'').trim(); if(!val){ if(scanMsg) scanMsg.textContent='Ingresa RFID'; return; } if(val.length!==24){ if(scanMsg) scanMsg.textContent='Debe tener 24 caracteres'; return; } lookupCaja(val); }
-  scanBtn?.addEventListener('click', triggerLookup);
-  scanClear?.addEventListener('click', ()=>{ if(scanInput) scanInput.value=''; if(scanMsg) scanMsg.textContent=''; if(scanResult) scanResult.classList.add('hidden'); scanInput?.focus(); });
-  scanInput?.addEventListener('keydown', e=>{ if(e.key==='Enter'){ e.preventDefault(); triggerLookup(); }});
-  // Forzar máximo 24 y auto buscar al completar
-  scanInput?.addEventListener('input', ()=>{ if(!scanInput) return; if(scanInput.value.length>24) scanInput.value = scanInput.value.slice(0,24); if(scanInput.value.length===24){ triggerLookup(); }});
-  scanInput && setTimeout(()=> scanInput.focus(), 500);
-
-  // ---- Modal ----
-  function openModal(id){
-    const caja = (data.cajas||[]).find(c=> String(c.id)===String(id));
-    if(!caja) return;
-    modalCajaId = caja.id;
-    if(modalTitle) modalTitle.textContent = caja.codigoCaja || 'Caja';
-    if(modalBody){
-      const comps = caja.componentes||[];
-      const timerTxt = caja.timer? (caja.timer.completedAt? 'Listo' : timerDisplay(msRemaining(caja.timer))) : 'Sin cronómetro';
-      const pct = progressPct(caja.timer);
-      const ordenStr = (caja.orderNumero ? caja.orderNumero : (caja.orderId ? ('#'+caja.orderId) : '—'));
-      modalBody.innerHTML = `
-        <div class='space-y-2'>
-          <div class='text-[11px] font-mono break-all'>${caja.codigoCaja||''}</div>
-          <div class='text-[10px] opacity-70'>Orden: <span class='font-mono'>${ordenStr}</span></div>
-          <div class='flex flex-wrap gap-1'>${comps.map(it=>{ let cls='badge-ghost'; if(it.tipo==='vip') cls='badge-info'; else if(it.tipo==='tic') cls='badge-warning'; else if(it.tipo==='cube') cls='badge-accent'; return `<span class='badge ${cls} badge-xs'>${(it.tipo||'').toUpperCase()}</span>`; }).join('') || "<span class='badge badge-ghost badge-xs'>Sin items</span>"}</div>
-          <div class='space-y-1'>
-            <div class='flex items-center justify-between text-[10px] font-mono'><span>Cronómetro</span><span id='dev-modal-timer'>${timerTxt}</span></div>
-            <div class='h-1.5 bg-base-300/30 rounded-full overflow-hidden'><div class='h-full bg-primary' style='width:${pct.toFixed(1)}%' id='dev-modal-bar'></div></div>
-          </div>
-        </div>`;
+      if(scanMsg) scanMsg.textContent = added ? 'Caja agregada' : 'Caja ya escaneada';
+      return added;
+    } catch(e){
+      if(scanMsg) scanMsg.textContent='Error';
+      return false;
+    } finally {
+      scanBuffer='';
+      if(scanInput) scanInput.value='';
     }
-    try { modal.showModal(); } catch { modal.classList.remove('hidden'); }
   }
+  function triggerLookup(){
+    if(!scanInput) return;
+    const val = (scanInput.value||'').replace(/[^A-Z0-9]/g,'').toUpperCase();
+    if(!val){ if(scanMsg) scanMsg.textContent='Ingresa RFID'; return; }
+    if(val.length!==24){ if(scanMsg) scanMsg.textContent='Debe tener 24 caracteres'; return; }
+    scanInput.value='';
+    scanBuffer='';
+    enqueueLookup(val);
+  }
+  scanBtn?.addEventListener('click', triggerLookup);
+  scanClear?.addEventListener('click', ()=>{
+    scanBuffer='';
+    if(scanInput) scanInput.value='';
+    if(scanMsg) scanMsg.textContent='';
+    if(scanResult) scanResult.classList.add('hidden');
+    if(scanCardBox) scanCardBox.innerHTML='';
+    if(scanExtra) scanExtra.textContent='';
+  });
+  scanInput?.addEventListener('keydown', e=>{
+    if(e.key==='Enter'){
+      e.preventDefault();
+      triggerLookup();
+    }
+  });
+  scanInput?.addEventListener('input', ()=>{
+    if(!scanInput) return;
+    let raw = (scanInput.value||'').toUpperCase();
+    raw = raw.replace(/[^A-Z0-9]/g,'');
+    scanBuffer = raw;
+    while(scanBuffer.length >= 24){
+      const chunk = scanBuffer.slice(0,24);
+      scanBuffer = scanBuffer.slice(24);
+      enqueueLookup(chunk);
+    }
+    scanInput.value = scanBuffer;
+    if(scanBuffer.length && scanMsg){
+      const remaining = 24 - scanBuffer.length;
+      scanMsg.textContent = `Faltan ${remaining} caract.`;
+    } else if(scanMsg && !lookupBusy && !lookupQueue.length){
+      scanMsg.textContent = '';
+    }
+  });
+  scanInput && setTimeout(()=> scanInput.focus(), 500);
+  multiClear?.addEventListener('click', ()=>{
+    scannedCajas.clear();
+    scannedCodes.clear();
+    renderScannedList();
+    if(scanMsg) scanMsg.textContent='';
+  });
   function updateModalTimer(){ if(!modalCajaId) return; const caja = (data.cajas||[]).find(c=> String(c.id)===String(modalCajaId)); if(!caja||!caja.timer) return; const span=document.getElementById('dev-modal-timer'); const bar=document.getElementById('dev-modal-bar'); if(span){ span.textContent = caja.timer.completedAt? 'Listo' : timerDisplay(msRemaining(caja.timer)); } if(bar && caja.timer.startsAt && caja.timer.endsAt){ bar.style.width = progressPct(caja.timer).toFixed(1)+'%'; } }
   modalReturn?.addEventListener('click', ()=>{ if(!modalCajaId) return; processCaja(modalCajaId); });
   async function processCaja(id){
@@ -225,17 +390,17 @@
       if(scanMsg) scanMsg.textContent='Evaluando...';
       const r = await fetch('/operacion/devolucion/evaluate',{ method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ caja_id: id })});
       const j = await r.json();
-  if(!j.ok){ if(scanMsg) scanMsg.textContent=j.error||'No elegible'; if(scanResult) scanResult.classList.add('hidden'); return; }
+      if(!j.ok){ if(scanMsg) scanMsg.textContent=j.error||'No elegible'; if(scanResult) scanResult.classList.add('hidden'); return; }
       const reusable = !!j.reusable;
       const pct = Math.round((j.remaining_ratio||0)*100);
       let html = '';
       if(reusable){
-  decideMsg && (decideMsg.textContent = `Queda ${pct}% del cronómetro. ¿Deseas reutilizar la caja (volver a Acond · Lista para Despacho) o enviarla a Bodega · Pendiente a Inspección?`);
+        if(decideMsg) decideMsg.textContent = `Queda ${pct}% del cronómetro. ¿Deseas reutilizar la caja (volver a Acond · Lista para Despacho) o enviarla a Bodega · Pendiente a Inspección?`;
         html = `<button class='btn btn-primary btn-sm flex-1' data-act='reuse' data-id='${id}'>Reutilizar</button>
     <button class='btn btn-outline btn-sm flex-1' data-act='insp' data-id='${id}'>Pendiente a Inspección</button>`;
       } else {
-  decideMsg && (decideMsg.textContent = `Queda ${pct}% del cronómetro. No es posible reutilizar. ¿Deseas enviarla a Bodega · Pendiente a Inspección?`);
-  html = `<button class='btn btn-error btn-sm flex-1' data-act='insp' data-id='${id}'>Enviar a Pendiente a Inspección</button>`;
+        if(decideMsg) decideMsg.textContent = `Queda ${pct}% del cronómetro. No es posible reutilizar. ¿Deseas enviarla a Bodega · Pendiente a Inspección?`;
+        html = `<button class='btn btn-error btn-sm flex-1' data-act='insp' data-id='${id}'>Enviar a Pendiente a Inspección</button>`;
       }
       if(decideActions) decideActions.innerHTML = html;
       try { decideDlg.showModal(); } catch { decideDlg.classList.remove('hidden'); }
@@ -258,6 +423,7 @@
           const j = await r.json(); if(!j.ok) throw new Error(j.error||'Error');
           if(scanMsg) scanMsg.textContent='Caja enviada a Acondicionamiento · Lista para Despacho';
           await load();
+          removeScanned(id);
           clearScanUI('');
         } else if(act==='insp'){
           // Abrir modal para horas/minutos; solo se envía tras Aceptar
@@ -285,6 +451,7 @@
       if(scanMsg) scanMsg.textContent='Caja enviada a Bodega · Pendiente a Inspección';
       // refrescar inmediatamente la lista para que desaparezca y limpiar panel derecho
       await load();
+      removeScanned(piCajaId);
       clearScanUI('');
     } catch(e){ if(scanMsg) scanMsg.textContent = e.message || 'Error'; }
     finally { piCajaId=null; piHours && (piHours.value=''); piMins && (piMins.value=''); try{ piDlg.close(); }catch{ piDlg.classList.add('hidden'); } }

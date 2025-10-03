@@ -16,6 +16,7 @@ export const AuthController = {
     const { correo, password } = req.body as { correo: string; password: string };
   let tenantSchema: string | null = null;
   const t = resolveTenant(req);
+  console.log('[auth][login] incoming', { correo, defaultTenant: process.env.DEFAULT_TENANT, db: process.env.DB_NAME, resolvedTenant: t });
   if (t) tenantSchema = t.startsWith('tenant_') ? t : `tenant_${t}`;
 
     try {
@@ -35,6 +36,7 @@ export const AuthController = {
 
       if (!tenantSchema) {
         const matches = await findUserInAnyTenant(correo);
+        console.log('[auth][login] discovery matches fallback?', matches?.map(m=>m.tenant));
         if (!matches) return res.status(401).render('auth/login', { error: 'Usuario o contraseña incorrectos', layout: 'layouts/auth', title: 'Acceso al Cliente' });
         if (matches.length > 1) {
           return res.status(409).render('auth/login', { error: 'Correo duplicado en múltiples tenants', layout: 'layouts/auth', title: 'Acceso al Cliente' });
@@ -46,6 +48,7 @@ export const AuthController = {
       // If we still don't have a user (e.g., DEFAULT_TENANT provided but user belongs to another tenant), try discovery
       if (!user) {
         const matches = await findUserInAnyTenant(correo);
+        console.log('[auth][login] discovery matches final?', matches?.map(m=>m.tenant));
         if (!matches) return res.status(401).render('auth/login', { error: 'Usuario o contraseña incorrectos', layout: 'layouts/auth', title: 'Acceso al Cliente' });
         if (matches.length > 1) {
           return res.status(409).render('auth/login', { error: 'Correo duplicado en múltiples tenants', layout: 'layouts/auth', title: 'Acceso al Cliente' });
@@ -57,6 +60,7 @@ export const AuthController = {
   if (!user) return res.status(401).render('auth/login', { error: 'Usuario o contraseña incorrectos', layout: 'layouts/auth', title: 'Acceso al Cliente' });
   if (!user.activo) return res.status(403).render('auth/login', { error: 'Usuario inactivo', layout: 'layouts/auth', title: 'Acceso al Cliente' });
 
+      console.log('[auth][login] user found', { tenantSchema, userId: user.id, rol: user.rol, activo: user.activo });
       let match = false;
       // Support hashed or legacy plaintext passwords
       if (/^\$2[aby]\$/.test(user.password)) {
@@ -64,6 +68,7 @@ export const AuthController = {
       } else {
         match = user.password === password;
       }
+      console.log('[auth][login] password match?', { match });
   if (!match) return res.status(401).render('auth/login', { error: 'Usuario o contraseña incorrectos', layout: 'layouts/auth', title: 'Acceso al Cliente' });
 
   await withTenant(tenantSchema!, (client) => UsersModel.touchUltimoIngreso(client, user.id));
