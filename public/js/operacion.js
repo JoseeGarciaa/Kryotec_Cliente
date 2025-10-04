@@ -45,6 +45,12 @@
     return out;
   }
 
+  function badgeForRol(rol){
+    const norm = String(rol||'').toLowerCase();
+    if(norm==='vip') return 'badge-info';
+    if(norm==='cube') return 'badge-accent';
+    return 'badge-warning';
+  }
   function msRemaining(timer){ if(!timer||!timer.endsAt) return 0; return new Date(timer.endsAt).getTime() - (Date.now()+serverOffset); }
   function timerDisplay(rem){
     if(rem<=0) return 'Finalizado';
@@ -322,7 +328,7 @@
       if(id){
         addQueue = addQueue.filter(q=> q.id !== id);
         const nextId = selectedCajaId === id ? (addQueue[addQueue.length-1]?.id || null) : selectedCajaId;
-        setSelectedCaja(nextId);
+        setSelectedCaja(nextId, { toggle: false });
       }
       return;
     }
@@ -358,11 +364,20 @@
     if(addConfirm) addConfirm.disabled=true;
   }
   function updateCounts(){
-    const entry = selectedCajaId ? addQueue.find(q=> q.id === selectedCajaId) : null;
-    addConfirm.disabled = !(entry && entry.roles.length>0);
+    const hasEntries = addQueue.some(entry => Array.isArray(entry.roles) && entry.roles.length>0);
+    addConfirm.disabled = !hasEntries;
   }
-  function setSelectedCaja(id){
-    selectedCajaId = id || null;
+  function setSelectedCaja(id, opts){
+    const toggle = !(opts && opts.toggle === false);
+    if(toggle){
+      if(id && selectedCajaId === id){
+        selectedCajaId = null;
+      } else {
+        selectedCajaId = id || null;
+      }
+    } else {
+      selectedCajaId = id || null;
+    }
     const entry = selectedCajaId ? addQueue.find(q=> q.id === selectedCajaId) : null;
     if(entry){
       addCajaId = entry.id;
@@ -371,11 +386,12 @@
     } else {
       addCajaId = null;
       addRoles = [];
-      if(addMsg){ addMsg.textContent = addQueue.length ? `Cajas escaneadas: ${addQueue.length}` : ''; }
+      if(addMsg){ addMsg.textContent = addQueue.length ? `Cajas escaneadas: ${addQueue.length}. Selecciona una caja.` : ''; }
     }
     renderQueue();
     updateCounts();
   }
+
   function renderQueue(){
     if(!addItemsWrap) return;
     if(!addQueue.length){
@@ -394,7 +410,7 @@
         const label = String(ro.rol||'').toUpperCase();
         return `<div class='flex items-center justify-between gap-2 px-2 py-1 bg-base-200 rounded'><span class='badge ${cls} badge-xs font-semibold uppercase'>${label}</span><span class='font-mono text-[10px]'>${ro.rfid}</span></div>`;
       }).join('');
-      const chevron = isActive ? 'v' : '>';
+      const chevron = isActive ? '▾' : '▸';
 
       const details = isActive ? `<div class='mt-2 grid gap-1'>${itemsHtml || "<span class='text-[10px] opacity-60'>Sin items</span>"}</div>` : '';
       return `<div class='border rounded-lg bg-base-200/20 ${isActive ? 'border-primary' : 'border-base-300/60'} flex flex-col cursor-pointer transition-colors' data-select-caja='${entry.id}'>
@@ -440,20 +456,30 @@
         roles: Array.isArray(j.roles)? j.roles.slice(): [],
         timer: j.timer || null
       };
+      const prevSelected = selectedCajaId;
       const existingIndex = addQueue.findIndex(q=> q.id === entry.id);
-      if(existingIndex >= 0){
+      const existed = existingIndex >= 0;
+      if(existed){
         addQueue[existingIndex] = entry;
       } else {
         addQueue.push(entry);
       }
-      setSelectedCaja(entry.id);
+      if(selectedCajaId){
+        setSelectedCaja(selectedCajaId, { toggle: false });
+      } else {
+        renderQueue();
+        updateCounts();
+      }
+      if(!existed && addMsg && prevSelected === null){
+        const chrono = (entry.timer && entry.timer.endsAt) ? ' - cronometro activo' : '';
+        addMsg.textContent = `Caja ${entry.lote} detectada - ${entry.roles.length} items${chrono}.`;
+      }
       return true;
     } catch(e){
       console.error('[Operacion] lookupAdd exception', e);
       if(addMsg) addMsg.textContent = e?.message ? ('Error: ' + e.message) : 'Error';
       return false;
     }
-  }
   }
   addScan?.addEventListener('input', async ()=>{
     const raw = (addScan.value || '').toUpperCase();
@@ -470,22 +496,46 @@
   addScan?.addEventListener('keydown', async e=>{ if(e.key==='Enter'){ e.preventDefault(); const raw=(addScan.value||'').toUpperCase(); const tokens=parseRfids(raw); if(tokens.length){ const code=tokens[tokens.length-1]; if(code === lastLookupCode) return; addScan.value=''; const success = await lookupAdd(code); if(success) lastLookupCode = code; } }});
   // Inputs de duración removidos
   addClear?.addEventListener('click', resetAdd);
-  addConfirm?.addEventListener('click', async ()=>{
-    if(!addCajaId) return;
-    addConfirm.disabled=true;
-    if(addMsg) addMsg.textContent='Moviendo...';
-    try {
-      const r= await fetch('/operacion/add/move',{ method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ caja_id: addCajaId })});
-      const j= await r.json();
-      if(!j.ok){ if(addMsg) addMsg.textContent=j.error||'Error'; addConfirm.disabled=false; return; }
-      if(addMsg) addMsg.textContent='Caja movida';
-      addQueue = addQueue.filter(q=> q.id !== selectedCajaId);
-      const nextId = addQueue[0]?.id || null;
-      setSelectedCaja(nextId);
-      if(!addQueue.length){ setTimeout(()=>{ try { modal.close(); } catch{} }, 600); }
-      await load();
-    } catch(e){ if(addMsg) addMsg.textContent='Error moviendo'; addConfirm.disabled=false; }
-  });
+  addConfirm?.addEventListener('click', async ()=>{
+    const targets = addQueue.filter(entry => Array.isArray(entry.roles) && entry.roles.length>0);
+    if(!targets.length){ if(addMsg) addMsg.textContent = 'No hay cajas elegibles'; return; }
+    addConfirm.disabled = true;
+    if(addMsg) addMsg.textContent = 'Moviendo cajas...';
+    const movedIds = [];
+    const errors = [];
+    for (const entry of targets){
+      try {
+        const res = await fetch('/operacion/add/move',{ method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ caja_id: entry.id })});
+        const ct = res.headers.get('content-type') || '';
+        let payload = null;
+        if(ct.includes('application/json')){ payload = await res.json(); }
+        else { const raw = await res.text(); errors.push(`Caja ${entry.lote}: Respuesta inesperada (${res.status})`); console.error('[Operacion] move respuesta no JSON', { status: res.status, body: raw }); continue; }
+        if(!res.ok || payload?.ok === false){ const message = payload?.error || payload?.message || `Error (${res.status})`; errors.push(`Caja ${entry.lote}: ${message}`); continue; }
+        movedIds.push(entry.id);
+      } catch(e){ errors.push(`Caja ${entry.lote}: ${e?.message || 'Error'}`); }
+    }
+    if(movedIds.length){
+      addQueue = addQueue.filter(q=> !movedIds.includes(q.id));
+      selectedCajaId = null;
+      addCajaId = null;
+      addRoles = [];
+      renderQueue();
+      updateCounts();
+    }
+    if(addMsg){
+      if(errors.length){
+        const detail = errors.slice(0,2).join(' · ');
+        addMsg.textContent = movedIds.length ? `Movidas ${movedIds.length} caja${movedIds.length>1?'s':''}. Errores: ${detail}${errors.length>2?'…':''}` : detail;
+      } else {
+        addMsg.textContent = `Movidas ${movedIds.length} caja${movedIds.length>1?'s':''}`;
+      }
+    }
+    if(movedIds.length){
+      try { await load(); } catch(e){ console.error('[Operacion] reload despues de mover', e); }
+      if(!addQueue.length){ setTimeout(()=>{ try { modal.close(); } catch{} }, 600); }
+    }
+    addConfirm.disabled = false;
+  });
   modal?.addEventListener('close', resetAdd);
 
   // Timer action handlers (delegated)
@@ -498,21 +548,3 @@
   // Init
   load(); startPolling();
 })();
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-

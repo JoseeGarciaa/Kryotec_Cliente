@@ -2,6 +2,16 @@ import { Request, Response } from 'express';
 import { withTenant } from '../db/pool';
 import { AlertsModel } from '../models/Alerts';
 
+const normalizeBasic = (val: string | null | undefined): string => {
+  if (typeof val !== 'string') return '';
+  return val
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .toLowerCase();
+};
+
 // Debug control for kanbanData verbosity
 const KANBAN_DEBUG = process.env.KANBAN_DEBUG === '1';
 let lastKanbanLog = 0; // rate-limit logs (ms)
@@ -2015,33 +2025,31 @@ export const OperacionController = {
     const ok: string[] = [];
     const invalid: { rfid: string; reason: string }[] = [];
 
-    for(const code of codes){
+    for (const code of codes) {
       const r = rows.find(x => x.rfid === code);
-  if(!r){ invalid.push({ rfid: code, reason: 'No existe' }); continue; }
-  if(r.activo === false){ invalid.push({ rfid: code, reason: 'Item inhabilitado (activo=false)' }); continue; }
-      if(!/tic/i.test(r.nombre_modelo || '')){ invalid.push({ rfid: code, reason: 'No es TIC' }); continue; }
-      if(t === 'atemperamiento'){
-        if(r.estado === 'Pre Acondicionamiento' && r.sub_estado === 'Congelado') {
+      if (!r) { invalid.push({ rfid: code, reason: 'No existe' }); continue; }
+      if (r.activo === false) { invalid.push({ rfid: code, reason: 'Item inhabilitado (activo=false)' }); continue; }
+      if (!/tic/i.test(r.nombre_modelo || '')) { invalid.push({ rfid: code, reason: 'No es TIC' }); continue; }
+      const estadoNorm = normalizeBasic(r.estado);
+      const subEstadoNorm = normalizeBasic(r.sub_estado);
+      const enBodega = estadoNorm.includes('en bodega') || subEstadoNorm.includes('en bodega');
+      const enPreAcond = estadoNorm.replace(/\s+/g,'').includes('preacondicionamiento') || estadoNorm.includes('pre acond');
+      const subAtemper = subEstadoNorm.includes('atemperad');
+      if (t === 'atemperamiento') {
+        if (enPreAcond && subEstadoNorm.includes('congelado')) {
           ok.push(code);
-        } else if (r.estado === 'Pre Acondicionamiento' && (r.sub_estado === 'Atemperamiento' || r.sub_estado === 'Atemperado')) {
+        } else if (enPreAcond && subAtemper) {
           invalid.push({ rfid: code, reason: 'Ya está en Atemperamiento' });
         } else {
           invalid.push({ rfid: code, reason: 'Debe estar Congelado' });
         }
       } else {
-        // Congelamiento: bloquear si ya está en Congelamiento/Congelado
-        if(r.estado === 'Pre Acondicionamiento' && (r.sub_estado === 'Congelamiento' || r.sub_estado === 'Congelado')){
+        if (enPreAcond && (subEstadoNorm.includes('congelamiento') || subEstadoNorm.includes('congelado'))) {
           invalid.push({ rfid: code, reason: 'Ya está en Congelamiento' });
+        } else if (!enBodega && !(enPreAcond && subAtemper)) {
+          invalid.push({ rfid: code, reason: 'Solo se acepta desde En bodega o Atemperamiento' });
         } else {
-          const estadoNorm = normalize(r.estado);
-          const subEstadoNorm = normalize(r.sub_estado);
-          const enBodega = estadoNorm.includes('bodega');
-          const desdeAtemperamiento = estadoNorm === 'pre acondicionamiento' && (subEstadoNorm === 'atemperamiento' || subEstadoNorm === 'atemperado');
-          if(!enBodega && !desdeAtemperamiento){
-            invalid.push({ rfid: code, reason: 'Solo se acepta desde En bodega o Atemperamiento' });
-          } else {
-            ok.push(code);
-          }
+          ok.push(code);
         }
       }
     }
@@ -2685,7 +2693,9 @@ export const OperacionController = {
                             AND ic.estado IN ('Acondicionamiento','Operación')
                        )
                          AND NOT EXISTS (
-                           SELECT 1 FROM acond_caja_timers t WHERE t.caja_id = aci.caja_id
+                           SELECT 1 FROM acond_caja_timers t
+                            WHERE t.caja_id = aci.caja_id
+                              AND ((t.active IS TRUE) OR t.started_at IS NOT NULL)
                          )`);
       // Eliminar cajas huérfanas (sin items). No elimina timers activos porque arriba no se borran sus items.
       await c.query(`DELETE FROM acond_cajas c WHERE NOT EXISTS (SELECT 1 FROM acond_caja_items aci WHERE aci.caja_id=c.caja_id)`);
@@ -2715,16 +2725,16 @@ export const OperacionController = {
   if(r.activo === false){ invalid.push({ rfid:r.rfid, reason:'Item inhabilitado (activo=false)' }); continue; }
       if(/cube/.test(name)){
         if(haveCube){ invalid.push({ rfid:r.rfid, reason:'Más de un CUBE' }); continue; }
-  const enBodega = estadoLower==='en bodega' || subLower==='en bodega';
+  const enBodega = estadoLower.includes('en bodega') || subLower.includes('en bodega');
         if(!enBodega){ invalid.push({ rfid:r.rfid, reason:'CUBE no En bodega' }); continue; }
         haveCube=true; valid.push({ rfid:r.rfid, rol:'cube' });
       } else if(/vip/.test(name)){
         if(haveVip){ invalid.push({ rfid:r.rfid, reason:'Más de un VIP' }); continue; }
-        const enBodega = estadoLower==='en bodega' || subLower==='en bodega';
+        const enBodega = estadoLower.includes('en bodega') || subLower.includes('en bodega');
         if(!enBodega){ invalid.push({ rfid:r.rfid, reason:'VIP no En bodega' }); continue; }
         haveVip=true; valid.push({ rfid:r.rfid, rol:'vip' });
       } else if(/tic/.test(name)){
-        const atemp = (estadoLower==='pre acondicionamiento' && subLower==='atemperado') || subLower==='atemperado';
+        const atemp = (estadoLower.replace(/\s+/g,'').includes('preacondicionamiento') || estadoLower.includes('pre acond')) && subLower.includes('atemperad');
         if(!atemp){ invalid.push({ rfid:r.rfid, reason:'TIC no Atemperado' }); continue; }
   // Cap estricto: máximo 6 TICs
   if(ticCount >= 6){ invalid.push({ rfid:r.rfid, reason:'Máximo 6 TICs' }); continue; }
@@ -2765,7 +2775,9 @@ export const OperacionController = {
                             AND ic.estado IN ('Acondicionamiento','Operación')
                        )
                          AND NOT EXISTS (
-                           SELECT 1 FROM acond_caja_timers t WHERE t.caja_id = aci.caja_id
+                           SELECT 1 FROM acond_caja_timers t
+                            WHERE t.caja_id = aci.caja_id
+                              AND ((t.active IS TRUE) OR t.started_at IS NOT NULL)
                          )`);
       await c.query(`DELETE FROM acond_cajas c WHERE NOT EXISTS (SELECT 1 FROM acond_caja_items aci WHERE aci.caja_id=c.caja_id)`);
     });
@@ -2786,29 +2798,30 @@ export const OperacionController = {
         WHERE ic.rfid = ANY($1::text[])`, [codes]));
   let haveCube=false, haveVip=false, ticCount=0; const litrajes = new Set<string>();
   const roles: { rfid:string; rol:'cube'|'vip'|'tic'; litraje?: any }[] = [];
-    for(const r of rows.rows as any[]){
-      if(r.rfid.length !== 24) return res.status(400).json({ ok:false, error:`${r.rfid} longitud inválida`, message:`${r.rfid} longitud inválida` });
-      const name=(r.nombre_modelo||'').toLowerCase();
-      const estado = (r.estado||'').trim();
-      const subEstado = (r.sub_estado||'').trim();
-      const estadoLower = estado.toLowerCase();
-      const subLower = subEstado.toLowerCase();
-  if(r.ya_en_caja) return res.status(400).json({ ok:false, error:`${r.rfid} ya está en una caja`, message:`${r.rfid} ya está en una caja` });
-  if(r.activo === false) return res.status(400).json({ ok:false, error:`${r.rfid} está inhabilitado (activo=false)`, message:`${r.rfid} está inhabilitado (activo=false)` });
-      if(/tic/.test(name)){
-  if(ticCount >= 6) return res.status(400).json({ ok:false, error:'No se permiten más de 6 TICs', message:'No se permiten más de 6 TICs' });
-        const atemp = (estadoLower==='pre acondicionamiento' && subLower==='atemperado') || subLower==='atemperado';
-        if(!atemp) return res.status(400).json({ ok:false, error:`TIC ${r.rfid} no Atemperado`, message:`TIC ${r.rfid} no Atemperado` });
+        for (const r of rows.rows as any[]) {
+      if (r.rfid.length !== 24) return res.status(400).json({ ok:false, error:`${r.rfid} longitud inválida`, message:`${r.rfid} longitud inválida` });
+      if (r.ya_en_caja) return res.status(400).json({ ok:false, error:`${r.rfid} ya está en una caja`, message:`${r.rfid} ya está en una caja` });
+      if (r.activo === false) return res.status(400).json({ ok:false, error:`${r.rfid} está inhabilitado (activo=false)`, message:`${r.rfid} está inhabilitado (activo=false)` });
+      const nombreNorm = normalizeBasic(r.nombre_modelo);
+      const estadoNorm = normalizeBasic(r.estado);
+      const subEstadoNorm = normalizeBasic(r.sub_estado);
+      const esTic = nombreNorm.includes('tic');
+      const esCube = nombreNorm.includes('cube');
+      const esVip = nombreNorm.includes('vip');
+      const enBodega = estadoNorm.includes('en bodega') || subEstadoNorm.includes('en bodega');
+      const enPreAcond = estadoNorm.replace(/\s+/g,'').includes('preacondicionamiento') || estadoNorm.includes('pre acond');
+      const subAtemper = subEstadoNorm.includes('atemperad');
+      if (esTic) {
+        if (ticCount >= 6) return res.status(400).json({ ok:false, error:'No se permiten más de 6 TICs', message:'No se permiten más de 6 TICs' });
+        if (!(enPreAcond && subAtemper)) return res.status(400).json({ ok:false, error:`TIC ${r.rfid} no Atemperado`, message:`TIC ${r.rfid} no Atemperado` });
         ticCount++; roles.push({ rfid:r.rfid, rol:'tic', litraje: r.litraje }); litrajes.add(String(r.litraje||''));
-      } else if(/cube/.test(name)){
-        if(haveCube) return res.status(400).json({ ok:false, error:'Más de un CUBE', message:'Más de un CUBE' });
-        const enBodega = estadoLower==='en bodega' || subLower==='en bodega';
-        if(!enBodega) return res.status(400).json({ ok:false, error:`CUBE ${r.rfid} no está En bodega`, message:`CUBE ${r.rfid} no está En bodega` });
+      } else if (esCube) {
+        if (haveCube) return res.status(400).json({ ok:false, error:'Más de un CUBE', message:'Más de un CUBE' });
+        if (!enBodega) return res.status(400).json({ ok:false, error:`CUBE ${r.rfid} no está En bodega`, message:`CUBE ${r.rfid} no está En bodega` });
         haveCube=true; roles.push({ rfid:r.rfid, rol:'cube', litraje: r.litraje }); litrajes.add(String(r.litraje||''));
-      } else if(/vip/.test(name)){
-        if(haveVip) return res.status(400).json({ ok:false, error:'Más de un VIP', message:'Más de un VIP' });
-        const enBodega = estadoLower==='en bodega' || subLower==='en bodega';
-        if(!enBodega) return res.status(400).json({ ok:false, error:`VIP ${r.rfid} no está En bodega`, message:`VIP ${r.rfid} no está En bodega` });
+      } else if (esVip) {
+        if (haveVip) return res.status(400).json({ ok:false, error:'Más de un VIP', message:'Más de un VIP' });
+        if (!enBodega) return res.status(400).json({ ok:false, error:`VIP ${r.rfid} no está En bodega`, message:`VIP ${r.rfid} no está En bodega` });
         haveVip=true; roles.push({ rfid:r.rfid, rol:'vip', litraje: r.litraje }); litrajes.add(String(r.litraje||''));
       } else {
         return res.status(400).json({ ok:false, error:`${r.rfid} modelo no permitido`, message:`${r.rfid} modelo no permitido` });
@@ -3151,6 +3164,24 @@ export const OperacionController = {
       let listos = 0;
       for(const r of rows){ if(r.sub_estado==='Lista para Despacho' || r.sub_estado==='Listo') listos++; }
       const pendientes = total - listos;
+      let timer = null;
+      const timerQ = await withTenant(tenant, (c)=> c.query(
+        `SELECT started_at, duration_sec, active FROM acond_caja_timers WHERE caja_id=$1`,
+        [cajaId]
+      ));
+      if(timerQ.rowCount){
+        const t = timerQ.rows[0] as any;
+        let endsAt: string | null = null;
+        let remainingSec: number | null = null;
+        if(t.started_at && t.duration_sec != null){
+          const startMs = new Date(t.started_at).getTime();
+          const durMs = Number(t.duration_sec)*1000;
+          const endMs = startMs + durMs;
+          endsAt = new Date(endMs).toISOString();
+          remainingSec = Math.max(0, Math.floor((endMs - Date.now())/1000));
+        }
+        timer = { startsAt: t.started_at, durationSec: t.duration_sec, active: t.active === true, endsAt, remainingSec };
+      }
       // Nueva regla: Sólo exponer lista de componentes (rfids) si TODOS están en sub_estado 'Ensamblado'
       const allEnsamblado = rows.length>0 && rows.every(r=> r.sub_estado==='Ensamblado');
       res.json({
@@ -3159,6 +3190,7 @@ export const OperacionController = {
         lote,
         order_id: orderId,
         order_num: orderNum,
+        timer,
         // Back-compat: mantener rfids plano; nuevo: incluir rol por componente
         rfids: allEnsamblado ? rows.map(r=>r.rfid) : [],
         componentes: allEnsamblado ? rows.map(r=> ({ rfid: r.rfid, rol: r.rol })) : [],
