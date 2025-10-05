@@ -55,13 +55,38 @@
   }
 
   async function load(){
-    try { spin?.classList.remove('hidden');
-      const r = await fetch('/operacion/inspeccion/data');
-      const j = await r.json();
+    try {
+      spin?.classList.remove('hidden');
+      const r = await fetch('/operacion/inspeccion/data', { headers: { 'Accept': 'application/json' }});
+      const contentType = r.headers.get('content-type') || '';
+      const bodyText = await r.text();
+      if(!r.ok){
+        throw new Error(`HTTP ${r.status}: ${bodyText.slice(0, 200)}`);
+      }
+      let j;
+      if(contentType.includes('application/json')){
+        try {
+          j = JSON.parse(bodyText);
+        } catch(parseErr){
+          throw new Error(`Invalid JSON: ${(parseErr&&parseErr.message)||parseErr}`);
+        }
+      } else {
+        const lower = bodyText.trim().toLowerCase();
+        if(lower.startsWith('<!doctype') || lower.includes('<html')){
+          console.warn('[Inspección] Unexpected HTML response, likely session expired. Redirecting to login.');
+          window.location.href = '/auth/login';
+          return;
+        }
+        throw new Error(`Unexpected response content-type: ${contentType||'unknown'}`);
+      }
       state.cajas = j.ok ? (j.cajas||[]) : [];
       if(j.ok && j.serverNow){ state.serverOffset = new Date(j.serverNow).getTime() - Date.now(); }
       render();
-    } catch(e){ console.error('[Inspección] load error', e); }
+    } catch(e){
+      console.error('[Inspección] load error', e);
+      state.cajas = [];
+      if(grid){ grid.innerHTML = `<div class='col-span-full py-10 text-center text-xs text-error'>Error al cargar datos de Inspección. Reintenta en unos segundos.</div>`; }
+    }
     finally { spin?.classList.add('hidden'); }
   }
 
@@ -84,7 +109,6 @@
   const singleSection = qs('#insp-single-section');
   const bulkSection = qs('#insp-bulk-section');
   const bulkInput = qs('#insp-bulk-input');
-  const bulkAddBtn = qs('#insp-bulk-add');
   const bulkNextBtn = qs('#insp-bulk-next');
   const bulkClearBtn = qs('#insp-bulk-clear');
   const bulkMsg = qs('#insp-bulk-msg');
@@ -154,13 +178,13 @@
       else if(status==='active'){ badge = "<span class='badge badge-primary badge-xs'>En inspección</span>"; }
       else if(status==='done'){ badge = "<span class='badge badge-success badge-xs'>Completada</span>"; }
       else if(status==='error'){ badge = "<span class='badge badge-error badge-xs'>Error</span>"; }
-      const rowCls = status==='active' ? 'border-primary bg-primary/10 shadow-sm' : status==='done' ? 'border-success bg-success/5' : 'border-base-300/40 bg-base-100';
-      const disableIdentify = status==='loading' || status==='active';
+      const rowCls = status==='active' ? 'border-primary bg-primary/10 shadow-sm' : status==='done' ? 'border-success bg-success/10 text-success-content' : 'border-base-300/40 bg-base-100';
+      const showIdentify = status!=='done';
       return `<div class='border rounded-md p-2 space-y-1 ${rowCls}' data-bulk-code='${entry.code}'>
         <div class='flex items-center gap-2'>
           <span class='font-mono text-xs flex-1 truncate' title='${entry.code}'>${entry.code}</span>
           ${badge}
-          <button class='btn btn-ghost btn-xs' data-action='bulk-open' data-code='${entry.code}' ${disableIdentify?'disabled':''}>Identificar</button>
+          ${showIdentify ? `<button class='btn btn-ghost btn-xs' data-action='bulk-open' data-code='${entry.code}'>Identificar</button>` : ''}
           <button class='btn btn-ghost btn-xs text-error' data-action='bulk-remove' data-code='${entry.code}' title='Quitar'>✕</button>
         </div>
         ${message ? `<div class='text-[10px] opacity-70'>${message}</div>` : ''}
@@ -249,7 +273,6 @@
     if(!remainder.length && !state.bulkQueue.length){ setBulkMessage(''); }
   }
 
-  bulkAddBtn?.addEventListener('click', ()=> handleBulkAppend());
   bulkInput?.addEventListener('input', ()=>{
     if(!bulkInput) return;
     const remainder = processBulkBuffer(bulkInput.value);
