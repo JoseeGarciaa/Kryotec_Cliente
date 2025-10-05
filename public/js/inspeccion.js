@@ -375,6 +375,10 @@
   btnAdd?.addEventListener('click', ()=>{ try{ addDlg.showModal(); }catch{ addDlg.classList.remove('hidden'); } addMsg && (addMsg.textContent=''); addConfirm && (addConfirm.disabled=true); addScan && (addScan.value=''); addH && (addH.value=''); addM && (addM.value=''); setTimeout(()=> addScan?.focus(), 200); });
 
   async function lookupCaja(inputCode, opts = {}){
+    if(inputCode instanceof Event){
+      inputCode.preventDefault?.();
+      inputCode = undefined;
+    }
     const fromBulk = !!opts.fromBulk;
     const code = normalizeCode(inputCode ?? (scanInput?.value||''));
     const targetMsg = fromBulk ? bulkMsg : scanMsg;
