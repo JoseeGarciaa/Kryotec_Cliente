@@ -1,1 +1,1 @@
-web: npm run build && npm start
+web: ./railway-start.sh

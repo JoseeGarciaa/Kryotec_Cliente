@@ -16,7 +16,7 @@
    - `JWT_SECRET`
    - `DEFAULT_TENANT` (optional for localhost behaviour)
 4. Set `NODE_ENV=production`.
-5. Trigger a deploy; Railway will run `npm run build && npm start` from `Procfile`.
+5. Trigger a deploy; Railway now runs `./railway-start.sh` (see repo root) which builds assets via `npx` and starts the server without the noisy npm warnings.
 
 ## Local dev remains the same
 - Use `.env` locally (not committed). The code reads `process.env.*`.
@@ -29,4 +29,4 @@
 ## Notes
 - Expose HTTP on the default port (Railway sets `PORT`). Our server uses it.
 - Ensure DB IP allows outbound from Railway (managed Postgres is recommended).
-- If Tailwind CSS isn’t present at first load, ensure `npm run build:css` runs during build (Procfile covers this).
+- The custom `railway-start.sh` script runs Tailwind and TypeScript builds automatically and keeps the Browserslist cache fresh, so no extra build hooks are required.
