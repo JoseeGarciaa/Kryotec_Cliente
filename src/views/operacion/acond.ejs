@@ -188,21 +188,28 @@
   </div>
 </dialog>
 
-<!-- Modal Despacho (marcar caja completa con un solo RFID) -->
+<!-- Modal Despacho (multi escaneo) -->
 <dialog id="modal-despacho" class="modal">
-  <div class="modal-box max-w-xl">
+  <div class="modal-box max-w-2xl">
     <form method="dialog">
-      <button class="btn btn-sm btn-circle btn-ghost absolute right-2 top-2">✕</button>
+      <button class="btn btn-sm btn-circle btn-ghost absolute right-2 top-2">x</button>
     </form>
-    <h3 class="font-bold text-lg mb-2">Marcar Caja Lista para Despacho</h3>
-    <div class="text-xs opacity-70 mb-3">Escanea 1 RFID de la caja (cualquier componente). Detectaremos automáticamente todos los componentes y los moveremos a <strong>Lista para Despacho</strong>.</div>
+    <h3 class="font-bold text-lg mb-2">Marcar Cajas Listas para Despacho</h3>
+    <div class="text-xs opacity-70 mb-3">Escanea RFIDs de componentes o cajas. Detectaremos automaticamente las cajas elegibles y podras revisarlas antes de moverlas a Lista para Despacho.</div>
     <label class="input input-bordered flex items-center gap-2 w-full mb-3">
       <span class="opacity-60 text-xs">RFID</span>
-  <input id="despacho-scan" type="text" class="grow" placeholder="Listo para escanear..." autocomplete="off" maxlength="24" />
+      <input id="despacho-scan" type="text" class="grow" placeholder="Listo para escanear..." autocomplete="off" />
     </label>
-    <div id="despacho-summary" class="text-xs mb-4 hidden"></div>
+    <div class="flex items-center justify-between text-xs mb-3">
+      <button id="despacho-clear" type="button" class="btn btn-ghost btn-xs">Limpiar</button>
+      <span id="despacho-count" class="opacity-70"></span>
+    </div>
+    <div id="despacho-queue" class="hidden mb-4">
+      <div class="text-xs font-semibold mb-1">Cajas detectadas</div>
+      <div id="despacho-queue-list" class="flex flex-col gap-2 max-h-56 overflow-auto custom-scroll"></div>
+    </div>
     <div class="mb-4">
-      <div class="text-xs mb-1 opacity-70">Duración cronómetro (obligatorio)</div>
+      <div class="text-xs mb-1 opacity-70">Duracion cronometro (aplica a todas las cajas seleccionadas)</div>
       <div class="grid grid-cols-2 gap-3">
         <label class="form-control">
           <span class="label-text text-xs">Horas</span>
@@ -213,10 +220,10 @@
           <input id="despacho-min" type="number" min="0" step="1" placeholder="30" class="input input-bordered input-sm" />
         </label>
       </div>
-      <div id="despacho-timer-hint" class="text-xs opacity-60 mt-1">Ingresa un total &gt; 0 (horas*60 + minutos) para habilitar el botón.</div>
+      <div id="despacho-timer-hint" class="text-xs opacity-60 mt-1">Ingresa un total mayor a 0 (horas*60 + minutos) para habilitar el boton.</div>
     </div>
-    <div class="flex gap-3 items-center">
-      <button id="btn-despacho-confirm" class="btn btn-success btn-sm" disabled>Marcar como Listo</button>
+    <div class="flex flex-wrap gap-3 items-center">
+      <button id="btn-despacho-confirm" class="btn btn-success btn-sm" disabled>Marcar cajas como Listas</button>
       <span id="despacho-msg" class="text-xs opacity-70"></span>
     </div>
   </div>

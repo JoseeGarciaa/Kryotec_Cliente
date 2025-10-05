@@ -24,6 +24,7 @@ export const OrdenesController = {
           estado_orden boolean DEFAULT true
         )`);
         await c.query(`ALTER TABLE ordenes ADD COLUMN IF NOT EXISTS estado_orden boolean DEFAULT true`);
+        await c.query(`ALTER TABLE ordenes ADD COLUMN IF NOT EXISTS habilitada boolean NOT NULL DEFAULT true`);
       });
       const rawState = (req.query.state || '').toString().toLowerCase();
       let whereClause = '';
@@ -75,11 +76,12 @@ export const OrdenesController = {
           estado_orden boolean DEFAULT true
         )`);
         await c.query(`ALTER TABLE ordenes ADD COLUMN IF NOT EXISTS estado_orden boolean DEFAULT true`);
+        await c.query(`ALTER TABLE ordenes ADD COLUMN IF NOT EXISTS habilitada boolean NOT NULL DEFAULT true`);
       });
       const q = await withTenant(tenant, (c) => c.query(
         `SELECT id, numero_orden, codigo_producto, cantidad, ciudad_destino, ubicacion_destino, cliente, fecha_generacion
            FROM ordenes
-          WHERE COALESCE(estado_orden, true)
+          WHERE COALESCE(estado_orden, true) AND COALESCE(habilitada, true)
           ORDER BY id DESC
           LIMIT 200`
       ));

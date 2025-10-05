@@ -1298,120 +1298,425 @@
 
   // ========================= MODAL DESPACHO =========================
   (function setupDespachoModal(){
-    const btn = document.getElementById('btn-add-listo');
+    const openBtn = document.getElementById('btn-add-listo');
     const dialog = document.getElementById('modal-despacho');
-    if(!btn || !dialog) return;
+    if(!openBtn || !dialog) return;
     const input = document.getElementById('despacho-scan');
-    const summary = document.getElementById('despacho-summary');
+    const clearBtn = document.getElementById('despacho-clear');
+    const countLabel = document.getElementById('despacho-count');
+    const queueWrap = document.getElementById('despacho-queue');
+    const queueList = document.getElementById('despacho-queue-list');
     const msg = document.getElementById('despacho-msg');
     const confirmBtn = document.getElementById('btn-despacho-confirm');
-  const minInput = document.getElementById('despacho-min');
-  const hrInput = document.getElementById('despacho-hr');
-  // (Orden ya no se vincula aquí; se mueve a detalle de caja)
-    let lastCajaId = null; let lastRfid = '';
-  function reset(){ lastCajaId=null; lastRfid=''; if(summary){ summary.classList.add('hidden'); summary.innerHTML=''; } if(msg) msg.textContent=''; if(confirmBtn) confirmBtn.disabled=true; if(input) input.value=''; if(minInput) { minInput.value=''; } if(hrInput){ hrInput.value=''; } }
+    const minInput = document.getElementById('despacho-min');
+    const hrInput = document.getElementById('despacho-hr');
+
+    let queue = [];
+    let selectedCajaId = null;
+    const seenRfids = new Set();
+    const pendingRfids = new Set();
+
+    function badgeForRol(rol){
+      const type = String(rol || '').toLowerCase();
+      if(type === 'vip') return 'badge-info';
+      if(type === 'cube') return 'badge-accent';
+      return 'badge-warning';
+    }
+
+    function normalizeComponentes(source){
+      if(!Array.isArray(source) || !source.length) return [];
+      if(typeof source[0] === 'string'){
+        return source.map(code => ({ rfid: code, rol: 'tic' }));
+      }
+      return source.map(item => ({
+        rfid: item.rfid || item.codigo || '',
+        rol: item.rol || item.tipo || ''
+      }));
+    }
+
+    function computeDurationSec(){
+      const hrs = Number(hrInput?.value || '0');
+      const mins = Number(minInput?.value || '0');
+      const totalMin = (Number.isFinite(hrs) ? hrs : 0) * 60 + (Number.isFinite(mins) ? mins : 0);
+      return totalMin > 0 ? totalMin * 60 : 0;
+    }
+
     function updateConfirmState(){
-      const mins = Number(minInput?.value||'0');
-      const hrs = Number(hrInput?.value||'0');
-      const total = hrs*60 + mins;
-      if(confirmBtn){ confirmBtn.disabled = !(lastCajaId && lastRfid && Number.isFinite(total) && total>0); }
+      const durationSec = computeDurationSec();
+      if(confirmBtn){
+        confirmBtn.disabled = !(queue.length && durationSec > 0);
+      }
     }
-    async function lookup(code){
-      if(!code || code.length!==24) return; if(msg) msg.textContent='Buscando caja...';
-      try {
-        const r = await fetch('/operacion/acond/despacho/lookup',{ method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ rfid: code })});
-        const j = await r.json();
-        if(!j.ok){ if(msg) msg.textContent = j.error||'Error'; if(confirmBtn) confirmBtn.disabled=true; return; }
-        // Verificar si ya está en Lista para Despacho (o Despachando) para evitar duplicado
-        const yaLista = Array.isArray(listoDespacho) && listoDespacho.some(it => String(it.caja_id) === String(j.caja_id));
-        if(yaLista){
-          lastCajaId = null; // bloquear acción
-          lastRfid = code;
-          if(summary){
-            summary.classList.remove('hidden');
-            summary.innerHTML = `<div class='mb-2'><strong>Caja:</strong> ${j.lote} (ID ${j.caja_id})</div>
-              <div class='text-warning text-xs'>Esta caja ya se encuentra en Lista para Despacho.</div>`;
-          }
-          if(msg) msg.textContent='Caja ya en Lista para Despacho';
-          if(confirmBtn) confirmBtn.disabled=true;
-          return;
-        }
-        // Si la caja NO está completamente Ensamblada, ocultar componentes y bloquear confirmación
-        if(!j.allEnsamblado){
-          lastCajaId = null; // no permitir mover aún
-          lastRfid = code;
-          if(summary){
-            summary.classList.remove('hidden');
-            summary.innerHTML = `<div class='mb-2'><strong>Caja:</strong> ${j.lote} (ID ${j.caja_id})</div>
-              <div class='text-error text-xs'>La caja aún no está completamente Ensamblada. Componentes ocultos.</div>`;
-          }
-          if(msg) msg.textContent='Caja incompleta (Ensamblaje en progreso)';
-          if(confirmBtn) confirmBtn.disabled=true;
-          return;
-        }
-        lastCajaId = j.caja_id; lastRfid = code;
-        if(summary){
-          // Preferir estructura con roles si viene del backend; si no, caer al arreglo plano de rfids
-          const comps = Array.isArray(j.componentes) && j.componentes.length
-            ? j.componentes
-            : (j.rfids||[]).map(rf=> ({ rfid: rf, rol: inferRolFromCode(rf) }));
-          const badgeForRol = (rol)=>{
-            rol = String(rol||'').toLowerCase();
-            if(rol==='vip') return 'badge-info';
-            if(rol==='cube') return 'badge-accent';
-            return 'badge-warning'; // tic por defecto
-          };
-          const listHTML = comps.map(c=>{
-            const cls = badgeForRol(c.rol);
-            const label = (String(c.rol||'').toUpperCase());
-            return `<span class='flex items-center justify-between gap-2 px-2 py-1 bg-base-200 rounded'>
-              <span class='badge ${cls} badge-xs font-semibold uppercase'>${label}</span>
-              <span class='font-mono text-[10px]'>${c.rfid}</span>
-            </span>`;
-          }).join('');
-          const ordenTxt = j.order_num ? String(j.order_num) : (j.order_id ? `#${j.order_id}` : '—');
-          summary.innerHTML = `<div class='mb-2'><strong>Caja:</strong> ${j.lote} (ID ${j.caja_id})</div>
-            <div class='mb-2'><span class='opacity-70'>Orden:</span> <span class='font-mono'>${ordenTxt}</span></div>
-            <div class='mb-2'>Componentes (${j.total}):
-              <div class='mt-1 grid grid-cols-2 gap-1 max-h-40 overflow-auto'>${listHTML}</div>
-            </div>
-            <div class='opacity-70'>Pendientes por marcar: ${j.pendientes}</div>`;
-          summary.classList.remove('hidden');
-        }
-        if(msg) msg.textContent='';
+
+    function updateCount(){
+      if(countLabel){
+        countLabel.textContent = queue.length ? `Cajas detectadas: ${queue.length}` : '';
+      }
+    }
+
+    function reset(){
+      queue = [];
+      selectedCajaId = null;
+      seenRfids.clear();
+      pendingRfids.clear();
+      if(input){ input.value = ''; }
+      if(queueList){ queueList.innerHTML = ''; }
+      if(queueWrap){ queueWrap.classList.add('hidden'); }
+      if(msg){ msg.textContent = ''; }
+      if(minInput){ minInput.value = ''; }
+      if(hrInput){ hrInput.value = ''; }
+      updateCount();
+      updateConfirmState();
+    }
+
+    function formatComponents(entry){
+      if(entry.componentes && entry.componentes.length){
+        return entry.componentes.map(comp => {
+          const cls = badgeForRol(comp.rol);
+          const label = safeHTML(comp.rol || comp.tipo || '');
+          const code = safeHTML(comp.rfid || comp.codigo || '');
+          return `<div class="flex items-center justify-between gap-2 px-2 py-1 bg-base-200 rounded"><span class="badge ${cls} badge-xs font-semibold uppercase">${label}</span><span class="font-mono text-[10px]">${code}</span></div>`;
+        }).join('');
+      }
+      if(entry.componentesOcultos){
+        return '<div class="text-[11px] text-warning">Componentes ocultos: la caja no esta completa.</div>';
+      }
+      return '<div class="text-[10px] opacity-60">Sin componentes disponibles</div>';
+    }
+
+    function renderQueue(){
+      if(!queueList) return;
+      if(!queue.length){
+        queueList.innerHTML = '';
+        if(queueWrap){ queueWrap.classList.add('hidden'); }
+        updateCount();
         updateConfirmState();
-      } catch(e){ if(msg) msg.textContent='Error lookup'; }
+        return;
+      }
+      if(queueWrap){ queueWrap.classList.remove('hidden'); }
+      queueList.innerHTML = queue.map((entry, idx) => {
+        const isSelected = String(entry.cajaId) === String(selectedCajaId);
+        const orderLabel = entry.orderNum ? entry.orderNum : (entry.orderId ? `#${entry.orderId}` : '-');
+        const pendLabel = entry.pendientes != null ? entry.pendientes : '?';
+        const needsForce = (!entry.allEnsamblado || entry.timerActive);
+        const pendienteBadge = !entry.allEnsamblado ? `<span class="badge badge-error badge-xs">Pend ${pendLabel}</span>` : '';
+        const timerBadge = entry.timerActive ? '<span class="badge badge-info badge-xs">Cronometro activo</span>' : '';
+        const forceBadge = (needsForce && entry.force) ? '<span class="badge badge-warning badge-xs">Forzado</span>' : '';
+        const headerBadges = [pendienteBadge, timerBadge, forceBadge].filter(Boolean).join(' ');
+        const warnHtmlParts = [];
+        const warnPlainParts = [];
+        if(!entry.allEnsamblado){ warnHtmlParts.push('<span>La caja tiene componentes pendientes o en Ensamblaje.</span>'); warnPlainParts.push('Componentes pendientes.'); }
+        if(entry.timerActive){ warnHtmlParts.push('<span>Cronometro en progreso.</span>'); warnPlainParts.push('Cronometro activo.'); }
+        const warnings = needsForce
+          ? `<div class="mt-2 text-[11px] text-warning flex flex-wrap items-center gap-2">${warnHtmlParts.join(' ')}<button type="button" class="btn btn-ghost btn-xs" data-toggle-force="${safeHTML(entry.cajaId)}">${entry.force ? 'Cancelar forzar' : 'Permitir mover incompleta'}</button></div>`
+          : '';
+        const collapsedNotice = (!isSelected && needsForce)
+          ? `<div class="px-3 pb-3 text-[10px] text-warning">${warnPlainParts.join(' ')}</div>`
+          : '';
+        const details = isSelected
+          ? `<div class="px-3 pb-3 space-y-2">${formatComponents(entry)}${warnings}</div>`
+          : collapsedNotice;
+        return `<div class="border rounded-lg ${isSelected ? 'border-primary bg-base-200/40' : 'border-base-300/60 bg-base-200/10'} cursor-pointer" data-select-caja="${safeHTML(entry.cajaId)}">
+          <div class="flex items-center justify-between gap-3 px-3 py-2">
+            <div class="flex items-center gap-2 text-xs font-semibold">
+              <span class="text-[10px] opacity-60">${idx + 1}</span>
+              <span>${safeHTML(entry.lote || ('Caja ' + entry.cajaId))}</span>
+            </div>
+            <div class="flex items-center gap-2 text-[10px] uppercase opacity-70">
+              <span>Orden: ${safeHTML(orderLabel)}</span>
+              <span>${entry.total || 0} items</span>
+              ${headerBadges}
+              <button type="button" class="btn btn-ghost btn-xs" data-remove-caja="${safeHTML(entry.cajaId)}">x</button>
+            </div>
+          </div>
+          ${details}
+        </div>`;
+      }).join('');
+      updateCount();
+      updateConfirmState();
     }
-    input?.addEventListener('input', ()=>{ const v=input.value.replace(/\s+/g,''); if(v.length===24){ lookup(v); } });
-  // Enforce máximo 24
-  input?.addEventListener('input', ()=>{ if(input.value.length>24){ input.value = input.value.slice(0,24); } });
-    input?.addEventListener('keydown', e=>{ if(e.key==='Enter'){ e.preventDefault(); const v=input.value.trim(); if(v.length===24) lookup(v); }});
-  minInput?.addEventListener('input', updateConfirmState);
-  hrInput?.addEventListener('input', updateConfirmState);
-    confirmBtn?.addEventListener('click', async ()=>{
-      if(!lastCajaId || !lastRfid) return; 
-  const mins = Number(minInput?.value||'0');
-  const hrs = Number(hrInput?.value||'0');
-  const totalMin = hrs*60 + mins;
-  if(!Number.isFinite(totalMin) || totalMin<=0){ if(msg) msg.textContent='Duración inválida'; return; }
-  const durationSec = Math.round(totalMin*60);
-      confirmBtn.disabled=true; if(msg) msg.textContent='Marcando...';
-      try {
-        const r = await fetch('/operacion/acond/despacho/move',{ method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ rfid: lastRfid, durationSec })});
-        const j = await r.json();
-        if(!j.ok){ if(msg) msg.textContent=j.error||'Error'; confirmBtn.disabled=false; return; }
-  if(msg) msg.textContent='Caja movida a Despachando.';
-        await loadData();
-        setTimeout(()=>{ try { dialog.close(); } catch{} }, 600);
-      } catch(e){ if(msg) msg.textContent='Error moviendo'; confirmBtn.disabled=false; }
+
+    function setSelectedCaja(id, opts){
+      const force = opts && opts.force === true;
+      if(force){
+        selectedCajaId = id;
+      } else if(selectedCajaId && String(selectedCajaId) === String(id)){
+        selectedCajaId = null;
+      } else {
+        selectedCajaId = id;
+      }
+      renderQueue();
+    }
+
+    function toggleForce(cajaId){
+      const entry = queue.find(item => String(item.cajaId) === String(cajaId));
+      if(!entry) return;
+      const needsForce = (!entry.allEnsamblado || entry.timerActive);
+      if(!needsForce) return;
+      entry.force = !entry.force;
+      renderQueue();
+      if(msg){
+        const reasons = [];
+        if(!entry.allEnsamblado) reasons.push('componentes pendientes');
+        if(entry.timerActive) reasons.push('cronometro activo');
+        if(entry.force){
+          msg.textContent = `Caja ${entry.lote} marcada para mover (${reasons.join(' y ')}).`;
+        } else {
+          msg.textContent = `Caja ${entry.lote} requiere completar ${reasons.join(' y ')} o habilitar el forzado.`;
+        }
+      }
+    }
+
+    async function lookup(code){
+      if(!code || pendingRfids.has(code)) return;
+      pendingRfids.add(code);
+      if(msg){ msg.textContent = `Buscando ${code}...`; }
+      try{
+        const res = await fetch('/operacion/acond/despacho/lookup',{ method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ rfid: code })});
+        let data = null;
+        try { data = await res.json(); } catch { data = null; }
+        if(!res.ok || !data || data.ok === false){
+          if(msg){ msg.textContent = (data && (data.error || data.message)) ? (data.error || data.message) : 'Error buscando caja.'; }
+          return;
+        }
+        const cajaId = data.caja_id;
+        if(!cajaId){
+          if(msg){ msg.textContent = 'Caja no encontrada.'; }
+          return;
+        }
+        const yaLista = Array.isArray(listoDespacho) && listoDespacho.some(it => String(it.caja_id) === String(cajaId));
+        if(yaLista){
+          if(msg){ msg.textContent = `La caja ${data.lote || cajaId} ya esta en Lista para Despacho.`; }
+          return;
+        }
+        const isComplete = data.allEnsamblado === true;
+        const timerActive = !!(data.timer && data.timer.active === true);
+        const componentes = (()=>{
+          if(Array.isArray(data.componentes) && data.componentes.length){
+            return normalizeComponentes(data.componentes);
+          }
+          if(Array.isArray(data.rfids) && data.rfids.length){
+            return normalizeComponentes(data.rfids);
+          }
+          return [];
+        })();
+        let entry = queue.find(item => String(item.cajaId) === String(cajaId));
+        const needsForce = (!isComplete || timerActive);
+        if(!entry){
+          entry = {
+            cajaId,
+            lote: data.lote || `Caja ${cajaId}`,
+            orderId: data.order_id ?? null,
+            orderNum: data.order_num ?? null,
+            componentes,
+            total: data.total ?? componentes.length,
+            pendientes: data.pendientes ?? 0,
+            componentesOcultos: data.componentesOcultos === true,
+            rfids: [],
+            allEnsamblado: isComplete,
+            timer: data.timer || null,
+            timerActive,
+            force: !needsForce
+          };
+          queue.push(entry);
+        } else {
+          entry.lote = data.lote || entry.lote;
+          entry.orderId = data.order_id ?? entry.orderId;
+          entry.orderNum = data.order_num ?? entry.orderNum;
+          entry.componentes = componentes.length ? componentes : entry.componentes;
+          entry.total = data.total ?? entry.total;
+          entry.pendientes = data.pendientes ?? entry.pendientes;
+          entry.componentesOcultos = data.componentesOcultos === true;
+          entry.allEnsamblado = isComplete;
+          entry.timer = data.timer || entry.timer;
+          entry.timerActive = timerActive;
+          if(!needsForce) entry.force = true;
+        }
+        if(!entry.rfids.includes(code)) entry.rfids.push(code);
+        seenRfids.add(code);
+        selectedCajaId = entry.cajaId;
+        renderQueue();
+        if(msg){
+          if(needsForce){
+            const reasons = [];
+            if(!isComplete) reasons.push(`${entry.pendientes ?? 'algunos'} pendientes`);
+            if(timerActive) reasons.push('cronometro activo');
+            msg.textContent = `Caja ${entry.lote} tiene ${reasons.join(' y ')}. Usa "Permitir mover incompleta" para forzar.`;
+          } else {
+            msg.textContent = `Caja ${entry.lote} lista (${entry.total || 0} items).`;
+          }
+        }
+      } catch(err){
+        console.error('[Acond] despacho lookup error', err);
+        if(msg){ msg.textContent = err?.message || 'Error buscando caja.'; }
+      } finally {
+        pendingRfids.delete(code);
+        updateConfirmState();
+      }
+    }
+
+    async function processRaw(raw){
+      const tokens = parseRfids(raw);
+      const candidates = tokens.filter(code => !seenRfids.has(code));
+      if(!candidates.length) return;
+      if(input){ input.value = ''; }
+      for(const code of candidates){
+        await lookup(code);
+      }
+    }
+
+    function removeCaja(cajaId){
+      const idx = queue.findIndex(entry => String(entry.cajaId) === String(cajaId));
+      if(idx === -1) return;
+      const removed = queue.splice(idx, 1)[0];
+      if(removed && Array.isArray(removed.rfids)){
+        removed.rfids.forEach(rf => seenRfids.delete(rf));
+      }
+      if(selectedCajaId && String(selectedCajaId) === String(cajaId)){
+        selectedCajaId = null;
+      }
+      renderQueue();
+      if(!queue.length && msg){ msg.textContent = ''; }
+    }
+
+    openBtn.addEventListener('click', ()=>{
+      try { dialog.showModal(); } catch { dialog.classList.remove('hidden'); }
+      reset();
+      setTimeout(()=> input?.focus(), 40);
     });
-    btn.addEventListener('click', ()=>{ try { dialog.showModal(); } catch { dialog.classList.remove('hidden'); } reset(); setTimeout(()=>input?.focus(),50); });
-    dialog?.addEventListener('close', reset);
-  // Helper local si backend no envía roles (estimación básica por sufijo del modelo no disponible aquí)
-  function inferRolFromCode(_rf){ return 'tic'; }
+
+    confirmBtn?.addEventListener('click', async ()=>{
+      const durationSec = computeDurationSec();
+      if(durationSec <= 0){
+        if(msg){ msg.textContent = 'Define una duracion valida antes de marcar.'; }
+        updateConfirmState();
+        return;
+      }
+      if(!queue.length){
+        if(msg){ msg.textContent = 'No hay cajas escaneadas.'; }
+        return;
+      }
+      confirmBtn.disabled = true;
+      if(msg){ msg.textContent = 'Marcando cajas...'; }
+      const errors = [];
+      const processedIds = [];
+      const codesToRelease = new Set();
+      for(const entry of queue){
+        const rfid = entry.rfids && entry.rfids.length ? entry.rfids[0] : null;
+        if(!rfid){
+          errors.push(`Caja ${entry.lote}: sin RFID para mover.`);
+          continue;
+        }
+        const needsForce = (!entry.allEnsamblado || entry.timerActive);
+        if(needsForce && !entry.force){
+          errors.push(`Caja ${entry.lote}: habilita "Permitir mover incompleta".`);
+          continue;
+        }
+        const reasons = [];
+        if(!entry.allEnsamblado) reasons.push('componentes pendientes');
+        if(entry.timerActive) reasons.push('cronometro en progreso');
+        if(needsForce){
+          const proceed = window.confirm(`La caja ${entry.lote} tiene ${reasons.join(' y ')}. Deseas moverla de todas formas?`);
+          if(!proceed){
+            errors.push(`Caja ${entry.lote}: cancelada por el usuario.`);
+            continue;
+          }
+        }
+        try{
+          const res = await fetch('/operacion/acond/despacho/move',{ method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ rfid, durationSec, allowIncomplete: needsForce })});
+          let payload = null;
+          try { payload = await res.json(); } catch { payload = null; }
+          if(!res.ok || !payload || payload.ok === false){
+            const message = payload && (payload.error || payload.message) ? (payload.error || payload.message) : `Error (${res.status})`;
+            errors.push(`Caja ${entry.lote}: ${message}`);
+            continue;
+          }
+          processedIds.push(entry.cajaId);
+          if(Array.isArray(entry.rfids)) entry.rfids.forEach(code => codesToRelease.add(code));
+        } catch(err){
+          errors.push(`Caja ${entry.lote}: ${err?.message || 'Error'}`);
+        }
+      }
+      if(processedIds.length){
+        queue = queue.filter(entry => !processedIds.includes(entry.cajaId));
+        codesToRelease.forEach(code => seenRfids.delete(code));
+        selectedCajaId = null;
+        renderQueue();
+        try { await loadData(); } catch(err){ console.error('[Acond] reload after despacho move', err); }
+      } else {
+        renderQueue();
+      }
+      if(msg){
+        if(errors.length){
+          const summary = errors.slice(0, 2).join(' | ');
+          msg.textContent = processedIds.length ? `Marcadas ${processedIds.length}. Errores: ${summary}${errors.length > 2 ? '...' : ''}` : summary;
+        } else {
+          msg.textContent = `Marcadas ${processedIds.length} caja${processedIds.length === 1 ? '' : 's'}.`;
+        }
+      }
+      confirmBtn.disabled = false;
+      updateConfirmState();
+      if(!queue.length){
+        setTimeout(()=>{ try { dialog.close(); } catch { dialog.classList.add('hidden'); } }, 600);
+      }
+    });
+
+    clearBtn?.addEventListener('click', ()=>{
+      reset();
+      setTimeout(()=> input?.focus(), 10);
+    });
+
+    queueList?.addEventListener('click', ev=>{
+      const removeBtn = ev.target.closest('[data-remove-caja]');
+      if(removeBtn){
+        const id = removeBtn.getAttribute('data-remove-caja');
+        if(id) removeCaja(id);
+        ev.preventDefault();
+        ev.stopPropagation();
+        return;
+      }
+      const toggle = ev.target.closest('[data-toggle-force]');
+      if(toggle){
+        const id = toggle.getAttribute('data-toggle-force');
+        if(id) toggleForce(id);
+        ev.preventDefault();
+        ev.stopPropagation();
+        return;
+      }
+      const card = ev.target.closest('[data-select-caja]');
+      if(card){
+        const id = card.getAttribute('data-select-caja');
+        if(id) setSelectedCaja(id);
+      }
+    });
+
+    input?.addEventListener('input', async ()=>{
+      const raw = input.value || '';
+      if(parseRfids(raw).length){
+        await processRaw(raw.toUpperCase());
+      }
+    });
+    input?.addEventListener('keydown', async ev=>{
+      const key = ev.key || ev.code;
+      if(key === 'Enter' || key === 'NumpadEnter'){
+        ev.preventDefault();
+        const raw = input.value || '';
+        if(raw){
+          await processRaw(raw.toUpperCase());
+        }
+      } else if(key === 'Escape'){
+        input.value = '';
+      }
+    });
+
+    hrInput?.addEventListener('input', updateConfirmState);
+    minInput?.addEventListener('input', updateConfirmState);
+
+    dialog.addEventListener('close', reset);
   })();
 
-  // =================== NUEVA VINCULACIÓN DE ORDEN EN DETALLE ===================
+// =================== NUEVA VINCULACIÓN DE ORDEN EN DETALLE ===================
+// =================== NUEVA VINCULACIÓN DE ORDEN EN DETALLE ===================
   async function loadOrdenesForDetalle(selectEl){
     if(!selectEl) return;
     selectEl.innerHTML = '<option value="">Cargando órdenes…</option>';

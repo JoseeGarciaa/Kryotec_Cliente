@@ -4,7 +4,18 @@
   const qs = (s)=> document.querySelector(s);
   const grid = qs('#insp-caja-grid');
   const spin = qs('#insp-spin');
-  const state = { cajas: [], serverOffset: 0, cajaSel: null, tics: [], ticChecks: new Map(), activeTic: null, inInspeccion: false };
+  const state = {
+    cajas: [],
+    serverOffset: 0,
+    cajaSel: null,
+    tics: [],
+    ticChecks: new Map(),
+    activeTic: null,
+    inInspeccion: false,
+    bulkMode: false,
+    bulkQueue: [],
+    lastLookupCode: null
+  };
 
   function msElapsed(timer){ if(!timer||!timer.startsAt) return 0; return (Date.now()+state.serverOffset) - new Date(timer.startsAt).getTime(); }
   function timerDisplay(ms){ const s=Math.max(0,Math.floor(ms/1000)); const h=Math.floor(s/3600); const m=Math.floor((s%3600)/60); const sec=s%60; return `${h}:${String(m).padStart(2,'0')}:${String(sec).padStart(2,'0')}`; }
@@ -68,6 +79,17 @@
     });
   }, 1000);
   // ---- Scan/Lookup caja ----
+  const modeIndividualBtn = qs('#insp-mode-individual');
+  const modeBulkBtn = qs('#insp-mode-bulk');
+  const singleSection = qs('#insp-single-section');
+  const bulkSection = qs('#insp-bulk-section');
+  const bulkInput = qs('#insp-bulk-input');
+  const bulkAddBtn = qs('#insp-bulk-add');
+  const bulkNextBtn = qs('#insp-bulk-next');
+  const bulkClearBtn = qs('#insp-bulk-clear');
+  const bulkMsg = qs('#insp-bulk-msg');
+  const bulkList = qs('#insp-bulk-list');
+
   const scanInput = qs('#insp-scan');
   const scanBtn = qs('#insp-scan-btn');
   const scanClear = qs('#insp-scan-clear');
@@ -98,6 +120,161 @@
   const addConfirm = qs('#insp-add-confirm');
   const addClear = qs('#insp-add-clear');
   const addItems = qs('#insp-add-items');
+
+  function normalizeCode(code){
+    const raw = (code||'').toString().toUpperCase();
+    return raw.replace(/[^A-Z0-9]/g, '').trim();
+  }
+
+  function findBulkEntry(code){
+    const target = normalizeCode(code);
+    return state.bulkQueue.find(entry=> entry.code === target);
+  }
+
+  function updateBulkEntry(code, updates){
+    const entry = findBulkEntry(code);
+    if(entry){
+      Object.assign(entry, updates||{});
+      return entry;
+    }
+    return null;
+  }
+
+  function renderBulkQueue(){
+    if(!bulkList) return;
+    if(!state.bulkQueue.length){
+      bulkList.innerHTML = "<div class='text-xs opacity-60'>Sin cajas en cola.</div>";
+      return;
+    }
+    bulkList.innerHTML = state.bulkQueue.map(entry=>{
+      const status = entry.status || 'queued';
+      const message = entry.message || '';
+      let badge = "<span class='badge badge-neutral badge-xs'>Pendiente</span>";
+      if(status==='loading'){ badge = "<span class='badge badge-info badge-xs gap-1'><span class='loading loading-xs'></span>Buscando</span>"; }
+      else if(status==='active'){ badge = "<span class='badge badge-primary badge-xs'>En inspección</span>"; }
+      else if(status==='done'){ badge = "<span class='badge badge-success badge-xs'>Completada</span>"; }
+      else if(status==='error'){ badge = "<span class='badge badge-error badge-xs'>Error</span>"; }
+      const rowCls = status==='active' ? 'border-primary bg-primary/10 shadow-sm' : status==='done' ? 'border-success bg-success/5' : 'border-base-300/40 bg-base-100';
+      const disableIdentify = status==='loading' || status==='active';
+      return `<div class='border rounded-md p-2 space-y-1 ${rowCls}' data-bulk-code='${entry.code}'>
+        <div class='flex items-center gap-2'>
+          <span class='font-mono text-xs flex-1 truncate' title='${entry.code}'>${entry.code}</span>
+          ${badge}
+          <button class='btn btn-ghost btn-xs' data-action='bulk-open' data-code='${entry.code}' ${disableIdentify?'disabled':''}>Identificar</button>
+          <button class='btn btn-ghost btn-xs text-error' data-action='bulk-remove' data-code='${entry.code}' title='Quitar'>✕</button>
+        </div>
+        ${message ? `<div class='text-[10px] opacity-70'>${message}</div>` : ''}
+      </div>`;
+    }).join('');
+  }
+
+  function setBulkMessage(text){ if(bulkMsg) bulkMsg.textContent = text||''; }
+
+  function addBulkCodesFromList(codes){
+    if(!Array.isArray(codes) || !codes.length){ return { added:0, total:0 }; }
+    let added = 0;
+    codes.forEach(raw=>{
+      const code = normalizeCode(raw);
+      if(code.length===24 && !state.bulkQueue.some(entry=> entry.code===code)){
+        state.bulkQueue.push({ code, status:'queued', message:'' });
+        added++;
+      }
+    });
+    renderBulkQueue();
+    return { added, total: codes.length };
+  }
+
+  function clearBulkQueue(){ state.bulkQueue = []; renderBulkQueue(); setBulkMessage(''); }
+
+  function clearBulkActiveExcept(code){
+    const target = normalizeCode(code);
+    state.bulkQueue.forEach(entry=>{
+      if(entry.code !== target && entry.status === 'active'){
+        entry.status = entry.status === 'done' ? 'done' : 'queued';
+      }
+    });
+  }
+
+  function setMode(mode){
+    const bulk = mode === 'bulk';
+    state.bulkMode = bulk;
+    modeIndividualBtn?.classList.toggle('btn-primary', !bulk);
+    modeIndividualBtn?.classList.toggle('btn-ghost', bulk);
+    modeBulkBtn?.classList.toggle('btn-primary', bulk);
+    modeBulkBtn?.classList.toggle('btn-ghost', !bulk);
+    singleSection?.classList.toggle('hidden', bulk);
+    bulkSection?.classList.toggle('hidden', !bulk);
+    setTimeout(()=> (bulk ? bulkInput : scanInput)?.focus(), 120);
+  }
+
+  function loadNextBulkCode(){
+    const next = state.bulkQueue.find(entry=> entry.status==='queued' || entry.status==='error');
+    if(next){ lookupCaja(next.code, { fromBulk:true }); }
+    else { setBulkMessage('No hay cajas pendientes en la cola.'); }
+  }
+
+  renderBulkQueue();
+  setMode('individual');
+
+  modeIndividualBtn?.addEventListener('click', ()=> setMode('individual'));
+  modeBulkBtn?.addEventListener('click', ()=> setMode('bulk'));
+
+  function hasActiveBulk(){ return state.bulkQueue.some(entry=> entry.status==='active' || entry.status==='loading'); }
+
+  function processBulkBuffer(raw){
+    let value = (raw || '').toUpperCase();
+    value = value.replace(/[^A-Z0-9]/g, '');
+    let addedTotal = 0;
+    let duplicateCount = 0;
+    while(value.length >= 24){
+      const chunk = value.slice(0,24);
+      value = value.slice(24);
+      const { added } = addBulkCodesFromList([chunk]);
+      if(added>0){ addedTotal += added; }
+      else { duplicateCount++; }
+    }
+    if(addedTotal>0){
+      setBulkMessage(`Cajas añadidas: ${addedTotal}`);
+      if(!hasActiveBulk()){ loadNextBulkCode(); }
+    } else if(duplicateCount>0){
+      setBulkMessage('Sin códigos nuevos.');
+    }
+    return value; // remainder (<24)
+  }
+
+  function handleBulkAppend(fromInput){
+    const source = typeof fromInput === 'string' ? fromInput : (bulkInput?.value || '');
+    const remainder = processBulkBuffer(source);
+    if(bulkInput && bulkInput.value !== remainder){ bulkInput.value = remainder; }
+    if(!remainder.length && !state.bulkQueue.length){ setBulkMessage(''); }
+  }
+
+  bulkAddBtn?.addEventListener('click', ()=> handleBulkAppend());
+  bulkInput?.addEventListener('input', ()=>{
+    if(!bulkInput) return;
+    const remainder = processBulkBuffer(bulkInput.value);
+    if(bulkInput.value !== remainder){ bulkInput.value = remainder; }
+  });
+  bulkInput?.addEventListener('keydown', (e)=>{
+    if(e.key==='Enter' && !e.shiftKey){
+      e.preventDefault();
+      handleBulkAppend();
+      if((bulkInput?.value||'').length){
+        const missing = 24 - bulkInput.value.length;
+        setBulkMessage(`RFID incompleto (faltan ${missing} caracteres).`);
+      }
+    }
+  });
+  bulkInput?.addEventListener('paste', (e)=>{
+    const text = (e.clipboardData && e.clipboardData.getData('text')) || '';
+    if(text){
+      e.preventDefault();
+      const remainder = processBulkBuffer(text);
+      if(bulkInput) bulkInput.value = remainder;
+    }
+  });
+  bulkClearBtn?.addEventListener('click', ()=>{ clearBulkQueue(); if(bulkInput) bulkInput.value=''; setBulkMessage(''); });
+  bulkNextBtn?.addEventListener('click', ()=> loadNextBulkCode());
 
   function renderChecklist(){
     if(!panel||!list) return;
@@ -197,21 +374,34 @@
   // Abrir modal Agregar
   btnAdd?.addEventListener('click', ()=>{ try{ addDlg.showModal(); }catch{ addDlg.classList.remove('hidden'); } addMsg && (addMsg.textContent=''); addConfirm && (addConfirm.disabled=true); addScan && (addScan.value=''); addH && (addH.value=''); addM && (addM.value=''); setTimeout(()=> addScan?.focus(), 200); });
 
-  async function lookupCaja(){
-    const code = (scanInput?.value||'').trim();
-    if(code.length!==24){ scanMsg && (scanMsg.textContent='RFID inválido'); return; }
+  async function lookupCaja(inputCode, opts = {}){
+    const fromBulk = !!opts.fromBulk;
+    const code = normalizeCode(inputCode ?? (scanInput?.value||''));
+    const targetMsg = fromBulk ? bulkMsg : scanMsg;
+    if(code.length!==24){
+      if(targetMsg) targetMsg.textContent = 'RFID inválido';
+      if(fromBulk){ updateBulkEntry(code, { status:'error', message:'RFID inválido' }); renderBulkQueue(); }
+      return;
+    }
+    state.lastLookupCode = code;
+    if(!fromBulk && scanInput) scanInput.value = code;
+    if(targetMsg) targetMsg.textContent = 'Buscando...';
+    if(fromBulk){
+      clearBulkActiveExcept(code);
+      updateBulkEntry(code, { status:'loading', message:'' });
+      renderBulkQueue();
+    }
+    let lastError = 'Caja no encontrada';
     try {
-      scanMsg && (scanMsg.textContent='Buscando...');
       const r = await fetch('/operacion/inspeccion/lookup',{ method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ rfid: code })});
       const j = await r.json();
       if(j.ok){
-        // Caja en Inspección: tenemos TICs (posiblemente 0) y opcionalmente comps (VIP/CUBE)
         state.cajaSel = j.caja; state.tics = j.tics||[]; state.ticChecks = new Map(); state.activeTic = null; state.inInspeccion = true;
         try{
           const r2 = await fetch('/operacion/caja/lookup',{ method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ code })});
           const j2 = await r2.json();
           if(j2.ok){
-            const comps = (j2.caja?.items||[]).map(it=>({ codigo: it.rfid, tipo: (it.rol||inferTipo(it.nombre_modelo||'')) }))
+            const comps = (j2.caja?.items||[]).map(it=>({ codigo: it.rfid, tipo: (it.rol||inferTipo(it.nombre_modelo||'')) }));
             state.cajaSel = { ...state.cajaSel, componentes: comps };
           } else if(Array.isArray(j.comps)){
             state.cajaSel = { ...state.cajaSel, componentes: (j.comps||[]).map(it=> ({ codigo: it.rfid, tipo: it.rol })) };
@@ -222,26 +412,30 @@
           }
         }
         renderChecklist();
-        scanMsg && (scanMsg.textContent='');
+        if(targetMsg) targetMsg.textContent = fromBulk ? `Caja lista (${code})` : '';
+        if(fromBulk){ updateBulkEntry(code, { status:'active', message:'Caja cargada para inspección' }); renderBulkQueue(); }
         return;
       }
-      // Si no está en Inspección, mostrar igualmente la composición completa de la caja (vip/tic/cube)
-      // usando el lookup general de operación que devuelve items de la caja
+      lastError = j.error || lastError;
       try {
         const r2 = await fetch('/operacion/caja/lookup',{ method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ code })});
         const j2 = await r2.json();
         if(j2.ok){
-          const comps = (j2.caja?.items||[]).map(it=>({ codigo: it.rfid, tipo: (it.rol||inferTipo(it.nombre_modelo||'')) }))
+          const comps = (j2.caja?.items||[]).map(it=>({ codigo: it.rfid, tipo: (it.rol||inferTipo(it.nombre_modelo||'')) }));
           state.cajaSel = { id: j2.caja.id, lote: j2.caja.lote, componentes: comps };
           state.tics = []; state.ticChecks = new Map(); state.activeTic = null; state.inInspeccion = false;
           renderChecklist();
-          scanMsg && (scanMsg.textContent='Caja no está en Inspección. Usa "Agregar a Inspección" para traerla.');
+          const msg = 'Caja no está en Inspección. Usa "Agregar a Inspección" para traerla.';
+          if(targetMsg) targetMsg.textContent = msg;
+          if(fromBulk){ updateBulkEntry(code, { status:'error', message: msg }); renderBulkQueue(); }
           return;
         }
       } catch(_e){}
-      // Fallback mensaje si no encontramos caja
-      scanMsg && (scanMsg.textContent=j.error||'Caja no encontrada');
-    } catch(e){ scanMsg && (scanMsg.textContent='Error'); }
+    } catch(_e){
+      lastError = 'Error';
+    }
+    if(targetMsg) targetMsg.textContent = lastError;
+    if(fromBulk){ updateBulkEntry(code, { status:'error', message: lastError }); renderBulkQueue(); }
   }
 
   // Inferir tipo simple por nombre de modelo (fallback)
@@ -291,6 +485,21 @@
   document.addEventListener('click', (e)=>{
     const t = e.target;
     if(!(t instanceof HTMLElement)) return;
+    if(t.matches('[data-action="bulk-open"]')){
+      const code = t.getAttribute('data-code')||'';
+      if(code){ lookupCaja(code, { fromBulk:true }); }
+      return;
+    }
+    if(t.matches('[data-action="bulk-remove"]')){
+      const code = normalizeCode(t.getAttribute('data-code')||'');
+      if(code){
+        state.bulkQueue = state.bulkQueue.filter(entry=> entry.code !== code);
+        if(state.lastLookupCode === code){ state.lastLookupCode = null; }
+        renderBulkQueue();
+        if(!state.bulkQueue.length) setBulkMessage('');
+      }
+      return;
+    }
     if(t.matches('[data-action="tic-inhabilitar"]')){
       const code = t.getAttribute('data-rfid')||'';
       if(novRfid) novRfid.textContent = code;
@@ -366,6 +575,13 @@
       const j = await r.json();
       if(!j.ok){ completeBtn.disabled=false; scanMsg && (scanMsg.textContent=j.error||'Error'); return; }
       // Reset panel and reload list
+      if(state.lastLookupCode){
+        const entry = updateBulkEntry(state.lastLookupCode, { status:'done', message:'Inspección completada' });
+        renderBulkQueue();
+        const hasPending = state.bulkQueue.some(it=> it.status==='queued' || it.status==='error');
+        state.lastLookupCode = null;
+        if(hasPending){ setTimeout(()=> loadNextBulkCode(), 200); }
+      }
       panel.classList.add('hidden'); state.cajaSel=null; state.tics=[]; state.ticChecks.clear(); state.activeTic=null;
       scanInput && (scanInput.value='');
       await load();
@@ -375,7 +591,13 @@
 
   scanBtn?.addEventListener('click', lookupCaja);
   scanInput?.addEventListener('keydown', (e)=>{ if(e.key==='Enter'){ e.preventDefault(); lookupCaja(); }});
-  scanClear?.addEventListener('click', ()=>{ if(scanInput) scanInput.value=''; scanMsg && (scanMsg.textContent=''); panel?.classList.add('hidden'); state.cajaSel=null; state.tics=[]; state.ticChecks.clear(); state.activeTic=null; scanInput?.focus(); });
+  scanClear?.addEventListener('click', ()=>{
+    if(scanInput) scanInput.value='';
+    scanMsg && (scanMsg.textContent='');
+    panel?.classList.add('hidden');
+    state.cajaSel=null; state.tics=[]; state.ticChecks.clear(); state.activeTic=null; state.lastLookupCode = null;
+    scanInput?.focus();
+  });
   scanInput && setTimeout(()=> scanInput.focus(), 400);
 
   // ---- TIC scan/activation ----

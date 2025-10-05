@@ -417,11 +417,14 @@
     return v;
   }
 
+  let validateToken = 0;
   async function validate(){
     if(!rfids.length){ invalid=[]; valid=[]; renderChips(); return; }
+    const myToken = ++validateToken;
     try{
       const r = await fetch('/operacion/preacond/validate', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ target, rfids }) });
       const j = await r.json();
+      if(myToken !== validateToken){ return; }
   const inv = Array.isArray(j.invalid)? j.invalid : [];
   const ok = Array.isArray(j.valid)? j.valid : [];
   // Auto-filtrar: conservar solo válidos y limpiar inválidos (no mostrar rojos)
@@ -430,7 +433,7 @@
   rfids = rfids.filter(c => valid.includes(c));
   renderChips();
   msg.textContent = '';
-    }catch{ /* keep state */ }
+    }catch{ if(myToken === validateToken){ /* keep state */ } }
   }
 
   // Debounce to avoid hammering the server with the RFID gun rapid input
