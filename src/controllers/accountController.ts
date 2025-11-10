@@ -7,12 +7,37 @@ import jwt from 'jsonwebtoken';
 import { config } from '../config';
 import { validatePasswordStrength, PASSWORD_POLICY_MESSAGE, normalizeSessionTtl } from '../utils/passwordPolicy';
 
+const normalizeTenantSchema = (tenant?: string | null): string | null => {
+  if (!tenant) return null;
+  const trimmed = String(tenant).trim();
+  if (!trimmed) return null;
+  return trimmed.startsWith('tenant_') ? trimmed : `tenant_${trimmed}`;
+};
+
+const determineTenantSchema = (req: Request, user: any): string | null => {
+  const userTenant = normalizeTenantSchema(user?.tenant);
+  const requestTenant = normalizeTenantSchema(resolveTenant(req));
+  if (userTenant && requestTenant && userTenant !== requestTenant) {
+    console.warn('[account] tenant mismatch', {
+      userTenant,
+      requestTenant,
+      userId: user?.sub,
+      path: req.originalUrl,
+    });
+  }
+  return userTenant || requestTenant;
+};
+
 export const AccountController = {
   index: async (req: Request, res: Response) => {
     const u: any = (res.locals as any).user;
     if (!u) return res.redirect('/auth/login');
-    const t = resolveTenant(req);
-    const tenantSchema = t ? (t.startsWith('tenant_') ? t : `tenant_${t}`) : (u.tenant || '');
+    const tenantSchema = determineTenantSchema(req, u);
+    if (!tenantSchema) {
+      console.error('[account] unable to determine tenant for account view', { userId: u?.sub, path: req.originalUrl });
+      res.clearCookie('token');
+      return res.redirect('/auth/login');
+    }
     try {
       const accountUser = await withTenant(tenantSchema, (client) => UsersModel.findById(client, u.sub));
       const mustChange = req.query.mustChange === '1'
@@ -56,8 +81,12 @@ export const AccountController = {
   updateProfile: async (req: Request, res: Response) => {
     const u: any = (res.locals as any).user;
     if (!u) return res.redirect('/auth/login');
-    const t = resolveTenant(req);
-    const tenantSchema = t ? (t.startsWith('tenant_') ? t : `tenant_${t}`) : (u.tenant || '');
+    const tenantSchema = determineTenantSchema(req, u);
+    if (!tenantSchema) {
+      console.error('[account] unable to determine tenant for profile update', { userId: u?.sub, path: req.originalUrl });
+      res.clearCookie('token');
+      return res.redirect('/auth/login');
+    }
     const { nombre, telefono, correo } = req.body as any;
     try {
       await withTenant(tenantSchema, async (client) => {
@@ -95,8 +124,12 @@ export const AccountController = {
   changePassword: async (req: Request, res: Response) => {
     const u: any = (res.locals as any).user;
     if (!u) return res.redirect('/auth/login');
-    const t = resolveTenant(req);
-    const tenantSchema = t ? (t.startsWith('tenant_') ? t : `tenant_${t}`) : (u.tenant || '');
+    const tenantSchema = determineTenantSchema(req, u);
+    if (!tenantSchema) {
+      console.error('[account] unable to determine tenant for password change', { userId: u?.sub, path: req.originalUrl });
+      res.clearCookie('token');
+      return res.redirect('/auth/login');
+    }
     const { current_password, new_password, confirm_password } = req.body as any;
     try {
       const user = await withTenant(tenantSchema, (client) => UsersModel.findById(client, u.sub));
