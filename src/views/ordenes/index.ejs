@@ -6,13 +6,18 @@
     <h1 class="text-2xl font-bold">Órdenes</h1>
     <p class="opacity-70 text-sm">Listado y gestión de órdenes</p>
   </div>
-  <div>
+  <div class="flex flex-wrap gap-2 justify-end">
+    <a class="btn btn-outline btn-sm" href="/ordenes/calculadora">Calculadora</a>
+    <a class="btn btn-ghost btn-sm" href="/ordenes/template">Descargar plantilla</a>
+    <button id="btn-import-orders" class="btn btn-secondary btn-sm">Importar Excel</button>
     <button id="btn-add-order" class="btn btn-primary btn-sm">
       Agregar orden
     </button>
   </div>
-  
+
 </div>
+
+<div id="orders-success-banner" class="alert alert-success hidden mb-4 text-sm"></div>
 
 <!-- Tabla de órdenes -->
 <div class="card bg-base-200 shadow">
@@ -32,6 +37,8 @@
           <tr>
             <th># Orden</th>
             <th>Código producto</th>
+            <th>Modelo sugerido</th>
+            <th>Cantidad sugerida</th>
             <th>Cantidad</th>
             <th>Ciudad destino</th>
             <th>Ubicación destino</th>
@@ -44,7 +51,7 @@
         <tbody>
           <% if ((items||[]).length === 0) { %>
             <tr>
-              <td colspan="8" class="text-center opacity-60">
+              <td colspan="11" class="text-center opacity-60">
                 <% if (currentStateFilter === 'inactive') { %>
                   No hay órdenes inhabilitadas.
                 <% } else if (currentStateFilter === 'active') { %>
@@ -59,6 +66,8 @@
               <tr>
                 <td><%= o.numero_orden || '-' %></td>
                 <td><%= o.codigo_producto || '-' %></td>
+                <td><%= o.modelo_sugerido_nombre || '-' %></td>
+                <td><%= o.cantidad_modelos ?? '-' %></td>
                 <td><%= o.cantidad ?? '-' %></td>
                 <td><%= o.ciudad_destino || '-' %></td>
                 <td><%= o.ubicacion_destino || '-' %></td>
@@ -72,15 +81,14 @@
                 <td><%= o.fecha_generacion ? new Date(o.fecha_generacion).toLocaleString() : '-' %></td>
                 <td class="text-right">
                   <div class="join join-horizontal justify-end">
-                    <button class="btn btn-xs btn-ghost join-item" data-edit
-                            data-id="<%= o.id %>"
-                            data-numero="<%= o.numero_orden||'' %>"
-                            data-codigo="<%= o.codigo_producto||'' %>"
-                            data-cantidad="<%= o.cantidad ?? '' %>"
-                            data-ciudad="<%= o.ciudad_destino||'' %>"
-                            data-ubicacion="<%= o.ubicacion_destino||'' %>"
-                            data-cliente="<%= o.cliente||'' %>"
-                            data-fecha="<%= o.fecha_generacion ? new Date(o.fecha_generacion).toISOString().slice(0,16) : '' %>">Editar</button>
+        <button class="btn btn-xs btn-ghost join-item" data-edit
+          data-id="<%= o.id %>"
+          data-numero="<%= o.numero_orden||'' %>"
+          data-codigo="<%= o.codigo_producto||'' %>"
+          data-cantidad="<%= o.cantidad ?? '' %>"
+          data-ciudad="<%= o.ciudad_destino||'' %>"
+          data-ubicacion="<%= o.ubicacion_destino||'' %>"
+          data-cliente="<%= o.cliente||'' %>">Editar</button>
                     <button class="btn btn-xs btn-error btn-outline join-item" data-delete data-id="<%= o.id %>" data-numero="<%= o.numero_orden||'-' %>">Eliminar</button>
                   </div>
                 </td>
@@ -93,6 +101,34 @@
   </div>
   
 </div>
+
+<!-- Modal importar órdenes -->
+<dialog id="modal-import-orders" class="modal">
+  <div class="modal-box w-11/12 max-w-2xl sm:w-full">
+    <h3 class="font-bold text-lg mb-3">Importar órdenes desde Excel</h3>
+    <div class="alert alert-info text-sm">
+      <span>Usa la plantilla oficial para mantener el orden de columnas. Las filas vacías se ignoran y las órdenes existentes se actualizan.</span>
+    </div>
+    <form id="form-import-orders" class="space-y-4" enctype="multipart/form-data">
+      <div class="form-control">
+        <label class="label"><span class="label-text">Archivo Excel (.xlsx)</span></label>
+        <input type="file" name="file" accept=".xlsx" class="file-input file-input-bordered file-input-sm w-full" required />
+      </div>
+      <div id="import-status" class="hidden text-sm"></div>
+      <div id="import-errors" class="hidden text-sm text-error"></div>
+      <div class="flex justify-end gap-2 pt-2">
+        <button type="button" class="btn btn-sm" data-close>Cancelar</button>
+        <button id="import-submit" class="btn btn-sm btn-primary" type="submit">
+          <span id="import-submit-text">Procesar</span>
+          <span id="import-spinner" class="loading loading-spinner loading-xs hidden"></span>
+        </button>
+      </div>
+    </form>
+  </div>
+  <form method="dialog" class="modal-backdrop">
+    <button>close</button>
+  </form>
+</dialog>
 
 <!-- Modal crear orden -->
 <dialog id="modal-add-order" class="modal">
@@ -123,10 +159,8 @@
         <label class="label"><span class="label-text">Cliente</span></label>
         <input name="cliente" type="text" class="input input-sm input-bordered" />
       </div>
-      <div class="form-control md:col-span-2">
-        <label class="label"><span class="label-text">Fecha generación (opcional)</span></label>
-        <input name="fecha_generacion" type="datetime-local" class="input input-sm input-bordered" />
-      </div>
+      <input type="hidden" name="clientTzOffset" value="" />
+      <input type="hidden" name="clientLocalNow" value="" />
       <div class="md:col-span-3 flex flex-col sm:flex-row items-stretch sm:items-end justify-end gap-2 mt-2">
         <button type="button" class="btn btn-sm sm:btn-md" data-close>Cancelar</button>
         <button class="btn btn-sm sm:btn-md btn-primary">Agregar</button>
@@ -167,10 +201,6 @@
       <div class="form-control">
         <label class="label"><span class="label-text">Cliente</span></label>
         <input name="cliente" type="text" class="input input-sm input-bordered" />
-      </div>
-      <div class="form-control md:col-span-2">
-        <label class="label"><span class="label-text">Fecha generación (opcional)</span></label>
-        <input name="fecha_generacion" type="datetime-local" class="input input-sm input-bordered" />
       </div>
       <div class="md:col-span-3 flex flex-col sm:flex-row items-stretch sm:items-end justify-end gap-2 mt-2">
         <button type="button" class="btn btn-sm sm:btn-md" data-close>Cancelar</button>

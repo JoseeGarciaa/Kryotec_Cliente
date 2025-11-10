@@ -6,6 +6,8 @@ import { UsersModel } from '../models/User';
 import { config } from '../config';
 import { resolveTenant } from '../middleware/tenant';
 import { findUserInAnyTenant } from '../services/tenantDiscovery';
+import { ensureSecurityArtifacts } from '../services/securityBootstrap';
+import { normalizeSessionTtl } from '../utils/passwordPolicy';
 
 export const AuthController = {
   loginView: (req: Request, res: Response) => {
@@ -14,15 +16,16 @@ export const AuthController = {
 
   login: async (req: Request, res: Response) => {
     const { correo, password } = req.body as { correo: string; password: string };
-  let tenantSchema: string | null = null;
-  const t = resolveTenant(req);
-  console.log('[auth][login] incoming', { correo, defaultTenant: process.env.DEFAULT_TENANT, db: process.env.DB_NAME, resolvedTenant: t });
-  if (t) tenantSchema = t.startsWith('tenant_') ? t : `tenant_${t}`;
+    let tenantSchema: string | null = null;
+    const t = resolveTenant(req);
+    console.log('[auth][login] incoming', { correo, defaultTenant: process.env.DEFAULT_TENANT, db: process.env.DB_NAME, resolvedTenant: t });
+    if (t) tenantSchema = t.startsWith('tenant_') ? t : `tenant_${t}`;
 
     try {
       let user = null;
       if (tenantSchema) {
         try {
+          await ensureSecurityArtifacts(tenantSchema);
           user = await withTenant(tenantSchema, async (client) => UsersModel.findByCorreo(client, correo));
         } catch (e: any) {
           // If tenant inferred is invalid or missing table, fall back to discovery
@@ -57,8 +60,20 @@ export const AuthController = {
         user = matches[0].user;
       }
 
-  if (!user) return res.status(401).render('auth/login', { error: 'Usuario o contraseña incorrectos', layout: 'layouts/auth', title: 'Acceso al Cliente' });
-  if (!user.activo) return res.status(403).render('auth/login', { error: 'Usuario inactivo', layout: 'layouts/auth', title: 'Acceso al Cliente' });
+      if (!user || !tenantSchema) {
+        return res.status(401).render('auth/login', { error: 'Usuario o contraseña incorrectos', layout: 'layouts/auth', title: 'Acceso al Cliente' });
+      }
+
+      await ensureSecurityArtifacts(tenantSchema);
+
+      if (!user.activo) {
+        return res.status(403).render('auth/login', { error: 'Usuario inactivo', layout: 'layouts/auth', title: 'Acceso al Cliente' });
+      }
+
+      if (user.bloqueado_hasta && new Date(user.bloqueado_hasta).getTime() > Date.now()) {
+        const unblockAt = new Date(user.bloqueado_hasta).toLocaleString('es-CO');
+        return res.status(423).render('auth/login', { error: `Cuenta bloqueada temporalmente por intentos fallidos. Intenta nuevamente después de ${unblockAt}.`, layout: 'layouts/auth', title: 'Acceso al Cliente' });
+      }
 
       console.log('[auth][login] user found', { tenantSchema, userId: user.id, rol: user.rol, activo: user.activo });
       let match = false;
@@ -69,22 +84,65 @@ export const AuthController = {
         match = user.password === password;
       }
       console.log('[auth][login] password match?', { match });
-  if (!match) return res.status(401).render('auth/login', { error: 'Usuario o contraseña incorrectos', layout: 'layouts/auth', title: 'Acceso al Cliente' });
+      if (!match) {
+        const { attempts, lockedUntil } = await withTenant(tenantSchema, (client) =>
+          UsersModel.registerFailedLogin(client, user!.id, config.security.maxFailedAttempts, config.security.lockMinutes)
+        );
+        if (lockedUntil && new Date(lockedUntil).getTime() > Date.now()) {
+          const unlock = new Date(lockedUntil).toLocaleString('es-CO');
+          return res.status(423).render('auth/login', { error: `Cuenta bloqueada por múltiples intentos fallidos. Intenta nuevamente después de ${unlock}.`, layout: 'layouts/auth', title: 'Acceso al Cliente' });
+        }
+        const remaining = Math.max(0, config.security.maxFailedAttempts - attempts);
+        const warning = remaining > 0
+          ? `Usuario o contraseña incorrectos. Intentos restantes: ${remaining}`
+          : 'Usuario o contraseña incorrectos.';
+        return res.status(401).render('auth/login', { error: warning, layout: 'layouts/auth', title: 'Acceso al Cliente' });
+      }
 
-  await withTenant(tenantSchema!, (client) => UsersModel.touchUltimoIngreso(client, user.id));
+      const expirationSource = user.contrasena_cambiada_en || user.fecha_creacion;
+      const maxAgeMs = config.security.passwordMaxAgeDays * 24 * 60 * 60 * 1000;
+      const passwordExpired = expirationSource ? (Date.now() - new Date(expirationSource).getTime()) > maxAgeMs : true;
+      const isFirstLogin = !user.ultimo_ingreso;
+      let mustChangePassword = Boolean(user.debe_cambiar_contrasena || passwordExpired || isFirstLogin);
 
-  const token = jwt.sign({ sub: user.id, tenant: tenantSchema, rol: user.rol, nombre: user.nombre, correo: user.correo }, config.jwtSecret, { expiresIn: '120m' });
-  res.cookie('token', token, {
-    httpOnly: true,
-    sameSite: 'lax',
-    secure: process.env.NODE_ENV === 'production',
-    maxAge: 120 * 60 * 1000, // 120 minutos
-  });
+      const sessionMeta = await withTenant(tenantSchema, async (client) => {
+        if (passwordExpired && !user.debe_cambiar_contrasena) {
+          await UsersModel.forcePasswordReset(client, user.id);
+          mustChangePassword = true;
+        }
+        await UsersModel.resetLoginState(client, user.id);
+        await UsersModel.touchUltimoIngreso(client, user.id);
+        const sessionVersion = await UsersModel.bumpSessionVersion(client, user.id);
+        return { sessionVersion };
+      });
+
+      const sessionTtlMinutes = normalizeSessionTtl(user.sesion_ttl_minutos ?? config.security.defaultSessionMinutes);
+      const token = jwt.sign({
+        sub: user.id,
+        tenant: tenantSchema,
+        rol: user.rol,
+        nombre: user.nombre,
+        correo: user.correo,
+        sede_id: user.sede_id ?? null,
+        sede_nombre: user.sede_nombre ?? null,
+        mustChangePassword,
+        sessionVersion: sessionMeta.sessionVersion,
+      }, config.jwtSecret, { expiresIn: `${sessionTtlMinutes}m` });
+      res.cookie('token', token, {
+        httpOnly: true,
+        sameSite: 'lax',
+        secure: process.env.NODE_ENV === 'production',
+        maxAge: sessionTtlMinutes * 60 * 1000,
+      });
+
   // Redirección según rol
   const rolLower = (user.rol || '').toLowerCase();
   // Normalización a nuevos nombres
   const legacyMap: Record<string,string> = { preacond:'acondicionador', operacion:'operador', bodega:'bodeguero', inspeccion:'inspeccionador', admin:'administrador' };
   const roleKey = legacyMap[rolLower] || rolLower;
+  if (mustChangePassword) {
+    return res.redirect('/cuenta?mustChange=1');
+  }
   if (roleKey === 'acondicionador') return res.redirect('/operacion/preacond');
   if (roleKey === 'operador') return res.redirect('/operacion/operacion');
   if (roleKey === 'bodeguero') return res.redirect('/operacion/bodega');
@@ -100,17 +158,77 @@ export const AuthController = {
           if (matches && matches.length === 1) {
             const tenant = matches[0].tenant;
             const user = matches[0].user;
-            await withTenant(tenant, (client) => UsersModel.touchUltimoIngreso(client, user.id));
-            const token = jwt.sign({ sub: user.id, tenant, rol: user.rol, nombre: user.nombre, correo: user.correo }, config.jwtSecret, { expiresIn: '120m' });
+            await ensureSecurityArtifacts(tenant);
+            if (!user.activo) {
+              return res.status(403).render('auth/login', { error: 'Usuario inactivo', layout: 'layouts/auth', title: 'Acceso al Cliente' });
+            }
+            if (user.bloqueado_hasta && new Date(user.bloqueado_hasta).getTime() > Date.now()) {
+              const unblockAt = new Date(user.bloqueado_hasta).toLocaleString('es-CO');
+              return res.status(423).render('auth/login', { error: `Cuenta bloqueada temporalmente por intentos fallidos. Intenta nuevamente después de ${unblockAt}.`, layout: 'layouts/auth', title: 'Acceso al Cliente' });
+            }
+
+            let match = false;
+            if (/^\$2[aby]\$/.test(user.password)) {
+              match = await bcrypt.compare(password, user.password);
+            } else {
+              match = user.password === password;
+            }
+            if (!match) {
+              const { attempts, lockedUntil } = await withTenant(tenant, (client) =>
+                UsersModel.registerFailedLogin(client, user!.id, config.security.maxFailedAttempts, config.security.lockMinutes)
+              );
+              if (lockedUntil && new Date(lockedUntil).getTime() > Date.now()) {
+                const unlock = new Date(lockedUntil).toLocaleString('es-CO');
+                return res.status(423).render('auth/login', { error: `Cuenta bloqueada por múltiples intentos fallidos. Intenta nuevamente después de ${unlock}.`, layout: 'layouts/auth', title: 'Acceso al Cliente' });
+              }
+              const remaining = Math.max(0, config.security.maxFailedAttempts - attempts);
+              const warning = remaining > 0
+                ? `Usuario o contraseña incorrectos. Intentos restantes: ${remaining}`
+                : 'Usuario o contraseña incorrectos.';
+              return res.status(401).render('auth/login', { error: warning, layout: 'layouts/auth', title: 'Acceso al Cliente' });
+            }
+
+            const expirationSource = user.contrasena_cambiada_en || user.fecha_creacion;
+            const maxAgeMs = config.security.passwordMaxAgeDays * 24 * 60 * 60 * 1000;
+            const passwordExpired = expirationSource ? (Date.now() - new Date(expirationSource).getTime()) > maxAgeMs : true;
+            const isFirstLogin = !user.ultimo_ingreso;
+            let mustChangePassword = Boolean(user.debe_cambiar_contrasena || passwordExpired || isFirstLogin);
+
+            const sessionMeta = await withTenant(tenant, async (client) => {
+              if (passwordExpired && !user.debe_cambiar_contrasena) {
+                await UsersModel.forcePasswordReset(client, user.id);
+                mustChangePassword = true;
+              }
+              await UsersModel.resetLoginState(client, user.id);
+              await UsersModel.touchUltimoIngreso(client, user.id);
+              const sessionVersion = await UsersModel.bumpSessionVersion(client, user.id);
+              return { sessionVersion };
+            });
+
+            const sessionTtlMinutes = normalizeSessionTtl(user.sesion_ttl_minutos ?? config.security.defaultSessionMinutes);
+            const token = jwt.sign({
+              sub: user.id,
+              tenant,
+              rol: user.rol,
+              nombre: user.nombre,
+              correo: user.correo,
+              sede_id: user.sede_id ?? null,
+              sede_nombre: user.sede_nombre ?? null,
+              mustChangePassword,
+              sessionVersion: sessionMeta.sessionVersion,
+            }, config.jwtSecret, { expiresIn: `${sessionTtlMinutes}m` });
             res.cookie('token', token, {
               httpOnly: true,
               sameSite: 'lax',
               secure: process.env.NODE_ENV === 'production',
-              maxAge: 120 * 60 * 1000, // 120 minutos
+              maxAge: sessionTtlMinutes * 60 * 1000,
             });
             const rolLower = (user.rol || '').toLowerCase();
             const legacyMap: Record<string,string> = { preacond:'acondicionador', operacion:'operador', bodega:'bodeguero', inspeccion:'inspeccionador', admin:'administrador' };
             const roleKey = legacyMap[rolLower] || rolLower;
+            if (mustChangePassword) {
+              return res.redirect('/cuenta?mustChange=1');
+            }
             if (roleKey === 'acondicionador') return res.redirect('/operacion/preacond');
             if (roleKey === 'operador') return res.redirect('/operacion/operacion');
             if (roleKey === 'bodeguero') return res.redirect('/operacion/bodega');

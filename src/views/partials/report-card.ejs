@@ -1,0 +1,43 @@
+<section class="card bg-base-200/80 shadow-md border border-base-300/30 report-card <%= (typeof hidden !== 'undefined' && hidden) ? 'hidden' : '' %>" data-report="<%= code %>">
+  <div class="card-body space-y-4">
+    <div class="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-3">
+      <div class="space-y-1">
+        <h2 class="text-lg font-semibold"><%= title %></h2>
+        <% if (subtitle) { %>
+          <p class="text-xs opacity-70"><%= subtitle %></p>
+        <% } %>
+      </div>
+      <div class="flex flex-wrap gap-2 items-center text-xs">
+        <span class="hidden items-center gap-1 text-success" data-report-ready="<%= code %>">&check; Listo</span>
+        <span class="hidden items-center gap-1 text-warning" data-report-loading="<%= code %>"><span class="loading loading-spinner loading-xs"></span>Cargando…</span>
+        <div class="join">
+          <button class="btn btn-sm join-item" type="button" data-action="refresh-report" data-report="<%= code %>">Actualizar</button>
+          <button class="btn btn-sm btn-outline join-item" type="button" data-action="export-report" data-format="csv" data-report="<%= code %>">CSV</button>
+          <button class="btn btn-sm btn-outline join-item" type="button" data-action="export-report" data-format="xlsx" data-report="<%= code %>">XLSX</button>
+        </div>
+      </div>
+    </div>
+    <div class="grid gap-2 md:grid-cols-3" data-report-kpis="<%= code %>"></div>
+    <div class="overflow-x-auto border border-base-300/40 rounded-lg" data-report-container="<%= code %>">
+      <table class="table table-sm">
+        <thead data-report-head="<%= code %>">
+          <tr>
+            <th>Sin datos</th>
+          </tr>
+        </thead>
+        <tbody data-report-body="<%= code %>">
+          <tr>
+            <td class="text-xs opacity-70">Presiona “Actualizar” para cargar el reporte.</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 text-xs" data-report-meta-box="<%= code %>">
+      <span data-report-meta="<%= code %>">Sin cargar</span>
+      <div class="join">
+        <button class="btn btn-xs join-item" type="button" data-action="prev-page" data-report="<%= code %>">Anterior</button>
+        <button class="btn btn-xs join-item" type="button" data-action="next-page" data-report="<%= code %>">Siguiente</button>
+      </div>
+    </div>
+  </div>
+</section>

@@ -2,6 +2,8 @@ import { Request, Response } from 'express';
 import { withTenant } from '../db/pool';
 import { AlertsModel } from '../models/Alerts';
 import { resolveTenant } from '../middleware/tenant';
+import { getRequestSedeId } from '../utils/sede';
+import { SedesModel } from '../models/Sede';
 
 type ModeloRow = { modelo_id: number; nombre_modelo: string; tipo: string | null };
 
@@ -38,6 +40,7 @@ export const RegistroController = {
   const t = (req as any).user?.tenant || resolveTenant(req);
   if (!t) return res.status(400).send('Tenant no especificado');
   const tenant = String(t).startsWith('tenant_') ? String(t) : `tenant_${t}`;
+  const sedeId = getRequestSedeId(req);
   const { modelo_id, rfids } = req.body as any;
     const modeloIdNum = Number(modelo_id);
     // rfids may come as array or object (rfids[0], rfids[1], ...)
@@ -65,6 +68,14 @@ export const RegistroController = {
       let selectedTipo: string = 'Otros';
       let insertedCount = 0;
       await withTenant(tenant, async (c) => {
+        let sedeToUse: number | null = sedeId ?? null;
+        if (sedeToUse !== null) {
+          const sedeExists = await SedesModel.findById(c, sedeToUse);
+          if (!sedeExists) {
+            console.warn('[registro][create] sede asignada no existe, se omite', { sedeToUse });
+            sedeToUse = null;
+          }
+        }
         const meta = await c.query<{ nombre_modelo: string; tipo: string | null }>(
           'SELECT nombre_modelo, tipo FROM modelos WHERE modelo_id = $1',
           [modeloIdNum]
@@ -86,11 +97,11 @@ export const RegistroController = {
         for (const rfid of rfidsArr) {
           const r = await c.query(
             `INSERT INTO inventario_credocubes 
-               (modelo_id, nombre_unidad, rfid, lote, estado, sub_estado)
-             VALUES ($1, $2, $3, NULL, 'En Bodega', NULL)
+               (modelo_id, nombre_unidad, rfid, lote, estado, sub_estado, sede_id)
+             VALUES ($1, $2, $3, NULL, 'En Bodega', NULL, $4)
              ON CONFLICT (rfid) DO NOTHING
              RETURNING id`,
-            [modeloIdNum, nombre, rfid]
+            [modeloIdNum, nombre, rfid, sedeToUse]
           );
           if (r.rowCount) insertedCount += r.rowCount;
         }
@@ -115,7 +126,9 @@ export const RegistroController = {
   },
   validate: async (req: Request, res: Response) => {
     try {
-      const tenant = (req as any).user?.tenant;
+      const tenant = (req as any).user?.tenant || resolveTenant(req);
+      if (!tenant) return res.json({ dups: [] });
+      const sedeId = getRequestSedeId(req);
       const body = req.body as any;
       const rawList: string[] = Array.isArray(body.rfids)
         ? body.rfids
@@ -124,7 +137,13 @@ export const RegistroController = {
           : [];
       const rfids = Array.from(new Set(rawList.map((r: any) => String(r || '').trim()).filter((r: string) => r.length === 24)));
       if (rfids.length === 0) return res.json({ dups: [] });
-      const found = await withTenant(tenant, (c) => c.query<{ rfid: string }>('SELECT rfid FROM inventario_credocubes WHERE rfid = ANY($1::text[])', [rfids]));
+      let sql = 'SELECT rfid FROM inventario_credocubes WHERE rfid = ANY($1::text[])';
+      const params: any[] = [rfids];
+      if (sedeId !== null) {
+        params.push(sedeId);
+        sql += ' AND (sede_id = $2 OR sede_id IS NULL)';
+      }
+      const found = await withTenant(String(tenant).startsWith('tenant_') ? String(tenant) : `tenant_${tenant}`, (c) => c.query<{ rfid: string }>(sql, params));
       return res.json({ dups: found.rows.map((r) => r.rfid) });
     } catch (e) {
       return res.json({ dups: [] });

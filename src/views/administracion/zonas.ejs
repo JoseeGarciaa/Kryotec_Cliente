@@ -1,0 +1,167 @@
+<% title = pageTitle || 'Zonas y secciones' %>
+<div class="space-y-6">
+  <% if (flash && flash.ok) { %>
+    <div class="alert alert-success shadow"><span><%= flash.ok %></span></div>
+  <% } %>
+  <% if (flash && flash.error) { %>
+    <div class="alert alert-error shadow"><span><%= flash.error %></span></div>
+  <% } %>
+
+  <div class="card bg-base-200">
+    <div class="card-body space-y-3">
+      <h2 class="card-title">Selecciona la sede</h2>
+      <% if ((sedes || []).length === 0) { %>
+        <p class="text-sm opacity-70">No hay sedes registradas. Registra al menos una sede para administrar zonas y secciones.</p>
+      <% } else { %>
+        <form method="get" action="/administracion/zonas" class="flex flex-wrap items-center gap-3">
+          <select name="sede_id" id="zonas-sede-select" class="select select-bordered select-sm w-full md:w-auto">
+            <% sedes.forEach((s) => { %>
+              <option value="<%= s.sede_id %>" <%= Number(selectedSedeId) === Number(s.sede_id) ? 'selected' : '' %>><%= s.nombre %></option>
+            <% }) %>
+          </select>
+          <button type="submit" class="btn btn-secondary btn-sm">Cambiar</button>
+        </form>
+        <% if (!selectedSedeId) { %>
+          <p class="text-xs opacity-70">Selecciona una sede para comenzar a gestionar sus zonas.</p>
+        <% } %>
+      <% } %>
+    </div>
+  </div>
+
+  <div class="card bg-base-200">
+    <div class="card-body space-y-3">
+      <h2 class="card-title">Crear nueva zona</h2>
+      <% if (!selectedSedeId) { %>
+        <p class="text-sm opacity-70">Selecciona una sede para habilitar el formulario de creación de zonas.</p>
+      <% } else { %>
+        <form method="post" action="/administracion/zonas" class="grid gap-3 md:grid-cols-5">
+          <input type="hidden" name="sede_id" value="<%= selectedSedeId %>" />
+          <label class="form-control md:col-span-3">
+            <span class="label-text text-xs opacity-70">Nombre de la zona</span>
+            <input required name="nombre" class="input input-sm input-bordered" placeholder="Ej. Almacenamiento" autocomplete="off" />
+          </label>
+          <label class="form-control">
+            <span class="label-text text-xs opacity-70">Estado</span>
+            <select name="activa" class="select select-sm select-bordered">
+              <option value="true" selected>Activa</option>
+              <option value="false">Inactiva</option>
+            </select>
+          </label>
+          <div class="flex items-end">
+            <button type="submit" class="btn btn-primary btn-sm w-full">Guardar zona</button>
+          </div>
+        </form>
+      <% } %>
+    </div>
+  </div>
+
+  <div class="card bg-base-200">
+    <div class="card-body space-y-5">
+      <div class="flex items-center justify-between flex-wrap gap-3">
+        <h2 class="card-title">Zonas registradas</h2>
+        <span class="badge badge-outline">Total: <%= (zonas || []).length %></span>
+      </div>
+      <% if (!selectedSedeId) { %>
+        <p class="text-sm opacity-70">Selecciona una sede para visualizar las zonas asociadas.</p>
+      <% } else if ((zonas || []).length === 0) { %>
+        <p class="text-sm opacity-70">No hay zonas registradas para esta sede.</p>
+      <% } else { %>
+        <div class="space-y-6">
+          <% zonas.forEach((zona) => { %>
+            <section class="rounded-lg bg-base-100 border border-base-300 shadow-sm">
+              <div class="p-5 space-y-4">
+                <div class="flex items-center justify-between flex-wrap gap-3">
+                  <h3 class="font-semibold text-base">Zona: <span class="opacity-80"><%= zona.nombre %></span></h3>
+                  <form method="post" action="/administracion/zonas/<%= zona.zona_id %>/eliminar" data-confirm="¿Eliminar esta zona? Esta acción no se puede deshacer." class="flex items-center gap-2">
+                    <button type="submit" class="btn btn-ghost btn-xs text-error">Eliminar zona</button>
+                  </form>
+                </div>
+                <form method="post" action="/administracion/zonas/<%= zona.zona_id %>" class="grid gap-3 md:grid-cols-5">
+                  <label class="form-control md:col-span-3">
+                    <span class="label-text text-xs opacity-70">Nombre</span>
+                    <input name="nombre" value="<%= zona.nombre %>" class="input input-sm input-bordered" autocomplete="off" />
+                  </label>
+                  <label class="form-control">
+                    <span class="label-text text-xs opacity-70">Estado</span>
+                    <select name="activa" class="select select-sm select-bordered">
+                      <option value="true" <%= zona.activa === false ? '' : 'selected' %>>Activa</option>
+                      <option value="false" <%= zona.activa === false ? 'selected' : '' %>>Inactiva</option>
+                    </select>
+                  </label>
+                  <div class="flex items-end">
+                    <button type="submit" class="btn btn-primary btn-sm w-full">Actualizar zona</button>
+                  </div>
+                </form>
+
+                <div class="space-y-3">
+                  <div class="flex items-center justify-between flex-wrap gap-2">
+                    <h4 class="font-semibold text-sm">Secciones</h4>
+                    <span class="badge badge-ghost">Total: <%= (zona.secciones || []).length %></span>
+                  </div>
+                  <% if ((zona.secciones || []).length === 0) { %>
+                    <p class="text-xs opacity-70">No hay secciones registradas para esta zona.</p>
+                  <% } else { %>
+                    <div class="overflow-x-auto">
+                      <table class="table table-zebra table-sm">
+                        <thead>
+                          <tr>
+                            <th>Nombre</th>
+                            <th>Estado</th>
+                            <th class="w-32">Acciones</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          <% zona.secciones.forEach((sec) => { %>
+                            <tr>
+                              <td>
+                                <form method="post" action="/administracion/zonas/secciones/<%= sec.seccion_id %>" class="flex flex-wrap gap-2 items-center">
+                                  <input name="nombre" value="<%= sec.nombre %>" class="input input-xs input-bordered" autocomplete="off" />
+                                  <select name="activa" class="select select-xs select-bordered">
+                                    <option value="true" <%= sec.activa === false ? '' : 'selected' %>>Activa</option>
+                                    <option value="false" <%= sec.activa === false ? 'selected' : '' %>>Inactiva</option>
+                                  </select>
+                                  <button type="submit" class="btn btn-primary btn-xs">Guardar</button>
+                                </form>
+                              </td>
+                              <td>
+                                <span class="badge <%= sec.activa === false ? 'badge-error badge-outline' : 'badge-success badge-outline' %>"><%= sec.activa === false ? 'Inactiva' : 'Activa' %></span>
+                              </td>
+                              <td>
+                                <form method="post" action="/administracion/zonas/secciones/<%= sec.seccion_id %>/eliminar" data-confirm="¿Eliminar esta sección?" class="flex justify-end">
+                                  <button type="submit" class="btn btn-ghost btn-xs text-error">Eliminar</button>
+                                </form>
+                              </td>
+                            </tr>
+                          <% }) %>
+                        </tbody>
+                      </table>
+                    </div>
+                  <% } %>
+
+                  <form method="post" action="/administracion/zonas/<%= zona.zona_id %>/secciones" class="grid gap-3 md:grid-cols-4">
+                    <label class="form-control md:col-span-2">
+                      <span class="label-text text-xs opacity-70">Nombre de la sección</span>
+                      <input required name="nombre" class="input input-sm input-bordered" placeholder="Ej. Estantería A" autocomplete="off" />
+                    </label>
+                    <label class="form-control">
+                      <span class="label-text text-xs opacity-70">Estado</span>
+                      <select name="activa" class="select select-sm select-bordered">
+                        <option value="true" selected>Activa</option>
+                        <option value="false">Inactiva</option>
+                      </select>
+                    </label>
+                    <div class="flex items-end">
+                      <button type="submit" class="btn btn-secondary btn-sm w-full">Agregar sección</button>
+                    </div>
+                  </form>
+                </div>
+              </div>
+            </section>
+          <% }) %>
+        </div>
+      <% } %>
+    </div>
+  </div>
+</div>
+
+<script src="/static/js/administracion-zonas.js?v=<%= assetVersion %>"></script>

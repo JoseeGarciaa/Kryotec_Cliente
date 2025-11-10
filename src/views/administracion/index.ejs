@@ -24,6 +24,48 @@
   <div class="card bg-base-200">
     <div class="card-body">
       <div class="flex items-center justify-between mb-2">
+        <h2 class="card-title">Sedes</h2>
+        <div class="flex items-center gap-2">
+          <a href="/administracion/zonas" class="btn btn-ghost btn-sm">Zonas y secciones</a>
+          <button id="btn-new-sede" class="btn btn-secondary btn-sm">+ Nueva Sede</button>
+        </div>
+      </div>
+      <div class="overflow-x-auto">
+        <table class="table table-zebra table-sm">
+          <thead>
+            <tr>
+              <th>Nombre</th>
+              <th>Código</th>
+              <th>Estado</th>
+            </tr>
+          </thead>
+          <tbody>
+            <% if ((sedes || []).length === 0) { %>
+              <tr>
+                <td colspan="3" class="text-center text-sm opacity-60">No hay sedes registradas.</td>
+              </tr>
+            <% } else { %>
+              <% sedes.forEach(s => { %>
+                <tr>
+                  <td><span class="font-semibold"><%= s.nombre %></span></td>
+                  <td class="text-sm"><%= s.codigo || '-' %></td>
+                  <td>
+                    <span class="badge badge-outline <%= s.activo === false ? 'badge-error' : 'badge-success' %>">
+                      <%= s.activo === false ? 'Inactiva' : 'Activa' %>
+                    </span>
+                  </td>
+                </tr>
+              <% }) %>
+            <% } %>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <div class="card bg-base-200">
+    <div class="card-body">
+      <div class="flex items-center justify-between mb-2">
         <h2 class="card-title">Gestión de Usuarios</h2>
   <button id="btn-new-user" class="btn btn-primary btn-sm">+ Nuevo Usuario</button>
       </div>
@@ -34,6 +76,8 @@
               <th>Usuario</th>
               <th>Teléfono</th>
               <th>Rol</th>
+              <th>Sede</th>
+              <th>TTL sesión (min)</th>
               <th>Estado</th>
               <th>Último acceso</th>
               <th>Acciones</th>
@@ -59,6 +103,8 @@
                   <% const displayRole = roleMap[u.rol] || u.rol; %>
                   <span class="badge badge-outline <%= ['Admin','Administrador','admin'].includes(u.rol)?'badge-primary':'' %>"><%= displayRole %></span>
                 </td>
+                <td><span class="badge badge-ghost text-xs"><%= u.sede_nombre || (u.sede_id ? ('ID '+u.sede_id) : 'Sin sede') %></span></td>
+                <td class="text-xs"><%= u.sesion_ttl_minutos || sessionTtlDefault %></td>
                 <td>
                   <button class="badge border-0 <%= u.activo ? 'badge-success' : 'badge-error' %> cursor-pointer btn-toggle-activo" data-id="<%= u.id %>" data-next="<%= u.activo ? 'false' : 'true' %>">
                     <%= u.activo ? '+ Activo' : 'X Inactivo' %>
@@ -69,10 +115,12 @@
       <button class="btn btn-ghost btn-xs btn-edit-user" 
         data-id="<%= u.id %>" 
         data-nombre="<%- u.nombre %>" 
-        data-correo="<%- u.correo %>" 
-        data-telefono="<%- u.telefono || '' %>" 
-        data-rol="<%- u.rol %>" 
-        data-activo="<%= u.activo ? 'true' : 'false' %>">✏️</button>
+  data-correo="<%- u.correo %>" 
+  data-telefono="<%- u.telefono || '' %>" 
+  data-rol="<%- u.rol %>" 
+  data-sede="<%= u.sede_id || '' %>" 
+  data-activo="<%= u.activo ? 'true' : 'false' %>"
+  data-ttl="<%= u.sesion_ttl_minutos || sessionTtlDefault %>">✏️</button>
   <button class="btn btn-ghost btn-xs text-error btn-del-user" title="Inhabilitar usuario" aria-label="Inhabilitar usuario" data-id="<%= u.id %>">🗑️</button>
                 </td>
               </tr>
@@ -84,6 +132,24 @@
   </div>
 </div>
 
+<dialog id="dlg-new-sede" class="modal">
+  <div class="modal-box">
+    <form method="post" action="/administracion/sedes" class="space-y-3">
+      <h3 class="font-bold text-lg">Nueva Sede</h3>
+      <input required name="nombre" placeholder="Nombre" class="input input-sm input-bordered w-full" />
+      <input name="codigo" placeholder="Código" class="input input-sm input-bordered w-full" />
+      <select name="activa" class="select select-sm select-bordered w-full">
+        <option value="true" selected>Activa</option>
+        <option value="false">Inactiva</option>
+      </select>
+      <div class="modal-action">
+        <button type="submit" class="btn btn-secondary btn-sm">Guardar</button>
+        <button type="button" class="btn btn-sm btn-close-modal" data-target="dlg-new-sede">Cerrar</button>
+      </div>
+    </form>
+  </div>
+</dialog>
+
 <dialog id="dlg-new-user" class="modal">
   <div class="modal-box">
     <form method="post" action="/administracion/nuevo" class="space-y-3">
@@ -91,7 +157,8 @@
       <input required name="nombre" placeholder="Nombre" class="input input-sm input-bordered w-full" />
       <input required name="correo" type="email" placeholder="Correo" class="input input-sm input-bordered w-full" />
       <input name="telefono" placeholder="Teléfono" class="input input-sm input-bordered w-full" />
-      <input name="password" type="password" placeholder="Password (opcional)" class="input input-sm input-bordered w-full" />
+      <input name="password" type="password" placeholder="Contraseña inicial (opcional)" class="input input-sm input-bordered w-full" minlength="8" />
+      <p class="text-xs opacity-70"><%= passwordPolicy %></p>
       <select name="rol" class="select select-sm select-bordered w-full">
         <option value="Acondicionador">Acondicionador</option>
         <option value="Operador">Operador</option>
@@ -99,6 +166,16 @@
         <option value="Inspeccionador">Inspeccionador</option>
   <option value="admin">admin</option>
       </select>
+      <select name="sede_id" class="select select-sm select-bordered w-full">
+        <option value="">Sin sede</option>
+        <% (sedes || []).forEach(s => { %>
+          <option value="<%= s.sede_id %>"><%= s.nombre %></option>
+        <% }) %>
+      </select>
+      <label class="form-control">
+        <span class="label-text">Tiempo de sesión (minutos)</span>
+        <input name="sesion_ttl_minutos" type="number" min="<%= sessionTtlMin %>" max="<%= sessionTtlMax %>" value="<%= sessionTtlDefault %>" class="input input-sm input-bordered w-full" required />
+      </label>
       <div class="modal-action">
         <button type="submit" class="btn btn-primary btn-sm">Guardar</button>
   <button type="button" class="btn btn-sm btn-close-modal" data-target="dlg-new-user">Cerrar</button>
@@ -109,12 +186,12 @@
 
 <dialog id="dlg-edit-user" class="modal">
   <div class="modal-box">
-    <form id="form-edit" method="post" class="space-y-3">
+    <form id="form-edit" method="post" class="space-y-3" data-ttl-min="<%= sessionTtlMin %>" data-ttl-max="<%= sessionTtlMax %>">
       <h3 class="font-bold text-lg">Editar Usuario</h3>
       <input required name="nombre" placeholder="Nombre" class="input input-sm input-bordered w-full" />
       <input required name="correo" type="email" placeholder="Correo" class="input input-sm input-bordered w-full" />
       <input name="telefono" placeholder="Teléfono" class="input input-sm input-bordered w-full" />
-      <input name="password" type="password" placeholder="Password (dejar vacío para no cambiar)" class="input input-sm input-bordered w-full" />
+      <input name="password" type="password" placeholder="Password (dejar vacío para no cambiar)" class="input input-sm input-bordered w-full" minlength="8" />
       <select name="rol" class="select select-sm select-bordered w-full">
         <option value="Acondicionador">Acondicionador</option>
         <option value="Operador">Operador</option>
@@ -122,10 +199,20 @@
         <option value="Inspeccionador">Inspeccionador</option>
   <option value="admin">admin</option>
       </select>
+      <select name="sede_id" class="select select-sm select-bordered w-full">
+        <option value="">Sin sede</option>
+        <% (sedes || []).forEach(s => { %>
+          <option value="<%= s.sede_id %>"><%= s.nombre %></option>
+        <% }) %>
+      </select>
       <select name="activo" class="select select-sm select-bordered w-full">
         <option value="true">Activo</option>
         <option value="false">Inactivo</option>
       </select>
+      <label class="form-control">
+        <span class="label-text">Tiempo de sesión (minutos)</span>
+        <input name="sesion_ttl_minutos" type="number" min="<%= sessionTtlMin %>" max="<%= sessionTtlMax %>" class="input input-sm input-bordered w-full" />
+      </label>
       <div class="modal-action">
         <button type="submit" class="btn btn-primary btn-sm">Guardar</button>
   <button type="button" class="btn btn-sm btn-close-modal" data-target="dlg-edit-user">Cerrar</button>

@@ -1,8 +1,15 @@
 import { Request, Response } from 'express';
 import { withTenant } from '../db/pool';
 import { AlertsModel } from '../models/Alerts';
-import { requireAuth } from '../middleware/auth';
 import { resolveTenant } from '../middleware/tenant';
+import { getRequestSedeId } from '../utils/sede';
+import { ZonasModel } from '../models/Zona';
+
+const pushSedeFilter = (where: string[], params: any[], sedeId: number | null, alias = 'ic') => {
+  if (sedeId === null) return;
+  params.push(sedeId);
+  where.push(`${alias}.sede_id = $${params.length}`);
+};
 
 export const InventarioController = {
   index: async (req: Request, res: Response) => {
@@ -11,7 +18,8 @@ export const InventarioController = {
   if (!t0) return res.status(400).send('Tenant no especificado');
   const tenant = String(t0).startsWith('tenant_') ? String(t0) : `tenant_${t0}`;
     // Inputs
-    const { q: qRaw, cat: catRaw, state: stateRaw, page: pageRaw, limit: limitRaw, rfids: rfidsRaw } = req.query as any;
+    const sedeId = getRequestSedeId(req);
+  const { q: qRaw, cat: catRaw, state: stateRaw, page: pageRaw, limit: limitRaw, rfids: rfidsRaw } = req.query as any;
     const q = (qRaw ? String(qRaw) : '').slice(0, 24);
     const cat = catRaw ? String(catRaw).toLowerCase() : '';
     const state = stateRaw ? String(stateRaw).toLowerCase() : '';
@@ -66,8 +74,9 @@ export const InventarioController = {
     }
 
     // Build filters (modo normal)
-    const where: string[] = [];
-    const params: any[] = [];
+  const where: string[] = [];
+  const params: any[] = [];
+  pushSedeFilter(where, params, sedeId);
     if (q && !cajaMode && scannedRfids.length === 0) {
       params.push(`%${q}%`);
       where.push('(' +
@@ -92,6 +101,27 @@ export const InventarioController = {
       WHEN m.nombre_modelo ILIKE '%cube%' OR m.nombre_modelo ILIKE '%cubo%' THEN 'Cubes'
       ELSE 'Otros' END`;
 
+    const selectClause = `
+     ic.id,
+     ic.nombre_unidad,
+     ic.modelo_id,
+     ic.rfid,
+     ic.lote,
+     ic.estado,
+     ic.sub_estado,
+     ic.zona_id,
+     ic.seccion_id,
+     z.nombre AS zona_nombre,
+     sc.nombre AS seccion_nombre,
+     ${catExpr} AS categoria,
+     COALESCE(ic.fecha_ingreso, NOW()) AS ultima_actualizacion`;
+
+    const baseFromClause = `
+      FROM inventario_credocubes ic
+      JOIN modelos m ON m.modelo_id = ic.modelo_id
+      LEFT JOIN zonas z ON z.zona_id = ic.zona_id
+      LEFT JOIN secciones sc ON sc.seccion_id = ic.seccion_id`;
+
     // En modo caja, ignoramos cat/state para mostrar la caja completa
     if (!cajaMode && scannedRfids.length === 0) {
       if (cat === 'tics') {
@@ -110,6 +140,11 @@ export const InventarioController = {
     let total = 0; let pages = 1; const offset = (page - 1) * limit;
     let items: any; let countsMap: Record<string, number> = { TIC: 0, VIP: 0, Cubes: 0, Otros: 0 };
     if (cajaMode) {
+      if (sedeId !== null && !/ic\.sede_id/.test(cajaWhereSQL)) {
+        const glue = /\bwhere\b/i.test(cajaWhereSQL) ? ' AND ' : ' WHERE ';
+        cajaWhereSQL = `${cajaWhereSQL}${glue}ic.sede_id = $${cajaParams.length + 1}`;
+        cajaParams.push(sedeId);
+      }
       // COUNT
       const countSQL = `SELECT COUNT(*)::int AS total
           FROM inventario_credocubes ic
@@ -120,22 +155,13 @@ export const InventarioController = {
       total = countRes.rows[0]?.total || 0;
       pages = Math.max(1, Math.ceil(total / limit));
       // ITEMS
-      const itemsSQL = `SELECT 
-           ic.id,
-           ic.nombre_unidad,
-           ic.modelo_id,
-           ic.rfid,
-           ic.lote,
-           ic.estado,
-           ic.sub_estado,
-           ${catExpr} AS categoria,
-           COALESCE(ic.fecha_ingreso, NOW()) AS ultima_actualizacion
-         FROM inventario_credocubes ic
-         JOIN modelos m ON m.modelo_id = ic.modelo_id
-         ${cajaJoin ? 'JOIN acond_caja_items aci ON aci.rfid = ic.rfid' : ''}
-         ${cajaWhereSQL}
-         ORDER BY ic.id DESC
-         LIMIT $${cajaParams.length+1} OFFSET $${cajaParams.length+2}`;
+  const itemsSQL = `SELECT 
+${selectClause}
+    ${baseFromClause}
+    ${cajaJoin ? 'JOIN acond_caja_items aci ON aci.rfid = ic.rfid' : ''}
+    ${cajaWhereSQL}
+    ORDER BY ic.id DESC
+    LIMIT $${cajaParams.length+1} OFFSET $${cajaParams.length+2}`;
       items = await withTenant(tenant, (c) => c.query(itemsSQL, [...cajaParams, limit, offset]));
       // COUNTS por categoría (sobre el mismo conjunto)
       const countsSQL = `SELECT categoria, COUNT(*)::int AS cnt FROM (
@@ -159,21 +185,12 @@ export const InventarioController = {
       total = countRes.rows[0]?.total || 0;
       pages = Math.max(1, Math.ceil(total / limit));
       items = await withTenant(tenant, (c) => c.query(
-        `SELECT 
-           ic.id,
-           ic.nombre_unidad,
-           ic.modelo_id,
-           ic.rfid,
-           ic.lote,
-           ic.estado,
-           ic.sub_estado,
-           ${catExpr} AS categoria,
-           COALESCE(ic.fecha_ingreso, NOW()) AS ultima_actualizacion
-         FROM inventario_credocubes ic
-         JOIN modelos m ON m.modelo_id = ic.modelo_id
-         ${whereSQL}
-         ORDER BY ic.id DESC
-         LIMIT $${params.length+1} OFFSET $${params.length+2}`,
+  `SELECT 
+${selectClause}
+    ${baseFromClause}
+    ${whereSQL}
+    ORDER BY ic.id DESC
+    LIMIT $${params.length+1} OFFSET $${params.length+2}`,
         [...params, limit, offset]
       ));
       // Counts sólo sobre los RFIDs (sin filtros de categoría/estado adicionales para no confundir)
@@ -203,27 +220,24 @@ export const InventarioController = {
       items = await withTenant(tenant, (c) =>
         c.query(
           `SELECT 
-             ic.id,
-             ic.nombre_unidad,
-             ic.modelo_id,
-             ic.rfid,
-             ic.lote,
-             ic.estado,
-             ic.sub_estado,
-             ${catExpr} AS categoria,
-             COALESCE(ic.fecha_ingreso, NOW()) AS ultima_actualizacion
-           FROM inventario_credocubes ic
-           JOIN modelos m ON m.modelo_id = ic.modelo_id
-           ${whereSQL}
-           ORDER BY ic.id DESC
-           LIMIT $${params.length+1} OFFSET $${params.length+2}`,
+${selectClause}
+            ${baseFromClause}
+            ${whereSQL}
+            ORDER BY ic.id DESC
+            LIMIT $${params.length+1} OFFSET $${params.length+2}`,
           [...params, limit, offset]
         )
       );
       // COUNTS
       const whereCounts: string[] = [];
       const paramsCounts: any[] = [];
-      if (q) { paramsCounts.push(`%${q}%`); whereCounts.push('(ic.nombre_unidad ILIKE $1 OR ic.rfid ILIKE $1 OR COALESCE(ic.lote, \'\') ILIKE $1 OR ic.estado ILIKE $1)'); }
+      pushSedeFilter(whereCounts, paramsCounts, sedeId);
+      if (q) {
+        paramsCounts.push(`%${q}%`);
+        const idx = paramsCounts.length;
+        const ph = `$${idx}`;
+        whereCounts.push(`(ic.nombre_unidad ILIKE ${ph} OR ic.rfid ILIKE ${ph} OR COALESCE(ic.lote, '') ILIKE ${ph} OR ic.estado ILIKE ${ph})`);
+      }
       if (state === 'inhabilitado') { whereCounts.push(`TRIM(LOWER(ic.estado)) = TRIM(LOWER('Inhabilitado'))`); }
       const whereCountsSQL = whereCounts.length ? 'WHERE ' + whereCounts.join(' AND ') : '';
       const countsRes = await withTenant(tenant, (c) => c.query(
@@ -258,7 +272,8 @@ export const InventarioController = {
   const t1 = (req as any).user?.tenant || resolveTenant(req);
   if (!t1) return res.status(400).json({ ok: false, error: 'Tenant no especificado' });
   const tenant = String(t1).startsWith('tenant_') ? String(t1) : `tenant_${t1}`;
-    const { q: qRaw, rfids: rfidsRaw, limit: limitRaw } = req.query as any;
+    const sedeId = getRequestSedeId(req);
+  const { q: qRaw, rfids: rfidsRaw, limit: limitRaw } = req.query as any;
     const q = (qRaw ? String(qRaw) : '').slice(0, 24);
     const limit = Math.min(500, Math.max(10, parseInt(String(limitRaw||'100'), 10) || 100));
     let scanned: string[] = [];
@@ -271,32 +286,70 @@ export const InventarioController = {
     const isSingleRfid = scanned.length===0 && /^[A-Za-z0-9]{24}$/.test(q||'');
     try {
       if(isSingleRfid){
-        // Regla: con un solo RFID se devuelve solo ese item si existe (no expandir a caja)
-        const rows = await withTenant(tenant, c=>c.query(
-          `SELECT ic.id, ic.nombre_unidad, ic.modelo_id, ic.rfid, ic.lote, ic.estado, ic.sub_estado, ic.fecha_ingreso
-             FROM inventario_credocubes ic
-            WHERE ic.rfid=$1`, [q]
-        ));
+        const params: any[] = [q];
+  let sql = `SELECT ic.id, ic.nombre_unidad, ic.modelo_id, ic.rfid, ic.lote, ic.estado, ic.sub_estado, ic.fecha_ingreso,
+        ic.zona_id, ic.seccion_id, z.nombre AS zona_nombre, sc.nombre AS seccion_nombre
+         FROM inventario_credocubes ic
+         LEFT JOIN zonas z ON z.zona_id = ic.zona_id
+         LEFT JOIN secciones sc ON sc.seccion_id = ic.seccion_id
+        WHERE ic.rfid = $1`;
+        if (sedeId !== null) {
+          params.push(sedeId);
+          sql += ` AND ic.sede_id = $${params.length}`;
+        }
+        const rows = await withTenant(tenant, c=>c.query(sql, params));
         return res.json({ ok:true, mode:'single', count: rows.rowCount, items: rows.rows });
       }
       if(scanned.length>0){
         // Multi: traer todos esos RFIDs
         const placeholders = scanned.map((_,i)=>'$'+(i+1));
-        const sql = `SELECT ic.id, ic.nombre_unidad, ic.modelo_id, ic.rfid, ic.lote, ic.estado, ic.sub_estado, ic.fecha_ingreso
-                     FROM inventario_credocubes ic
-                     WHERE ic.rfid IN (${placeholders.join(',')})
-                     ORDER BY ic.id DESC`;
-        const rows = await withTenant(tenant, c=>c.query(sql, scanned));
+  let sql = `SELECT ic.id, ic.nombre_unidad, ic.modelo_id, ic.rfid, ic.lote, ic.estado, ic.sub_estado, ic.fecha_ingreso,
+        ic.zona_id, ic.seccion_id, z.nombre AS zona_nombre, sc.nombre AS seccion_nombre
+         FROM inventario_credocubes ic
+         LEFT JOIN zonas z ON z.zona_id = ic.zona_id
+         LEFT JOIN secciones sc ON sc.seccion_id = ic.seccion_id
+        WHERE ic.rfid IN (${placeholders.join(',')})`;
+        const params: any[] = [...scanned];
+        if (sedeId !== null) {
+          params.push(sedeId);
+          sql += ` AND ic.sede_id = $${params.length}`;
+        }
+        sql += ' ORDER BY ic.id DESC';
+        const rows = await withTenant(tenant, c=>c.query(sql, params));
         return res.json({ ok:true, mode:'multi', count: rows.rowCount, items: rows.rows });
       }
       // Búsqueda normal limitada
       if(q){
-        const sql = `SELECT ic.id, ic.nombre_unidad, ic.modelo_id, ic.rfid, ic.lote, ic.estado, ic.sub_estado, ic.fecha_ingreso
-                     FROM inventario_credocubes ic
-                     WHERE ic.nombre_unidad ILIKE $1 OR ic.rfid ILIKE $1 OR COALESCE(ic.lote,'') ILIKE $1 OR ic.estado ILIKE $1
-                     ORDER BY ic.id DESC LIMIT $2`;
-        const rows = await withTenant(tenant, c=>c.query(sql, ['%'+q+'%', limit]));
+        const params: any[] = ['%'+q+'%'];
+        const whereParts = [`(ic.nombre_unidad ILIKE $1 OR ic.rfid ILIKE $1 OR COALESCE(ic.lote,'') ILIKE $1 OR ic.estado ILIKE $1)`];
+        if (sedeId !== null) {
+          params.push(sedeId);
+          whereParts.push(`ic.sede_id = $${params.length}`);
+        }
+        params.push(limit);
+        const limitIndex = params.length;
+  const sql = `SELECT ic.id, ic.nombre_unidad, ic.modelo_id, ic.rfid, ic.lote, ic.estado, ic.sub_estado, ic.fecha_ingreso,
+          ic.zona_id, ic.seccion_id, z.nombre AS zona_nombre, sc.nombre AS seccion_nombre
+         FROM inventario_credocubes ic
+         LEFT JOIN zonas z ON z.zona_id = ic.zona_id
+         LEFT JOIN secciones sc ON sc.seccion_id = ic.seccion_id
+         WHERE ${whereParts.join(' AND ')}
+         ORDER BY ic.id DESC LIMIT $${limitIndex}`;
+        const rows = await withTenant(tenant, c=>c.query(sql, params));
         return res.json({ ok:true, mode:'search', count: rows.rowCount, items: rows.rows });
+      }
+      if (sedeId !== null) {
+        const rows = await withTenant(tenant, c=>c.query(
+          `SELECT ic.id, ic.nombre_unidad, ic.modelo_id, ic.rfid, ic.lote, ic.estado, ic.sub_estado, ic.fecha_ingreso,
+                  ic.zona_id, ic.seccion_id, z.nombre AS zona_nombre, sc.nombre AS seccion_nombre
+             FROM inventario_credocubes ic
+             LEFT JOIN zonas z ON z.zona_id = ic.zona_id
+             LEFT JOIN secciones sc ON sc.seccion_id = ic.seccion_id
+            WHERE ic.sede_id = $1
+            ORDER BY ic.id DESC
+            LIMIT $2`, [sedeId, limit]
+        ));
+        return res.json({ ok:true, mode:'empty', count: rows.rowCount, items: rows.rows });
       }
       return res.json({ ok:true, mode:'empty', count:0, items:[] });
     } catch(e:any){
@@ -308,29 +361,137 @@ export const InventarioController = {
   const t2 = (req as any).user?.tenant || resolveTenant(req);
   if (!t2) return res.status(400).json({ ok: false, error: 'Tenant no especificado' });
   const tenant = String(t2).startsWith('tenant_') ? String(t2) : `tenant_${t2}`;
+    const sedeId = getRequestSedeId(req);
     const id = Number((req.params as any).id);
     if(!Number.isFinite(id) || id<=0) return res.status(400).json({ ok:false, error:'id inválido' });
-    const { nombre_unidad, lote, estado, sub_estado } = req.body as any;
+    const { nombre_unidad, lote, estado, sub_estado, zona_id, seccion_id } = req.body as any;
+
+    const parseOptionalNumber = (value: unknown): number | null => {
+      if (value === undefined || value === null || value === '') return null;
+      const num = Number(value);
+      return Number.isFinite(num) ? num : null;
+    };
+
+    let zonaId = parseOptionalNumber(zona_id);
+    let seccionId = parseOptionalNumber(seccion_id);
+
     try {
-      await withTenant(tenant, (c)=> c.query(
-        `UPDATE inventario_credocubes SET 
-           nombre_unidad = COALESCE($1, nombre_unidad),
+      const validation = await withTenant(tenant, async (client) => {
+        let zonaRecord: Awaited<ReturnType<typeof ZonasModel.findZonaById>> | null = null;
+        let seccionRecord: Awaited<ReturnType<typeof ZonasModel.findSeccionById>> | null = null;
+        let zonaFinal = zonaId;
+        let seccionFinal = seccionId;
+
+        if (seccionFinal !== null) {
+          const found = await ZonasModel.findSeccionById(client, seccionFinal);
+          if (!found) {
+            const err: any = new Error('Seccion no encontrada');
+            err.code = 'INVALID_SECCION';
+            throw err;
+          }
+          seccionRecord = found;
+          zonaFinal = found.zona_id;
+        }
+
+        if (zonaFinal !== null) {
+          const foundZona = await ZonasModel.findZonaById(client, zonaFinal);
+          if (!foundZona) {
+            const err: any = new Error('Zona no encontrada');
+            err.code = 'INVALID_ZONA';
+            throw err;
+          }
+          zonaRecord = foundZona;
+        }
+
+        if (seccionRecord && zonaRecord && seccionRecord.zona_id !== zonaRecord.zona_id) {
+          const err: any = new Error('La seccion no pertenece a la zona seleccionada');
+          err.code = 'SECTION_MISMATCH';
+          throw err;
+        }
+
+        if (sedeId !== null) {
+          if (zonaRecord && zonaRecord.sede_id !== sedeId) {
+            const err: any = new Error('Zona no pertenece a la sede del usuario');
+            err.code = 'ZONE_SEDE_MISMATCH';
+            throw err;
+          }
+          if (seccionRecord && seccionRecord.sede_id !== sedeId) {
+            const err: any = new Error('Seccion no pertenece a la sede del usuario');
+            err.code = 'SECTION_SEDE_MISMATCH';
+            throw err;
+          }
+        }
+
+        return {
+          zona: zonaRecord,
+          seccion: seccionRecord,
+          zonaId: zonaFinal,
+          seccionId: seccionFinal,
+        };
+      });
+
+      zonaId = validation.zonaId;
+      seccionId = validation.seccionId;
+
+      const params: any[] = [
+        nombre_unidad || null,
+        (lote || '') ? lote : null,
+        estado || null,
+        (sub_estado || '') ? sub_estado : null,
+        sedeId ?? null,
+        zonaId,
+        seccionId,
+        id,
+      ];
+      let sql = `UPDATE inventario_credocubes ic SET 
+           nombre_unidad = COALESCE($1, ic.nombre_unidad),
            lote = $2,
-           estado = COALESCE($3, estado),
-           sub_estado = $4
-         WHERE id=$5`,
-        [nombre_unidad || null, (lote||'')? lote : null, estado || null, (sub_estado||'')? sub_estado : null, id]
-      ));
-      // Crear alerta de actualización
+           estado = COALESCE($3, ic.estado),
+           sub_estado = $4,
+           sede_id = $5,
+           zona_id = $6,
+           seccion_id = $7
+         WHERE ic.id = $8`;
+      if (sedeId !== null) {
+        params.push(sedeId);
+        sql += ' AND (ic.sede_id = $9 OR ic.sede_id IS NULL)';
+      }
+      const updated = await withTenant(tenant, (c) => c.query(sql, params));
+      if ((updated as any).rowCount === 0) {
+        return res.status(404).json({ ok: false, error: 'Item no encontrado para la sede' });
+      }
+
+      const locationBits: string[] = [];
+      if (validation.zona) {
+        locationBits.push(`zona ${validation.zona.nombre}`);
+      } else if (zonaId !== null) {
+        locationBits.push(`zona ${zonaId}`);
+      }
+      if (validation.seccion) {
+        locationBits.push(`seccion ${validation.seccion.nombre}`);
+      } else if (seccionId !== null) {
+        locationBits.push(`seccion ${seccionId}`);
+      }
+      const locationText = locationBits.length ? ` / ${locationBits.join(' - ')}` : '';
+
       await withTenant(tenant, (c) =>
         AlertsModel.create(c, {
           inventario_id: id,
           tipo_alerta: 'inventario:actualizado',
-          descripcion: `Item ${id} actualizado${estado ? ' - estado: '+estado : ''}${sub_estado ? ' / '+sub_estado : ''}`,
+          descripcion: `Item ${id} actualizado${estado ? ' - estado: ' + estado : ''}${sub_estado ? ' / ' + sub_estado : ''}${locationText}`,
         })
       );
       return res.redirect('/inventario');
-    } catch(e:any){
+    } catch (e: any) {
+      const code = typeof e?.code === 'string' ? e.code as string : null;
+      if (
+        (code && code.startsWith('INVALID_')) ||
+        code === 'SECTION_MISMATCH' ||
+        code === 'ZONE_SEDE_MISMATCH' ||
+        code === 'SECTION_SEDE_MISMATCH'
+      ) {
+        return res.redirect('/inventario?error=ubicacion');
+      }
       return res.status(500).send('Error actualizando');
     }
   },
@@ -339,6 +500,7 @@ export const InventarioController = {
   const t3 = (req as any).user?.tenant || resolveTenant(req);
   if (!t3) return res.status(400).json({ ok: false, error: 'Tenant no especificado' });
   const tenant = String(t3).startsWith('tenant_') ? String(t3) : `tenant_${t3}`;
+    const sedeId = getRequestSedeId(req);
     const id = Number((req.params as any).id);
     if(!Number.isFinite(id) || id<=0) return res.status(400).json({ ok:false, error:'id inválido' });
     try {
@@ -351,9 +513,16 @@ export const InventarioController = {
         })
       );
       // Hard delete: elimina el registro de la base de datos
-      await withTenant(tenant, (c)=> c.query(
-        `DELETE FROM inventario_credocubes WHERE id=$1`, [id]
-      ));
+      const params: any[] = [id];
+      let sql = 'DELETE FROM inventario_credocubes WHERE id = $1';
+      if (sedeId !== null) {
+        params.push(sedeId);
+        sql += ' AND (sede_id = $2 OR sede_id IS NULL)';
+      }
+      const result = await withTenant(tenant, (c)=> c.query(sql, params));
+      if ((result as any).rowCount === 0) {
+        return res.redirect('/inventario?error=eliminar');
+      }
       return res.redirect('/inventario');
     } catch(e:any){
       // Redirige con mensaje de error en vez de enviar error crudo
@@ -365,14 +534,15 @@ export const InventarioController = {
   const t4 = (req as any).user?.tenant || resolveTenant(req);
   if (!t4) return res.status(400).render('inventario/index', { title: 'Inventario', modelos: [], items: [], error: 'Tenant no especificado' });
   const tenant = String(t4).startsWith('tenant_') ? String(t4) : `tenant_${t4}`;
+    const sedeId = getRequestSedeId(req);
     const { modelo_id, nombre_unidad, rfid, lote, estado, sub_estado } = req.body;
     try {
       const inserted = await withTenant(tenant, (c) =>
         c.query(
-          `INSERT INTO inventario_credocubes (modelo_id, nombre_unidad, rfid, lote, estado, sub_estado)
-           VALUES ($1,$2,$3,$4,$5,$6)
+          `INSERT INTO inventario_credocubes (modelo_id, nombre_unidad, rfid, lote, estado, sub_estado, sede_id)
+           VALUES ($1,$2,$3,$4,$5,$6,$7)
            RETURNING id, rfid`,
-          [modelo_id, nombre_unidad, rfid, lote || null, estado, sub_estado || null]
+          [modelo_id, nombre_unidad, rfid, lote || null, estado, sub_estado || null, sedeId ?? null]
         )
       );
       const newId = inserted.rows?.[0]?.id as number | undefined;
@@ -389,7 +559,11 @@ export const InventarioController = {
     } catch (e: any) {
       console.error(e);
       const modelos = await withTenant(tenant, (c) => c.query('SELECT modelo_id, nombre_modelo FROM modelos ORDER BY nombre_modelo'));
-      const items = await withTenant(tenant, (c) => c.query('SELECT * FROM inventario_credocubes ORDER BY id DESC LIMIT 100'));
+      const itemsSql = sedeId !== null
+        ? 'SELECT * FROM inventario_credocubes WHERE sede_id = $1 ORDER BY id DESC LIMIT 100'
+        : 'SELECT * FROM inventario_credocubes ORDER BY id DESC LIMIT 100';
+      const itemsParams = sedeId !== null ? [sedeId] : [];
+      const items = await withTenant(tenant, (c) => c.query(itemsSql, itemsParams));
       return res.status(400).render('inventario/index', { title: 'Inventario', modelos: modelos.rows, items: items.rows, error: 'Error creando item (RFID duplicado u otro)' });
     }
   },

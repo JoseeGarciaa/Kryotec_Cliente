@@ -1,8 +1,30 @@
 import { Request, Response } from 'express';
 import bcrypt from 'bcryptjs';
+import crypto from 'crypto';
 import { withTenant } from '../db/pool';
 import { UsersModel } from '../models/User';
+import { SedesModel } from '../models/Sede';
 import { ALLOWED_ROLES } from '../middleware/roles';
+import { normalizeSessionTtl, PASSWORD_POLICY_MESSAGE, validatePasswordStrength } from '../utils/passwordPolicy';
+import { config } from '../config';
+
+function generateTemporalPassword(): string {
+  const upper = 'ABCDEFGHJKLMNPQRSTUVWXYZ';
+  const lower = 'abcdefghijkmnpqrstuvwxyz';
+  const digits = '23456789';
+  const special = '!@#$%*-_=+?';
+  const all = upper + lower + digits + special;
+  const pick = (pool: string) => pool[crypto.randomInt(0, pool.length)];
+  const chars = [pick(upper), pick(lower), pick(digits), pick(special)];
+  while (chars.length < 12) {
+    chars.push(pick(all));
+  }
+  for (let i = chars.length - 1; i > 0; i--) {
+    const j = crypto.randomInt(0, i + 1);
+    [chars[i], chars[j]] = [chars[j], chars[i]];
+  }
+  return chars.join('');
+}
 
 export const AdminController = {
   // Render principal
@@ -11,17 +33,42 @@ export const AdminController = {
     const flash = { error: (req.query.error as string) || null, ok: (req.query.ok as string) || null };
     try {
       const users = await withTenant(tenant, (client) => UsersModel.listAll(client));
+      const sedes = await withTenant(tenant, (client) => SedesModel.listAll(client));
       const activos = users.filter(u => u.activo).length;
-      res.render('administracion/index', { title: 'Administración', users, total: users.length, activos, inactivos: users.length - activos, flash });
+      res.render('administracion/index', {
+        title: 'Administración',
+        users,
+        total: users.length,
+        activos,
+        inactivos: users.length - activos,
+        flash,
+        sedes,
+        sessionTtlMin: config.security.minSessionMinutes,
+        sessionTtlMax: config.security.maxSessionMinutes,
+        sessionTtlDefault: config.security.defaultSessionMinutes,
+        passwordPolicy: PASSWORD_POLICY_MESSAGE,
+      });
     } catch (e) {
       console.error(e);
-      res.status(500).render('administracion/index', { title: 'Administración', users: [], total: 0, activos: 0, inactivos: 0, flash: { error: 'Error cargando usuarios', ok: null } });
+      res.status(500).render('administracion/index', {
+        title: 'Administración',
+        users: [],
+        total: 0,
+        activos: 0,
+        inactivos: 0,
+        flash: { error: 'Error cargando usuarios', ok: null },
+        sedes: [],
+        sessionTtlMin: config.security.minSessionMinutes,
+        sessionTtlMax: config.security.maxSessionMinutes,
+        sessionTtlDefault: config.security.defaultSessionMinutes,
+        passwordPolicy: PASSWORD_POLICY_MESSAGE,
+      });
     }
   },
 
   // Crear usuario (form HTML)
   newUser: async (req: Request, res: Response) => {
-    const { nombre, correo, telefono, password, rol } = req.body as any;
+    const { nombre, correo, telefono, password, rol, sede_id, sesion_ttl_minutos } = req.body as any;
     const tenant = (req as any).user?.tenant as string;
     if (!nombre || !correo) return res.redirect('/administracion?error=Nombre+y+correo+requeridos');
     try {
@@ -31,13 +78,35 @@ export const AdminController = {
       if (exists) {
         return res.redirect(`/administracion?error=Correo+ya+existe:+${encodeURIComponent(correoNorm)}`);
       }
-      const hashed = password ? await bcrypt.hash(password, 10) : await bcrypt.hash('Cambio123', 10);
+      const sessionTtl = normalizeSessionTtl(sesion_ttl_minutos ?? config.security.defaultSessionMinutes);
+      let initialPassword = (password || '').trim();
+      if (initialPassword) {
+        if (!validatePasswordStrength(initialPassword)) {
+          return res.redirect(`/administracion?error=${encodeURIComponent(PASSWORD_POLICY_MESSAGE)}`);
+        }
+      } else {
+        initialPassword = generateTemporalPassword();
+      }
+      const hashed = await bcrypt.hash(initialPassword, 10);
       const rolFinal = (() => {
         let r = (rol || 'Acondicionador').trim();
         if (['Administrador','Admin','admin'].includes(r)) r = 'admin';
         return ALLOWED_ROLES.includes(r) ? r : 'Acondicionador';
       })();
-      await withTenant(tenant, (client) => UsersModel.create(client, { nombre: nombre.trim(), correo: correoNorm, telefono, password: hashed, rol: rolFinal, activo: true }));
+      const rawSedeId = sede_id !== undefined && sede_id !== '' ? Number(sede_id) : null;
+      const normalizedSedeId = typeof rawSedeId === 'number' && Number.isFinite(rawSedeId) ? rawSedeId : null;
+      await withTenant(tenant, (client) => UsersModel.create(client, {
+        nombre: nombre.trim(),
+        correo: correoNorm,
+        telefono,
+        password: hashed,
+        rol: rolFinal,
+        activo: true,
+        sede_id: normalizedSedeId,
+        sesion_ttl_minutos: sessionTtl,
+        debe_cambiar_contrasena: true,
+      }));
+      console.log('[admin][newUser] Contraseña temporal generada para', correoNorm);
       res.redirect('/administracion?ok=Usuario+creado');
     } catch (e: any) {
       console.error(e);
@@ -55,10 +124,36 @@ export const AdminController = {
     }
   },
 
+  createSede: async (req: Request, res: Response) => {
+    const tenant = (req as any).user?.tenant as string | undefined;
+    const { nombre, codigo, activa } = req.body as any;
+    if (!tenant) return res.redirect('/administracion?error=Tenant+no+especificado');
+    const nombreNorm = (nombre || '').trim();
+    if (!nombreNorm) return res.redirect('/administracion?error=Nombre+de+sede+requerido');
+    const codigoNorm = (codigo || '').trim();
+    const activaBool = activa === 'false' ? false : true;
+    try {
+      await withTenant(tenant, (client) =>
+        SedesModel.create(client, {
+          nombre: nombreNorm,
+          codigo: codigoNorm ? codigoNorm : null,
+          activa: activaBool,
+        })
+      );
+      return res.redirect('/administracion?ok=Sede+creada');
+    } catch (e: any) {
+      console.error(e);
+      if (e?.code === '23505') {
+        return res.redirect('/administracion?error=Nombre+o+codigo+ya+existe');
+      }
+      return res.redirect('/administracion?error=Error+creando+sede');
+    }
+  },
+
   // Editar usuario (form HTML)
   editUser: async (req: Request, res: Response) => {
     const id = Number(req.params.id);
-    const { nombre, correo, telefono, password, rol, activo } = req.body as any;
+  const { nombre, correo, telefono, password, rol, activo, sede_id, sesion_ttl_minutos } = req.body as any;
     const tenant = (req as any).user?.tenant as string;
     if (!id || !nombre || !correo) return res.redirect('/administracion?error=Datos+inválidos');
     try {
@@ -72,7 +167,13 @@ export const AdminController = {
       const currentUser = await withTenant(tenant, (client) => UsersModel.findById(client, id));
       if (!currentUser) return res.redirect('/administracion?error=Usuario+no+existe');
 
-      const hashed = password ? await bcrypt.hash(password, 10) : null;
+      let hashed: string | null = null;
+      if (password) {
+        if (!validatePasswordStrength(password)) {
+          return res.redirect(`/administracion?error=${encodeURIComponent(PASSWORD_POLICY_MESSAGE)}`);
+        }
+        hashed = await bcrypt.hash(password, 10);
+      }
       const rolFinal = (() => {
         let r = (rol || 'Acondicionador').trim();
         if (['Administrador','Admin','admin'].includes(r)) r = 'admin';
@@ -91,7 +192,28 @@ export const AdminController = {
         }
       }
 
-      const updated = await withTenant(tenant, (client) => UsersModel.update(client, id, { nombre: nombre.trim(), correo: correoNorm, telefono, password: hashed, rol: rolFinal, activo: nuevoActivo }));
+      const rawSedeId = sede_id !== undefined && sede_id !== '' ? Number(sede_id) : null;
+      const normalizedSedeId = typeof rawSedeId === 'number' && Number.isFinite(rawSedeId) ? rawSedeId : null;
+      const sessionTtl = sesion_ttl_minutos !== undefined && sesion_ttl_minutos !== ''
+        ? normalizeSessionTtl(sesion_ttl_minutos)
+        : null;
+      const updated = await withTenant(tenant, async (client) => {
+        if (hashed) {
+          await UsersModel.markPasswordChange(client, id, hashed, (req as any).user?.sub ?? null);
+          await UsersModel.forcePasswordReset(client, id);
+        }
+        return UsersModel.update(client, id, {
+          nombre: nombre.trim(),
+          correo: correoNorm,
+          telefono,
+          password: null,
+          rol: rolFinal,
+          activo: nuevoActivo,
+          sede_id: normalizedSedeId,
+          sesion_ttl_minutos: sessionTtl,
+          debe_cambiar_contrasena: hashed ? true : undefined,
+        });
+      });
       if (!updated) return res.redirect('/administracion?error=Usuario+no+existe');
       res.redirect('/administracion?ok=actualizado');
     } catch (e: any) {

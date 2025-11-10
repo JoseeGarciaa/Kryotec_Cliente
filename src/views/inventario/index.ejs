@@ -70,6 +70,8 @@
             <th>LOTE</th>
             <th>ESTADO</th>
             <th>SUB-ESTADO</th>
+            <th>ZONA</th>
+            <th>SECCIÓN</th>
             <th>CATEGORÍA</th>
             <th>ÚLTIMA ACTUALIZACIÓN</th>
             <th>ACCIONES</th>
@@ -84,6 +86,12 @@
               <td class="whitespace-nowrap"><%= i.lote || '' %></td>
               <td class="whitespace-nowrap"><div class="badge badge-primary badge-outline hover:badge-secondary transition-colors whitespace-nowrap"><%= i.estado %></div></td>
               <td class="whitespace-nowrap"><% if (i.sub_estado) { %><div class="badge badge-outline whitespace-nowrap"><%= i.sub_estado %></div><% } else { %><span class="opacity-60">—</span><% } %></td>
+              <td class="whitespace-nowrap">
+                <% if (i.zona_nombre) { %><%= i.zona_nombre %><% } else { %><span class="opacity-60">—</span><% } %>
+              </td>
+              <td class="whitespace-nowrap">
+                <% if (i.seccion_nombre) { %><%= i.seccion_nombre %><% } else { %><span class="opacity-60">—</span><% } %>
+              </td>
               <td><%= i.categoria %></td>
               <td><%= new Date(i.ultima_actualizacion).toLocaleString() %></td>
               <td class="whitespace-nowrap">
@@ -91,7 +99,8 @@
                   <button type="button" class="btn btn-ghost btn-xs join-item" data-action="inv-edit"
                     data-id="<%= i.id %>" data-modelo_id="<%= i.modelo_id %>" data-rfid="<%- (i.rfid||'').replace(/\"/g,'&quot;') %>"
                     data-nombre="<%- (i.nombre_unidad||'').replace(/\"/g,'&quot;') %>" data-lote="<%- (i.lote||'').replace(/\"/g,'&quot;') %>"
-                    data-estado="<%- (i.estado||'').replace(/\"/g,'&quot;') %>" data-sub="<%- (i.sub_estado||'').replace(/\"/g,'&quot;') %>">
+                    data-estado="<%- (i.estado||'').replace(/\"/g,'&quot;') %>" data-sub="<%- (i.sub_estado||'').replace(/\"/g,'&quot;') %>"
+                    data-zona-id="<%= i.zona_id || '' %>" data-seccion-id="<%= i.seccion_id || '' %>">
                     ✎
                   </button>
                   <form method="post" action="/inventario/<%= i.id %>/delete" class="join-item inv-delete-form">
@@ -101,7 +110,7 @@
               </td>
             </tr>
           <% }) } else { %>
-            <tr><td colspan="9" class="text-center py-4 opacity-60">Sin resultados</td></tr>
+            <tr><td colspan="11" class="text-center py-4 opacity-60">Sin resultados</td></tr>
           <% } %>
         </tbody>
       </table>
@@ -151,6 +160,21 @@
           <input id="inv-edit-sub" name="sub_estado" type="text" class="input input-sm input-bordered" autocomplete="off" />
         </label>
       </div>
+      <div class="grid grid-cols-2 gap-3">
+        <label class="form-control">
+          <span class="label-text text-xs opacity-70">Zona</span>
+          <select id="inv-edit-zona" name="zona_id" class="select select-sm select-bordered">
+            <option value="">Sin zona</option>
+          </select>
+        </label>
+        <label class="form-control">
+          <span class="label-text text-xs opacity-70">Sección</span>
+          <select id="inv-edit-seccion" name="seccion_id" class="select select-sm select-bordered">
+            <option value="">Sin sección</option>
+          </select>
+        </label>
+      </div>
+      <p id="inv-edit-location-hint" class="text-xs opacity-60"></p>
       <div class="flex items-center justify-between mt-2">
         <span id="inv-edit-msg" class="text-xs opacity-70"></span>
         <div class="join">

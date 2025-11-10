@@ -48,6 +48,9 @@
   // Focus by caja when scanning a single RFID
   let focusEnsCajaId = null;   // string|number|null
   let focusListoCajaId = null; // string|number|null
+  const ubicacionesCache = { data: null, promise: null };
+  let ensamZonaId = '';
+  let ensamSeccionId = '';
 
   // ========================= UTILITIES =========================
   function qs(selector){ return document.querySelector(selector); }
@@ -1113,6 +1116,9 @@
   const linkOrderChk = document.getElementById('ensam-link-order');
   const orderSelect = document.getElementById('ensam-order-select');
   const orderHint = document.getElementById('ensam-order-hint');
+  const selectZona = document.getElementById('ensam-zona');
+  const selectSeccion = document.getElementById('ensam-seccion');
+  const locationHint = document.getElementById('ensam-location-hint');
 
   // Conjuntos de válidos por rol
   const ticSet = new Set();
@@ -1121,6 +1127,130 @@
   // Buffer de escaneos (todos los códigos escaneados pendientes/validados)
   const scannedSet = new Set();
   let _validateTimer = 0;
+
+    function setLocationMessage(text){ if(locationHint){ locationHint.textContent = text || ''; } }
+
+    async function loadUbicaciones(){
+      if(ubicacionesCache.data) return ubicacionesCache.data;
+      if(!ubicacionesCache.promise){
+        ubicacionesCache.promise = fetch('/inventario/ubicaciones', { headers:{ Accept:'application/json' } })
+          .then((res)=> res.ok ? res.json() : null)
+          .then((json)=>{
+            const zonas = Array.isArray(json?.zonas) ? json.zonas : [];
+            ubicacionesCache.data = zonas.map((z)=>({
+              zona_id: z.zona_id,
+              nombre: z.nombre,
+              activa: z.activa,
+              secciones: Array.isArray(z.secciones) ? z.secciones.map((s)=>({
+                seccion_id: s.seccion_id,
+                nombre: s.nombre,
+                activa: s.activa,
+              })) : [],
+            }));
+            return ubicacionesCache.data;
+          })
+          .catch((err)=>{
+            console.error('[Acond] Error cargando ubicaciones', err);
+            ubicacionesCache.data = [];
+            return ubicacionesCache.data;
+          })
+          .finally(()=>{ ubicacionesCache.promise = null; });
+      }
+      return ubicacionesCache.promise;
+    }
+
+    function populateZonaSelect(selected){
+      if(!selectZona) return;
+      const zonas = ubicacionesCache.data || [];
+      const opts = ['<option value="">Sin zona</option>'];
+      zonas.forEach((z)=>{
+        const label = safeHTML(z.nombre || `Zona ${z.zona_id}`) + (z.activa === false ? ' (inactiva)' : '');
+        opts.push(`<option value="${safeHTML(z.zona_id)}">${label}</option>`);
+      });
+      selectZona.innerHTML = opts.join('');
+      selectZona.disabled = zonas.length === 0;
+      const desired = selected ? String(selected) : '';
+      selectZona.value = desired;
+      if(desired && selectZona.value !== desired){
+        const opt = document.createElement('option');
+        opt.value = desired;
+        opt.textContent = `Zona ${desired}`;
+        selectZona.appendChild(opt);
+        selectZona.value = desired;
+      }
+      ensamZonaId = selectZona.value || '';
+      if(zonas.length === 0){
+        setLocationMessage('No hay zonas configuradas para tu sede.');
+      }
+    }
+
+    function populateSeccionSelect(zonaId, selected){
+      if(!selectSeccion) return;
+      const zonas = ubicacionesCache.data || [];
+      const opts = ['<option value="">Sin sección</option>'];
+      let disable = false;
+      let message = 'Selecciona una zona para listar las secciones disponibles (opcional).';
+
+      if(!zonas.length){
+        disable = true;
+        message = 'No hay zonas configuradas para tu sede.';
+      } else if(!zonaId){
+        disable = true;
+      } else {
+        const zona = zonas.find((z)=> String(z.zona_id) === String(zonaId));
+        if(!zona){
+          disable = true;
+          message = 'Zona no disponible para tu sede.';
+        } else {
+          const secciones = Array.isArray(zona.secciones) ? zona.secciones : [];
+          if(!secciones.length){
+            disable = true;
+            message = 'Esta zona no tiene secciones registradas.';
+          } else {
+            message = 'Selecciona una sección (opcional).';
+            secciones.forEach((s)=>{
+              const label = safeHTML(s.nombre || `Sección ${s.seccion_id}`) + (s.activa === false ? ' (inactiva)' : '');
+              opts.push(`<option value="${safeHTML(s.seccion_id)}">${label}</option>`);
+            });
+          }
+        }
+      }
+
+      selectSeccion.innerHTML = opts.join('');
+      selectSeccion.disabled = disable;
+      const desired = !disable && selected ? String(selected) : '';
+      if(desired){
+        selectSeccion.value = desired;
+        if(selectSeccion.value !== desired){
+          const opt = document.createElement('option');
+          opt.value = desired;
+          opt.textContent = `Sección ${desired}`;
+          selectSeccion.appendChild(opt);
+          selectSeccion.value = desired;
+        }
+        ensamSeccionId = selectSeccion.value || '';
+      } else {
+        selectSeccion.value = '';
+        if(disable){ ensamSeccionId = ''; }
+      }
+      setLocationMessage(message);
+    }
+
+    function ensureLocationSelectors(){
+      if(!selectZona || !selectSeccion) return Promise.resolve();
+      setLocationMessage('Cargando ubicaciones...');
+      return loadUbicaciones()
+        .then(()=>{
+          populateZonaSelect(ensamZonaId);
+          populateSeccionSelect(ensamZonaId, ensamSeccionId);
+        })
+        .catch(()=>{
+          setLocationMessage('No se pudieron cargar las ubicaciones.');
+          if(selectZona) selectZona.disabled = true;
+          if(selectSeccion) selectSeccion.disabled = true;
+        });
+    }
+
 
     function renderLists(){
       if(listTic) listTic.innerHTML = [...ticSet].map(r=>`<li class="px-2 py-1 bg-base-200 rounded text-xs font-mono truncate">${r}</li>`).join('');
@@ -1145,7 +1275,19 @@
       // Orden select state
       if(linkOrderChk && orderSelect){ orderSelect.disabled = !linkOrderChk.checked; }
     }
-  function resetAll(){ ticSet.clear(); vipSet.clear(); cubeSet.clear(); scannedSet.clear(); scanProcessQueue = Promise.resolve(); renderLists(); updateStatus(); if(msg) msg.textContent=''; if(orderSelect){ orderSelect.innerHTML = `<option value=\"\">Selecciona una orden�</option>`; } if(linkOrderChk){ linkOrderChk.checked=false; } }
+    function resetAll(){
+      ticSet.clear();
+      vipSet.clear();
+      cubeSet.clear();
+      scannedSet.clear();
+      scanProcessQueue = Promise.resolve();
+      renderLists();
+      updateStatus();
+      if(msg) msg.textContent='';
+      if(orderSelect){ orderSelect.innerHTML = `<option value="">Selecciona una orden…</option>`; }
+      if(linkOrderChk){ linkOrderChk.checked=false; }
+      ensureLocationSelectors();
+    }
 
     async function loadOrdenes(){
       if(!orderSelect) return;
@@ -1199,6 +1341,16 @@
     }
     function scheduleValidate(){ if(_validateTimer){ clearTimeout(_validateTimer); } _validateTimer = setTimeout(()=>{ _validateTimer=0; validateAll(); }, 120); }
     let scanProcessQueue = Promise.resolve();
+
+    selectZona?.addEventListener('change', ()=>{
+      ensamZonaId = selectZona.value || '';
+      ensamSeccionId = '';
+      populateSeccionSelect(ensamZonaId, ensamSeccionId);
+    });
+
+    selectSeccion?.addEventListener('change', ()=>{
+      ensamSeccionId = selectSeccion.value || '';
+    });
 
     function extractScanTokens(str){
       let v = (str||'').replace(/\s+/g,'').toUpperCase();
@@ -1278,9 +1430,13 @@
       // Optional order id
       let orderId = null;
       if(linkOrderChk && linkOrderChk.checked && orderSelect && orderSelect.value){ orderId = Number(orderSelect.value); if(!Number.isFinite(orderId)) orderId = null; }
+      const zonaId = selectZona ? String(selectZona.value || '').trim() : '';
+      const seccionId = selectSeccion ? String(selectSeccion.value || '').trim() : '';
+      ensamZonaId = zonaId;
+      ensamSeccionId = seccionId;
       crearBtn.disabled = true; if(msg) msg.textContent='Creando caja...';
       try {
-        const res = await fetch('/operacion/acond/ensamblaje/create',{ method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ rfids, order_id: orderId })});
+        const res = await fetch('/operacion/acond/ensamblaje/create',{ method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ rfids, order_id: orderId, zona_id: zonaId, seccion_id: seccionId })});
         const json = await res.json();
         if(!res.ok || !json.ok) throw new Error(json.error||'Error creando caja');
         // Inicia cronómetro inmediatamente

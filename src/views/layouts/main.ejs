@@ -19,25 +19,27 @@
 <body class="min-h-screen">
   <div class="drawer lg:drawer-open">
     <input id="drawer-nav" type="checkbox" class="drawer-toggle" />
-    <!-- Botón hamburguesa móvil (reagregado). Se oculta cuando el menú está abierto -->
     <label for="drawer-nav" aria-label="Abrir menú" class="mobile-menu-btn lg:hidden fixed top-3 left-3 z-50 btn btn-square btn-sm btn-primary shadow-md">
       <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16" /></svg>
     </label>
     <div class="drawer-content flex flex-col">
       <section class="p-4 pt-16 lg:pt-4 animate-fade-in">
+        <% if (typeof securityWarning !== 'undefined' && securityWarning) { %>
+          <div class="alert alert-warning shadow mb-4">
+            <span><%= securityWarning %></span>
+          </div>
+        <% } %>
         <%- body %>
       </section>
     </div>
     <div class="drawer-side z-50">
       <label for="drawer-nav" aria-label="close sidebar" class="drawer-overlay"></label>
-      <!-- Añadido fondo semisólido y blur para evitar que el contenido (ej. 'Visión General') se vea detrás en móvil -->
       <aside class="min-h-full w-72 p-4 border-r border-base-300/40 flex flex-col bg-base-200/95 backdrop-blur-md relative">
         <div class="mb-4 px-2 text-lg font-bold flex items-center justify-between k-title-gradient">
           <span>KryoSense</span>
           <label for="drawer-nav" aria-label="close sidebar" class="lg:hidden btn btn-ghost btn-xs">✕</label>
         </div>
-        
-  <button id="btn-theme-toggle" class="btn k-gradient-btn btn-sm mb-4 text-xs justify-start">Cambiar tema</button>
+        <button id="btn-theme-toggle" class="btn k-gradient-btn btn-sm mb-4 text-xs justify-start">Cambiar tema</button>
         <ul class="menu flex-1">
           <% const roleLowerRaw = (user && (user.rol || '').toLowerCase()) || ''; %>
           <% const mapLegacy = { preacond:'acondicionador', operacion:'operador', bodega:'bodeguero', inspeccion:'inspeccionador', admin:'administrador' }; %>
@@ -85,11 +87,10 @@
           <% if (user && ['Admin','admin','Administrador','administrador'].includes(user.rol)) { %>
             <li><a class="<%= currentPath.startsWith('/auditoria') ? 'active' : '' %>" href="/auditoria">Auditoría</a></li>
             <li><a class="<%= currentPath.startsWith('/administracion') ? 'active' : '' %>" href="/administracion">Administración</a></li>
+            <li><a class="<%= currentPath.startsWith('/reportes') ? 'active' : '' %>" href="/reportes">Reportes</a></li>
           <% } %>
         </ul>
-        <!-- User menu at bottom -->
         <div class="mt-2">
-          <!-- Hidden form for logout (so we can submit from menu item) -->
           <form id="logout-form" method="post" action="/auth/logout"></form>
           <div class="dropdown dropdown-top w-full">
             <label tabindex="0" class="btn btn-ghost w-full justify-between">
@@ -106,15 +107,15 @@
                     <%= (user && (user.nombre || user.correo)) ? (user.nombre || user.correo) : 'Usuario' %>
                   </div>
                   <div class="text-[11px] opacity-60 truncate max-w-[160px]">
-                    <%= (typeof theme !== 'undefined', (user && user.tenant) ? String(user.tenant).replace(/^tenant_?/i,'') : '-') %>
+                    <%= user && user.sede_nombre ? user.sede_nombre : ((user && user.sede_id) ? `Sede ${user.sede_id}` : '-') %>
                   </div>
                 </div>
               </div>
               <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 opacity-70" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M5.23 7.21a.75.75 0 011.06.02L10 11.111l3.71-3.88a.75.75 0 111.08 1.04l-4.24 4.43a.75.75 0 01-1.08 0L5.21 8.27a.75.75 0 01.02-1.06z" clip-rule="evenodd"/></svg>
             </label>
             <ul tabindex="0" class="dropdown-content menu p-2 shadow bg-base-100 rounded-box w-60 mb-2">
-              <li><a href="#" id="user-settings">Configuración</a></li>
-              <li><a href="#" id="user-notifs">Notificaciones</a></li>
+              <li><a href="/cuenta" id="user-settings">Configuración</a></li>
+              <li><a href="/notificaciones" id="user-notifs">Notificaciones</a></li>
               <li><button type="submit" form="logout-form" class="text-error">Cerrar sesión</button></li>
             </ul>
           </div>
@@ -128,9 +129,7 @@
   <script src="/static/js/notifications.js?v=<%= assetVersion %>" defer></script>
   <script src="/static/js/pwa.js?v=<%= assetVersion %>" defer></script>
   <style>
-    /* Ocultar botón cuando drawer abierto */
     #drawer-nav:checked + label.mobile-menu-btn { display:none }
-    /* Evitar scroll de fondo cuando el menú móvil está abierto */
     @media (max-width: 1023px){
       #drawer-nav:checked ~ .drawer-content { overflow:hidden; }
     }

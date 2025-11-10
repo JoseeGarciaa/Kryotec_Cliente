@@ -1,5 +1,25 @@
 <% title = title || 'Mi cuenta' %>
 <div class="space-y-6">
+  <% if (flash && flash.ok) { %>
+    <div class="alert alert-success shadow">
+      <span><%= flash.ok %></span>
+    </div>
+  <% } %>
+  <% if (flash && flash.error) { %>
+    <div class="alert alert-error shadow">
+      <span><%= flash.error %></span>
+    </div>
+  <% } %>
+  <% if (mustChange) { %>
+    <div class="alert alert-warning shadow">
+      <span>Debes actualizar tu contraseña antes de continuar utilizando el sistema.</span>
+    </div>
+  <% } %>
+  <% if (typeof passwordDaysRemaining === 'number' && passwordDaysRemaining > 0 && passwordDaysRemaining <= 15) { %>
+    <div class="alert alert-info shadow">
+      <span>Tu contraseña vence en <strong><%= passwordDaysRemaining %></strong> día(s). Actualízala cuanto antes.</span>
+    </div>
+  <% } %>
   <div class="card border border-base-300/40 bg-base-200/60">
     <div class="card-body">
       <h2 class="card-title">Perfil</h2>
@@ -16,6 +36,10 @@
           <span class="label-text">Teléfono</span>
           <input class="input input-bordered" type="text" name="telefono" value="<%= (accountUser && accountUser.telefono) || '' %>" />
         </label>
+        <label class="form-control">
+          <span class="label-text">Sede asignada</span>
+          <input class="input input-bordered" type="text" value="<%= accountUser ? (accountUser.sede_nombre || (accountUser.sede_id ? ('ID '+accountUser.sede_id) : 'Sin sede')) : '' %>" readonly />
+        </label>
         <div class="sm:col-span-2">
           <button class="btn btn-primary">Guardar</button>
         </div>
@@ -26,6 +50,7 @@
   <div class="card border border-base-300/40 bg-base-200/60">
     <div class="card-body">
       <h2 class="card-title">Cambiar contraseña</h2>
+      <p class="text-sm opacity-80 mb-2"><%= passwordPolicy %></p>
       <form action="/cuenta/change-password" method="post" class="grid gap-4 sm:grid-cols-2">
         <label class="form-control">
           <span class="label-text">Actual</span>
@@ -33,12 +58,22 @@
         </label>
         <label class="form-control">
           <span class="label-text">Nueva</span>
-          <input class="input input-bordered" type="password" name="new_password" minlength="6" required />
+          <input class="input input-bordered" type="password" name="new_password" minlength="8" required />
+        </label>
+        <label class="form-control">
+          <span class="label-text">Confirmar nueva contraseña</span>
+          <input class="input input-bordered" type="password" name="confirm_password" minlength="8" required />
         </label>
         <div class="sm:col-span-2">
           <button class="btn btn-primary">Actualizar contraseña</button>
         </div>
       </form>
+      <div class="mt-4 text-xs opacity-70">
+        <p>Tiempo de sesión asignado: <strong><%= accountUser ? accountUser.sesion_ttl_minutos : '-' %> min</strong> (rangos permitidos: <%= sessionTtlMin %> - <%= sessionTtlMax %> min).</p>
+        <% if (passwordExpiresAt) { %>
+          <p>Próximo vencimiento de contraseña: <strong><%= passwordExpiresAt.toLocaleString('es-CO') %></strong>.</p>
+        <% } %>
+      </div>
     </div>
   </div>
 </div>

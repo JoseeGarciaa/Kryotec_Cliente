@@ -147,6 +147,21 @@
         <ul id="list-cube" class="text-xs space-y-1 overflow-auto flex-1 min-h-0"></ul>
       </div>
     </div>
+    <div class="mt-4 grid grid-cols-1 sm:grid-cols-2 gap-3">
+      <label class="form-control">
+        <span class="label-text text-xs">Zona (opcional)</span>
+        <select id="ensam-zona" class="select select-sm select-bordered">
+          <option value="">Sin zona</option>
+        </select>
+      </label>
+      <label class="form-control">
+        <span class="label-text text-xs">Sección (opcional)</span>
+        <select id="ensam-seccion" class="select select-sm select-bordered" disabled>
+          <option value="">Sin sección</option>
+        </select>
+      </label>
+    </div>
+    <p id="ensam-location-hint" class="text-xs opacity-60 mt-1"></p>
     <div class="mt-6 border border-base-300/40 rounded-lg p-3 bg-base-200/30">
       <div class="text-xs uppercase tracking-wide opacity-60 mb-2">Cronómetro de caja (requerido)</div>
       <div class="grid grid-cols-2 gap-3">

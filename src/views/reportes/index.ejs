@@ -1,0 +1,141 @@
+<% title = title || 'Reportes Operativos' %>
+
+<div class="space-y-6" id="reportes-root">
+  <section class="card bg-base-200 shadow-lg">
+    <div class="card-body space-y-4">
+      <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+        <div>
+          <h1 class="text-2xl font-bold">Reportes operativos</h1>
+          <p class="text-sm opacity-70">Filtra por período, sede, zona y operario. Los resultados soportan exportación a CSV/XLSX.</p>
+        </div>
+        <div class="flex gap-2">
+          <button class="btn btn-sm" type="button" id="reportes-aplicar">Actualizar todo</button>
+          <button class="btn btn-sm btn-outline" type="button" id="reportes-limpiar">Limpiar filtros</button>
+        </div>
+      </div>
+      <% if (typeof error === 'string' && error) { %>
+        <div class="alert alert-error"><span><%= error %></span></div>
+      <% } %>
+      <form class="grid gap-4 md:grid-cols-2 lg:grid-cols-3" id="reportes-filtros">
+        <label class="form-control">
+          <span class="label-text text-xs uppercase opacity-70">Desde</span>
+          <input type="date" name="from" class="input input-bordered" value="<%= initial?.from || '' %>">
+        </label>
+        <label class="form-control">
+          <span class="label-text text-xs uppercase opacity-70">Hasta</span>
+          <input type="date" name="to" class="input input-bordered" value="<%= initial?.to || '' %>">
+        </label>
+        <label class="form-control">
+          <span class="label-text text-xs uppercase opacity-70">Sede</span>
+          <select name="sedeId" class="select select-bordered" data-filter-select="sede">
+            <option value="">Todas</option>
+            <% combos?.sedes?.forEach(function(s){ %>
+              <option value="<%= s.sede_id %>" <%= Number(initial?.sedeId) === Number(s.sede_id) ? 'selected' : '' %>><%= s.nombre %></option>
+            <% }) %>
+          </select>
+        </label>
+        <label class="form-control">
+          <span class="label-text text-xs uppercase opacity-70">Zona</span>
+          <select name="zonaId" class="select select-bordered" data-filter-select="zona">
+            <option value="">Todas</option>
+            <% combos?.zonas?.forEach(function(z){ %>
+              <option value="<%= z.zona_id %>" data-sede="<%= z.sede_id %>" <%= Number(initial?.zonaId) === Number(z.zona_id) ? 'selected' : '' %>><%= z.nombre %></option>
+            <% }) %>
+          </select>
+        </label>
+        <label class="form-control">
+          <span class="label-text text-xs uppercase opacity-70">Sección</span>
+          <select name="seccionId" class="select select-bordered" data-filter-select="seccion">
+            <option value="">Todas</option>
+            <% combos?.secciones?.forEach(function(sc){ %>
+              <option value="<%= sc.seccion_id %>" data-zona="<%= sc.zona_id %>" <%= Number(initial?.seccionId) === Number(sc.seccion_id) ? 'selected' : '' %>><%= sc.nombre %></option>
+            <% }) %>
+          </select>
+        </label>
+        <label class="form-control">
+          <span class="label-text text-xs uppercase opacity-70">Operario</span>
+          <select name="operarioId" class="select select-bordered">
+            <option value="">Todos</option>
+            <% combos?.usuarios?.forEach(function(u){ %>
+              <option value="<%= u.id %>" <%= Number(initial?.operarioId) === Number(u.id) ? 'selected' : '' %>><%= u.nombre %><%= u.rol ? ' · '+u.rol : '' %></option>
+            <% }) %>
+          </select>
+        </label>
+        <label class="form-control">
+          <span class="label-text text-xs uppercase opacity-70">Orden</span>
+          <input type="number" min="1" step="1" class="input input-bordered" name="orderId" value="<%= initial?.orderId || '' %>">
+        </label>
+        <label class="form-control lg:col-span-3">
+          <span class="label-text text-xs uppercase opacity-70">Credocube / RFID</span>
+          <input type="text" maxlength="24" class="input input-bordered" name="credocube" value="<%= initial?.credocube || '' %>">
+        </label>
+      </form>
+    </div>
+  </section>
+
+  <section class="card bg-base-200 shadow-lg">
+    <div class="card-body space-y-4">
+      <div class="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-3">
+        <div>
+          <h2 class="text-lg font-semibold">Selecciona los reportes que quieres ver</h2>
+          <p class="text-xs opacity-70">Activa sólo los módulos necesarios para reducir el scroll.</p>
+        </div>
+        <div class="flex gap-2 text-xs">
+          <button class="btn btn-sm btn-outline" type="button" id="reportes-select-none">Ocultar todos</button>
+          <button class="btn btn-sm" type="button" id="reportes-select-all">Mostrar todos</button>
+        </div>
+      </div>
+      <div class="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+        <label class="flex items-center gap-2 cursor-pointer">
+          <input type="checkbox" name="report-toggle" data-report="inventario-sede" class="checkbox checkbox-sm" checked />
+          <span class="text-sm">5.1 Inventario por sede y estado</span>
+        </label>
+        <label class="flex items-center gap-2 cursor-pointer">
+          <input type="checkbox" name="report-toggle" data-report="trazabilidad" class="checkbox checkbox-sm" checked />
+          <span class="text-sm">5.2 Historial de trazabilidad</span>
+        </label>
+        <label class="flex items-center gap-2 cursor-pointer">
+          <input type="checkbox" name="report-toggle" data-report="actividad-operario" class="checkbox checkbox-sm" checked />
+          <span class="text-sm">5.3 Actividad por operario</span>
+        </label>
+        <label class="flex items-center gap-2 cursor-pointer">
+          <input type="checkbox" name="report-toggle" data-report="actividad-sede" class="checkbox checkbox-sm" />
+          <span class="text-sm">5.4 Actividad por sede</span>
+        </label>
+        <label class="flex items-center gap-2 cursor-pointer">
+          <input type="checkbox" name="report-toggle" data-report="ordenes-estado" class="checkbox checkbox-sm" />
+          <span class="text-sm">5.5 Órdenes por estado y tiempos</span>
+        </label>
+        <label class="flex items-center gap-2 cursor-pointer">
+          <input type="checkbox" name="report-toggle" data-report="ordenes-culminadas" class="checkbox checkbox-sm" />
+          <span class="text-sm">5.6 Órdenes culminadas</span>
+        </label>
+        <label class="flex items-center gap-2 cursor-pointer">
+          <input type="checkbox" name="report-toggle" data-report="auditorias" class="checkbox checkbox-sm" />
+          <span class="text-sm">5.7 Auditorías registradas</span>
+        </label>
+        <label class="flex items-center gap-2 cursor-pointer">
+          <input type="checkbox" name="report-toggle" data-report="registro-inventario" class="checkbox checkbox-sm" />
+          <span class="text-sm">5.8 Movimientos de inventario</span>
+        </label>
+        <label class="flex items-center gap-2 cursor-pointer">
+          <input type="checkbox" name="report-toggle" data-report="usuarios-sede" class="checkbox checkbox-sm" />
+          <span class="text-sm">5.9 Gestión de usuarios por sede</span>
+        </label>
+      </div>
+    </div>
+  </section>
+
+  <%- include('../partials/report-card', { code: 'inventario-sede', title: '5.1 Inventario por sede y estado', subtitle: 'Conteo consolidado de piezas activas con último estado registrado.' }) %>
+  <%- include('../partials/report-card', { code: 'trazabilidad', title: '5.2 Historial de trazabilidad', subtitle: 'Bitácora completa de movimientos por pieza y orden.' }) %>
+  <%- include('../partials/report-card', { code: 'actividad-operario', title: '5.3 Actividad por operario', subtitle: 'Acciones por fase, órdenes atendidas y tiempos promedio.' }) %>
+  <%- include('../partials/report-card', { code: 'actividad-sede', title: '5.4 Actividad por sede', subtitle: 'Traslados, órdenes y tiempos medios consolidados por sede.', hidden: true }) %>
+  <%- include('../partials/report-card', { code: 'ordenes-estado', title: '5.5 Órdenes por estado y tiempos', subtitle: 'Duraciones por orden y fase con cálculo de TAT.', hidden: true }) %>
+  <%- include('../partials/report-card', { code: 'ordenes-culminadas', title: '5.6 Órdenes culminadas', subtitle: 'Detalle de órdenes cerradas, TAT y fases críticas.', hidden: true }) %>
+  <%- include('../partials/report-card', { code: 'auditorias', title: '5.7 Auditorías registradas', subtitle: 'Bitácora de auditorías con campos antes/después.', hidden: true }) %>
+  <%- include('../partials/report-card', { code: 'registro-inventario', title: '5.8 Movimientos de inventario', subtitle: 'Entradas, salidas y movimientos por zona y sección.', hidden: true }) %>
+  <%- include('../partials/report-card', { code: 'usuarios-sede', title: '5.9 Gestión de usuarios por sede', subtitle: 'Altas, bajas y actividad administrativa por sede.', hidden: true }) %>
+</div>
+
+<div id="reportes-config" data-combos='<%- JSON.stringify(combos || {}) %>' data-initial='<%- JSON.stringify(initial || {}) %>'></div>
+<script src="/static/js/reportes.js?v=<%= assetVersion %>" defer></script>

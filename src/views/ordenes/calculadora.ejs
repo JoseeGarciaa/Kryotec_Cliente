@@ -1,0 +1,142 @@
+<% title = title || 'Calculadora de órdenes' %>
+<div class="flex flex-col gap-4">
+  <div class="flex items-center justify-between flex-wrap gap-3">
+    <div>
+      <h1 class="text-2xl font-bold">Calculadora de órdenes</h1>
+      <p class="opacity-70 text-sm">Simula combinaciones de productos y obtén recomendaciones de CredoCubes disponibles en tu sede.</p>
+    </div>
+    <div class="flex gap-2 flex-wrap">
+      <a href="/ordenes/calculadora/plantilla-productos" class="btn btn-ghost btn-sm">Descargar plantilla</a>
+      <button id="btn-import-productos" class="btn btn-secondary btn-sm">Importar productos</button>
+      <a href="/ordenes" class="btn btn-ghost btn-sm">Volver a órdenes</a>
+    </div>
+  </div>
+
+  <% if (error) { %>
+    <div class="alert alert-error text-sm">
+      <span><%= error %></span>
+    </div>
+  <% } %>
+
+  <div class="card bg-base-200 shadow">
+    <div class="card-body gap-4">
+      <div class="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
+        <div>
+          <h2 class="card-title text-lg">Productos a despachar</h2>
+          <p class="text-sm opacity-70">Ingresa las dimensiones internas del producto en milímetros (mm). Puedes seleccionar registros guardados como referencia y ajustar las cantidades necesarias.</p>
+        </div>
+        <div class="flex gap-2">
+          <button id="btn-clear-items" class="btn btn-ghost btn-sm">Limpiar</button>
+          <button id="btn-add-item" class="btn btn-secondary btn-sm">Agregar producto</button>
+        </div>
+      </div>
+
+      <div class="hidden md:grid grid-cols-12 gap-3 px-2 text-xs uppercase tracking-wide opacity-60">
+        <div class="md:col-span-2">Catálogo</div>
+        <div class="md:col-span-3">Nombre</div>
+        <div class="md:col-span-2">Código</div>
+        <div class="md:col-span-1">Largo (mm)</div>
+        <div class="md:col-span-1">Ancho (mm)</div>
+        <div class="md:col-span-1">Alto (mm)</div>
+        <div class="md:col-span-1">Cantidad</div>
+        <div class="md:col-span-1 text-right">Acciones</div>
+      </div>
+      <div id="calc-items-body" class="space-y-3"></div>
+
+      <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+        <div id="calc-status" class="text-sm opacity-70"></div>
+        <button id="btn-calc" class="btn btn-primary btn-sm self-end">Calcular recomendaciones</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="calc-results-wrapper" class="hidden flex flex-col gap-4">
+    <div class="card bg-base-200 shadow">
+      <div class="card-body gap-3">
+        <h2 class="card-title text-lg">Resumen del cálculo</h2>
+        <div id="calc-summary" class="text-sm opacity-80">
+        </div>
+      </div>
+    </div>
+
+    <div class="card bg-base-200 shadow">
+      <div class="card-body gap-4">
+        <div class="flex items-center justify-between">
+          <h2 class="card-title text-lg">Recomendaciones disponibles</h2>
+          <span id="calc-results-count" class="badge hidden"></span>
+        </div>
+        <div id="calc-results" class="grid gap-3 md:grid-cols-2 xl:grid-cols-3"></div>
+        <div id="calc-results-empty" class="hidden alert alert-warning text-sm">
+          <span>No se encontraron modelos disponibles en tu sede que se ajusten a los productos indicados.</span>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<dialog id="modal-confirm-order" class="modal">
+  <div class="modal-box w-11/12 max-w-2xl">
+    <h3 class="font-bold text-lg mb-2">Crear orden recomendada</h3>
+    <div id="confirm-order-description" class="text-sm opacity-80 mb-4"></div>
+    <form id="form-confirm-order" class="grid grid-cols-1 md:grid-cols-2 gap-3">
+      <div class="form-control md:col-span-2">
+        <label class="label"><span class="label-text">Número de orden *</span></label>
+        <input type="text" name="numero_orden" class="input input-sm input-bordered" required maxlength="80" />
+      </div>
+      <div class="form-control">
+        <label class="label"><span class="label-text">Cliente</span></label>
+        <input type="text" name="cliente" class="input input-sm input-bordered" maxlength="160" />
+      </div>
+      <div class="form-control">
+        <label class="label"><span class="label-text">Ciudad destino</span></label>
+        <input type="text" name="ciudad_destino" class="input input-sm input-bordered" maxlength="120" />
+      </div>
+      <div class="form-control md:col-span-2">
+        <label class="label"><span class="label-text">Ubicación destino</span></label>
+        <input type="text" name="ubicacion_destino" class="input input-sm input-bordered" maxlength="180" />
+      </div>
+      <input type="hidden" name="modelo_id" />
+      <input type="hidden" name="payload" />
+      <div id="confirm-order-error" class="hidden md:col-span-2 text-sm text-error"></div>
+      <div class="md:col-span-2 flex justify-end gap-2 pt-2">
+        <button type="button" class="btn btn-sm" data-close>Cancelar</button>
+        <button type="submit" class="btn btn-sm btn-primary">
+          <span>Crear orden</span>
+          <span class="loading loading-spinner loading-xs hidden" id="confirm-order-spinner"></span>
+        </button>
+      </div>
+    </form>
+  </div>
+  <form method="dialog" class="modal-backdrop"><button>close</button></form>
+</dialog>
+
+<dialog id="modal-import-productos" class="modal">
+  <div class="modal-box w-11/12 max-w-2xl sm:w-full">
+    <h3 class="font-bold text-lg mb-2">Importar productos</h3>
+    <div class="alert alert-info text-sm">
+      <span>Usa la plantilla oficial para mantener el orden de columnas. Las filas válidas se agregarán temporalmente a la tabla inferior para que puedas calcular sin guardar aún en la base de datos.</span>
+    </div>
+    <form id="form-import-productos" class="space-y-4" enctype="multipart/form-data">
+      <div class="form-control">
+        <label class="label"><span class="label-text">Archivo Excel (.xlsx)</span></label>
+        <input type="file" name="file" accept=".xlsx" class="file-input file-input-bordered file-input-sm w-full" required />
+      </div>
+      <div id="import-productos-status" class="hidden text-sm"></div>
+      <div id="import-productos-errors" class="hidden text-sm text-error"></div>
+      <div class="flex justify-end gap-2 pt-2">
+        <button type="button" class="btn btn-sm" data-close>Cancelar</button>
+        <button id="import-productos-submit" class="btn btn-sm btn-primary" type="submit">
+          <span id="import-productos-submit-text">Procesar</span>
+          <span id="import-productos-spinner" class="loading loading-spinner loading-xs hidden"></span>
+        </button>
+      </div>
+    </form>
+  </div>
+  <form method="dialog" class="modal-backdrop"><button>close</button></form>
+</dialog>
+
+<div id="calc-config"
+  data-productos='<%- JSON.stringify(productos ? productos : []) %>'
+  data-modelos='<%- JSON.stringify(modelos ? modelos : []) %>'
+  data-sede='<%- JSON.stringify(typeof sedeId !== "undefined" && sedeId !== null ? sedeId : null) %>'></div>
+<script src="/static/js/ordenes-calculadora.js?v=<%= assetVersion %>" defer></script>

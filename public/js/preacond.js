@@ -31,6 +31,9 @@
   const scanCount = qs('#scan-count');
   const msg = qs('#scan-msg');
   const btnConfirm = qs('#btn-confirm');
+  const selectZona = qs('#scan-zona');
+  const selectSeccion = qs('#scan-seccion');
+  const locationHint = qs('#scan-location-hint');
   const keepLoteRow = qs('#keep-lote-row');
   const chkKeepLote = qs('#chk-keep-lote');
   // Nuevos controles de cronómetro dentro del modal de escaneo
@@ -68,6 +71,141 @@
   let rfids = [];
   let invalid = [];
   let valid = [];
+  const ubicacionesState = { data: null, promise: null };
+  let selectedZonaId = '';
+  let selectedSeccionId = '';
+
+  function setLocationMessage(text){ if(locationHint){ locationHint.textContent = text || ''; } }
+
+  function escapeHtml(value){
+    return String(value ?? '')
+      .replace(/&/g,'&amp;')
+      .replace(/</g,'&lt;')
+      .replace(/>/g,'&gt;')
+      .replace(/"/g,'&quot;')
+      .replace(/'/g,'&#39;');
+  }
+
+  async function loadUbicaciones(){
+    if(ubicacionesState.data) return ubicacionesState.data;
+    if(!ubicacionesState.promise){
+      ubicacionesState.promise = fetch('/inventario/ubicaciones', { headers: { Accept: 'application/json' } })
+        .then((res)=> res.ok ? res.json() : null)
+        .then((json)=>{
+          const zonas = Array.isArray(json?.zonas) ? json.zonas : [];
+          ubicacionesState.data = zonas.map((z)=>({
+            zona_id: z.zona_id,
+            nombre: z.nombre,
+            activa: z.activa,
+            secciones: Array.isArray(z.secciones) ? z.secciones.map((s)=>({
+              seccion_id: s.seccion_id,
+              nombre: s.nombre,
+              activa: s.activa,
+            })) : [],
+          }));
+          return ubicacionesState.data;
+        })
+        .catch((err)=>{
+          console.error('[Preacond] Error cargando ubicaciones', err);
+          ubicacionesState.data = [];
+          return ubicacionesState.data;
+        })
+        .finally(()=>{ ubicacionesState.promise = null; });
+    }
+    return ubicacionesState.promise;
+  }
+
+  function populateZonaSelect(selected){
+    if(!selectZona) return;
+    const zonas = ubicacionesState.data || [];
+    const options = ['<option value="">Sin zona</option>'];
+    zonas.forEach((z)=>{
+      const label = escapeHtml(z.nombre || `Zona ${z.zona_id}`) + (z.activa === false ? ' (inactiva)' : '');
+      options.push(`<option value="${escapeHtml(z.zona_id)}">${label}</option>`);
+    });
+    selectZona.innerHTML = options.join('');
+    selectZona.disabled = zonas.length === 0;
+    const desired = selected ? String(selected) : '';
+    selectZona.value = desired;
+    if(desired && selectZona.value !== desired){
+      const opt = document.createElement('option');
+      opt.value = desired;
+      opt.textContent = `Zona ${desired}`;
+      selectZona.appendChild(opt);
+      selectZona.value = desired;
+    }
+    selectedZonaId = selectZona.value || '';
+    if(zonas.length === 0){
+      setLocationMessage('No hay zonas configuradas para tu sede.');
+    }
+  }
+
+  function populateSeccionSelect(zonaId, selected){
+    if(!selectSeccion) return;
+    const zonas = ubicacionesState.data || [];
+    const opts = ['<option value="">Sin sección</option>'];
+    let disable = false;
+    let message = 'Selecciona una zona para listar las secciones disponibles (opcional).';
+
+    if(!zonas.length){
+      disable = true;
+      message = 'No hay zonas configuradas para tu sede.';
+    } else if(!zonaId){
+      disable = true;
+    } else {
+      const zona = zonas.find((z)=> String(z.zona_id) === String(zonaId));
+      if(!zona){
+        disable = true;
+        message = 'Zona no disponible para tu sede.';
+      } else {
+        const secciones = Array.isArray(zona.secciones) ? zona.secciones : [];
+        if(!secciones.length){
+          disable = true;
+          message = 'Esta zona no tiene secciones registradas.';
+        } else {
+          message = 'Selecciona una sección (opcional).';
+          secciones.forEach((s)=>{
+            const label = escapeHtml(s.nombre || `Sección ${s.seccion_id}`) + (s.activa === false ? ' (inactiva)' : '');
+            opts.push(`<option value="${escapeHtml(s.seccion_id)}">${label}</option>`);
+          });
+        }
+      }
+    }
+
+    selectSeccion.innerHTML = opts.join('');
+    selectSeccion.disabled = disable;
+    const desired = !disable && selected ? String(selected) : '';
+    if(desired){
+      selectSeccion.value = desired;
+      if(selectSeccion.value !== desired){
+        const opt = document.createElement('option');
+        opt.value = desired;
+        opt.textContent = `Sección ${desired}`;
+        selectSeccion.appendChild(opt);
+        selectSeccion.value = desired;
+      }
+      selectedSeccionId = selectSeccion.value || '';
+    } else {
+      selectSeccion.value = '';
+      if(disable){ selectedSeccionId = ''; }
+    }
+    setLocationMessage(message);
+  }
+
+  function ensureLocationSelectors(){
+    if(!selectZona || !selectSeccion) return Promise.resolve();
+    setLocationMessage('Cargando ubicaciones...');
+    return loadUbicaciones()
+      .then(()=>{
+        populateZonaSelect(selectedZonaId);
+        populateSeccionSelect(selectedZonaId, selectedSeccionId);
+      })
+      .catch(()=>{
+        setLocationMessage('No se pudieron cargar las ubicaciones.');
+        if(selectZona) selectZona.disabled = true;
+        if(selectSeccion) selectSeccion.disabled = true;
+      });
+  }
 
   function setSpin(which, on){
     const el = which === 'cong' ? spinCong : spinAtem;
@@ -387,6 +525,7 @@
   if(scanTimerBox){ scanTimerBox.classList.toggle('hidden', target!=='atemperamiento'); }
   if(scanStartTimer){ scanStartTimer.checked = true; }
   // No se deshabilita cronómetro al conservar lote
+    ensureLocationSelectors();
     dlg?.showModal?.();
     setTimeout(()=>scanInput?.focus?.(), 50);
   }
@@ -514,6 +653,16 @@
     }
   });
 
+  selectZona?.addEventListener('change', ()=>{
+    selectedZonaId = selectZona.value || '';
+    selectedSeccionId = '';
+    populateSeccionSelect(selectedZonaId, selectedSeccionId);
+  });
+
+  selectSeccion?.addEventListener('change', ()=>{
+    selectedSeccionId = selectSeccion.value || '';
+  });
+
   // Cambiar mensaje cuando usuario marca conservar lote (no se puede crear lote nuevo)
   // Ya no se necesita manejo de deshabilitado
 
@@ -524,13 +673,17 @@
     }
     if(!valid.length){ msg.textContent = scanMode==='lote' ? 'Escanee la TIC congelada del lote.' : 'No hay RFIDs válidos.'; return; }
     const keepLote = chkKeepLote && !chkKeepLote.classList.contains('hidden') && chkKeepLote.checked && target==='atemperamiento';
+    const zonaId = selectZona ? String(selectZona.value || '').trim() : '';
+    const seccionId = selectSeccion ? String(selectSeccion.value || '').trim() : '';
+    selectedZonaId = zonaId;
+    selectedSeccionId = seccionId;
     let j;
     if(scanMode==='lote' && target==='atemperamiento'){
-      const r = await fetch('/operacion/preacond/lote/move', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ lote: loteDetected, keepLote }) });
+      const r = await fetch('/operacion/preacond/lote/move', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ lote: loteDetected, keepLote, zona_id: zonaId, seccion_id: seccionId }) });
       j = await r.json().catch(()=>({ok:false}));
       if(j.ok){ j.moved = j.moved || (loteItemsCache.map(it=>it.rfid)); }
     } else {
-      const r = await fetch('/operacion/preacond/scan', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ target, rfids: valid, keepLote }) });
+      const r = await fetch('/operacion/preacond/scan', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ target, rfids: valid, keepLote, zona_id: zonaId, seccion_id: seccionId }) });
       j = await r.json().catch(()=>({ok:false}));
     }
     if(!j.ok){ msg.textContent = j.error || 'Error al confirmar'; return; }

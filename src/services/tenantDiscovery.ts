@@ -1,5 +1,6 @@
 import { pool, withTenant } from '../db/pool';
 import { UsersModel, User } from '../models/User';
+import { ensureSecurityArtifacts } from './securityBootstrap';
 
 export type TenantUserMatch = { tenant: string; user: User };
 
@@ -13,6 +14,7 @@ export async function findUserInAnyTenant(correo: string): Promise<TenantUserMat
   for (const r of rows) {
     const tenant = r.schema_name;
     try {
+      await ensureSecurityArtifacts(tenant);
       const user = await withTenant(tenant, (client) => UsersModel.findByCorreo(client, correo));
       if (user) {
         console.log('[tenantDiscovery] found user in', tenant);

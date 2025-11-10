@@ -5,11 +5,19 @@
 
   const btnNew = qs('#btn-new-user');
   const dlgNew = qs('#dlg-new-user');
+  const btnNewSede = qs('#btn-new-sede');
+  const dlgNewSede = qs('#dlg-new-sede');
   const dlgEdit = qs('#dlg-edit-user');
   const formEdit = qs('#form-edit');
+  const ttlMin = formEdit && formEdit.dataset && formEdit.dataset.ttlMin ? Number(formEdit.dataset.ttlMin) : 0;
+  const ttlMax = formEdit && formEdit.dataset && formEdit.dataset.ttlMax ? Number(formEdit.dataset.ttlMax) : 0;
 
   if(btnNew && dlgNew){
     btnNew.addEventListener('click', ()=> dlgNew.showModal());
+  }
+
+  if(btnNewSede && dlgNewSede){
+    btnNewSede.addEventListener('click', ()=> dlgNewSede.showModal());
   }
 
   // Toggle activo
@@ -34,6 +42,15 @@
   let rol = ds.rol || '';
   if(['Admin','Administrador','admin'].includes(rol)) rol = 'admin';
   formEdit.rol.value = rol || 'Acondicionador';
+      if(formEdit.sede_id){
+        formEdit.sede_id.value = ds.sede || '';
+      }
+      if (formEdit.sesion_ttl_minutos) {
+        const ttl = ds.ttl ? Number(ds.ttl) : '';
+        formEdit.sesion_ttl_minutos.value = ttl && Number.isFinite(ttl) ? ttl : '';
+        if (ttlMin) formEdit.sesion_ttl_minutos.min = ttlMin;
+        if (ttlMax) formEdit.sesion_ttl_minutos.max = ttlMax;
+      }
       formEdit.activo.value = ds.activo === 'false' ? 'false' : 'true';
       dlgEdit.showModal();
     });

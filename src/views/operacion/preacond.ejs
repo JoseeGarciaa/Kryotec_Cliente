@@ -152,6 +152,21 @@
       </div>
       <div id="chips" class="flex flex-wrap gap-2"></div>
       <div id="scan-msg" class="text-sm text-error"></div>
+      <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+        <label class="form-control">
+          <span class="label-text text-xs">Zona (opcional)</span>
+          <select id="scan-zona" class="select select-sm select-bordered">
+            <option value="">Sin zona</option>
+          </select>
+        </label>
+        <label class="form-control">
+          <span class="label-text text-xs">Sección (opcional)</span>
+          <select id="scan-seccion" class="select select-sm select-bordered" disabled>
+            <option value="">Sin sección</option>
+          </select>
+        </label>
+      </div>
+      <p id="scan-location-hint" class="text-xs opacity-60"></p>
       <!-- Resumen lote -->
       <div id="scan-lote-summary" class="hidden border border-base-300/40 rounded-lg p-3 bg-base-200/30 text-sm max-h-64 overflow-auto"></div>
   <label id="keep-lote-row" class="hidden items-center gap-2">

@@ -13,6 +13,7 @@ import ordenesRoutes from './routes/ordenesRoutes';
 import operacionRoutes from './routes/operacionRoutes';
 import administracionRoutes from './routes/administracionRoutes';
 import auditoriaRoutes from './routes/auditoriaRoutes';
+import reportesRoutes from './routes/reportesRoutes';
 import jwt from 'jsonwebtoken';
 import { config } from './config';
 // @ts-ignore types optional
@@ -190,8 +191,14 @@ app.use(async (req, res, next) => {
 			const t = resolveTenant(req) || u.tenant;
 			if (t && u.sub) {
 				const userRow = await withTenant(t, (client) => UsersModel.findById(client, Number(u.sub)));
-				if (userRow) {
-					(res.locals as any).user = { ...u, nombre: userRow.nombre, correo: userRow.correo };
+						if (userRow) {
+							(res.locals as any).user = {
+								...u,
+								nombre: userRow.nombre,
+								correo: userRow.correo,
+								sede_id: userRow.sede_id ?? null,
+								sede_nombre: userRow.sede_nombre ?? null,
+							};
 				}
 			}
 		}
@@ -223,6 +230,7 @@ app.use('/registro', registroRoutes);
 app.use('/operacion', operacionRoutes);
 app.use('/auditoria', auditoriaRoutes);
 app.use('/administracion', administracionRoutes);
+app.use('/reportes', reportesRoutes);
 app.get('/', (_req: Request, res: Response) => res.redirect('/auth/login'));
 app.get('/health', (_req: Request, res: Response) => res.json({ ok: true, env: process.env.NODE_ENV, port: process.env.PORT }));
 
