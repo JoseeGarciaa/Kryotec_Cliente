@@ -1,0 +1,43 @@
+<% title = title || 'Traslado entre sedes' %>
+<div class="mb-8">
+  <h1 class="text-2xl font-bold mb-6">Traslado entre sedes</h1>
+  <div class="grid gap-6 lg:grid-cols-3">
+    <div class="lg:col-span-2 rounded-xl border border-base-300/50 bg-base-200/5 p-5 flex flex-col gap-5">
+      <div class="space-y-2">
+        <p class="text-sm opacity-70 leading-relaxed">
+          Escanea o pega los RFIDs (24 caracteres) de las piezas que deseas trasladar a tu sede actual. Los códigos válidos se agregan a la cola automáticamente y puedes revisarlos antes de ejecutar el traslado.
+        </p>
+        <p class="text-xs opacity-60">
+          Cada traslado enviará las piezas a <span class="font-semibold">En bodega</span>, limpiará <span class="font-semibold">sub&nbsp;estado</span>, <span class="font-semibold">lote</span>, <span class="font-semibold">orden</span> y quitará cualquier zona o sección asociada.
+        </p>
+      </div>
+      <div class="form-control">
+        <label class="label py-1"><span class="label-text text-xs opacity-70">Escanear o pegar RFIDs (24 caracteres)</span></label>
+        <textarea id="tras-scan" class="textarea textarea-bordered font-mono text-sm min-h-[120px]" placeholder="Escanea o pega los RFIDs aquí" autocomplete="off"></textarea>
+        <span id="tras-hint" class="mt-1 text-[11px] opacity-50">Los RFIDs válidos se detectan automáticamente. El campo muestra cuántos caracteres faltan cuando quedan códigos incompletos.</span>
+      </div>
+      <div class="flex flex-wrap gap-2">
+        <button id="tras-process" class="btn btn-primary">Trasladar a mi sede</button>
+        <button id="tras-clear" class="btn">Limpiar todo</button>
+        <button id="tras-clear-done" class="btn btn-ghost">Quitar completados</button>
+      </div>
+      <div id="tras-msg" class="text-xs font-mono opacity-80 min-h-[18px]"></div>
+      <div>
+        <div class="flex items-center justify-between text-xs font-semibold uppercase tracking-wide opacity-70 mb-2">
+          <span>RFIDs en cola <span id="tras-count"></span></span>
+        </div>
+        <div id="tras-list" class="space-y-2 text-xs"></div>
+      </div>
+    </div>
+    <div class="rounded-xl border border-base-300/40 bg-base-200/5 p-5 space-y-4">
+      <h2 class="text-sm font-semibold tracking-wide uppercase opacity-80">Glosario rápido</h2>
+      <ul class="list-disc list-inside text-xs opacity-70 space-y-2">
+        <li>El traslado se realiza usando la sede asignada a tu usuario.</li>
+        <li>Se eliminan vínculos con cajas y se limpia cualquier cronómetro relacionado.</li>
+        <li>Si alguna pieza ya está en tu sede y en estado &laquo;En bodega&raquo;, se marcará como &laquo;sin cambios&raquo;.</li>
+        <li>Si la operación requiere transferir piezas de otra sede se solicitará confirmación antes de continuar.</li>
+      </ul>
+    </div>
+  </div>
+</div>
+<script src="/static/js/traslado.js?v=<%= assetVersion %>" defer></script>

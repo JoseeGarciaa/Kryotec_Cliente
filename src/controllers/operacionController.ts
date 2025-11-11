@@ -86,7 +86,7 @@ const parseSedeMismatchDetail = (detail: string | null | undefined) => {
   return info;
 };
 
-const allowSedeTransferFromValue = (value: any): boolean => {
+export const allowSedeTransferFromValue = (value: any): boolean => {
   return value === true || value === 'true' || value === 1 || value === '1' || value === 'si' || value === 'sí';
 };
 
@@ -105,7 +105,7 @@ const analyzeCrossSedeContext = (rows: SedeAwareRow[], sedeId: number | null) =>
   return { hasSedeContext, mismatched, unknown, requiresTransfer, origenIds };
 };
 
-const ensureCrossSedeAuthorization = async (
+export const ensureCrossSedeAuthorization = async (
   req: Request,
   res: Response,
   rows: SedeAwareRow[],
@@ -157,7 +157,7 @@ const buildTenantOptions = (sedeId: number | null, allowCross: boolean): TenantO
   return opts;
 };
 
-const runWithSede = <T = any>(
+export const runWithSede = <T = any>(
   tenant: string,
   sedeId: number | null,
   fn: (client: any) => Promise<T>,
@@ -167,7 +167,7 @@ const runWithSede = <T = any>(
   return runWithSedeContext(sedeId, () => withTenant<T>(tenant, fn, tenantOptions));
 };
 
-const respondSedeMismatch = async (
+export const respondSedeMismatch = async (
   req: Request,
   res: Response,
   err: any,

@@ -84,6 +84,9 @@
               </ul>
             </details>
           </li>
+          <% if (roleLower === 'operador' || !['acondicionador','operador','bodeguero','inspeccionador'].includes(roleLower)) { %>
+            <li><a class="<%= currentPath.startsWith('/traslado') ? 'active' : '' %>" href="/traslado">Traslado</a></li>
+          <% } %>
           <% if (user && ['Admin','admin','Administrador','administrador'].includes(user.rol)) { %>
             <li><a class="<%= currentPath.startsWith('/auditoria') ? 'active' : '' %>" href="/auditoria">Auditoría</a></li>
             <li><a class="<%= currentPath.startsWith('/administracion') ? 'active' : '' %>" href="/administracion">Administración</a></li>
