@@ -146,7 +146,16 @@ export const ZonasController = {
         return redirectWithMessage(res, '/administracion/zonas', { error: 'Zona no encontrada' });
       }
 
-      await withTenant(tenant, (client) => ZonasModel.removeZona(client, zonaId));
+      const removal = await withTenant(tenant, (client) => ZonasModel.removeZona(client, zonaId));
+      if (!removal.removed) {
+        let detail = 'La zona está en uso.';
+        if (removal.secciones > 0) {
+          detail = `La zona tiene ${removal.secciones} sección${removal.secciones === 1 ? '' : 'es'} asociada${removal.secciones === 1 ? '' : 's'}.`;
+        } else if (removal.inventario > 0) {
+          detail = `La zona tiene ${removal.inventario} elemento${removal.inventario === 1 ? '' : 's'} en inventario.`;
+        }
+        return redirectWithMessage(res, '/administracion/zonas', { error: `No se pudo eliminar la zona. ${detail}` }, { sede_id: zona.sede_id });
+      }
       redirectWithMessage(res, '/administracion/zonas', { ok: 'Zona eliminada' }, { sede_id: zona.sede_id });
     } catch (err) {
       console.error('[zonas:deleteZona]', err);
@@ -228,7 +237,13 @@ export const ZonasController = {
         return redirectWithMessage(res, '/administracion/zonas', { error: 'Sección no encontrada' });
       }
 
-      await withTenant(tenant, (client) => ZonasModel.removeSeccion(client, seccionId));
+      const removal = await withTenant(tenant, (client) => ZonasModel.removeSeccion(client, seccionId));
+      if (!removal.removed) {
+        const detail = removal.inUse > 0
+          ? `La sección tiene ${removal.inUse} elemento${removal.inUse === 1 ? '' : 's'} asignado${removal.inUse === 1 ? '' : 's'}.`
+          : 'La sección está en uso.';
+        return redirectWithMessage(res, '/administracion/zonas', { error: `No se pudo eliminar la sección. ${detail}` }, { sede_id: seccion.sede_id });
+      }
       redirectWithMessage(res, '/administracion/zonas', { ok: 'Sección eliminada' }, { sede_id: seccion.sede_id });
     } catch (err) {
       console.error('[zonas:deleteSeccion]', err);

@@ -158,9 +158,25 @@ export const ZonasModel = {
     return rows[0] ? mapZona(rows[0]) : null;
   },
 
-  async removeZona(client: PoolClient, zonaId: number): Promise<boolean> {
-  const { rowCount } = await client.query('DELETE FROM zonas WHERE zona_id = $1', [zonaId]);
-  return (rowCount ?? 0) > 0;
+  async removeZona(client: PoolClient, zonaId: number): Promise<{ removed: boolean; secciones: number; inventario: number }> {
+    const seccionesQ = await client.query<{ cnt: number }>(
+      `SELECT COUNT(*)::int AS cnt FROM secciones WHERE zona_id = $1`,
+      [zonaId]
+    );
+    const secciones = seccionesQ.rows[0]?.cnt ?? 0;
+    let inventario = 0;
+    if (secciones === 0) {
+      const invQ = await client.query<{ cnt: number }>(
+        `SELECT COUNT(*)::int AS cnt FROM inventario_credocubes WHERE zona_id = $1`,
+        [zonaId]
+      );
+      inventario = invQ.rows[0]?.cnt ?? 0;
+    }
+    if (secciones > 0 || inventario > 0) {
+      return { removed: false, secciones, inventario };
+    }
+    const { rowCount } = await client.query('DELETE FROM zonas WHERE zona_id = $1', [zonaId]);
+    return { removed: (rowCount ?? 0) > 0, secciones: 0, inventario: 0 };
   },
 
   async createSeccion(client: PoolClient, data: CreateSeccionInput): Promise<SeccionRecord> {
@@ -199,8 +215,16 @@ export const ZonasModel = {
     return rows[0] ? mapSeccion(rows[0]) : null;
   },
 
-  async removeSeccion(client: PoolClient, seccionId: number): Promise<boolean> {
-  const { rowCount } = await client.query('DELETE FROM secciones WHERE seccion_id = $1', [seccionId]);
-  return (rowCount ?? 0) > 0;
+  async removeSeccion(client: PoolClient, seccionId: number): Promise<{ removed: boolean; inUse: number }> {
+    const ref1 = await client.query<{ cnt: number }>(
+      `SELECT COUNT(*)::int AS cnt FROM inventario_credocubes WHERE seccion_id = $1`,
+      [seccionId]
+    );
+    const totalRefs = ref1.rows[0]?.cnt ?? 0;
+    if (totalRefs > 0) {
+      return { removed: false, inUse: totalRefs };
+    }
+    const { rowCount } = await client.query('DELETE FROM secciones WHERE seccion_id = $1', [seccionId]);
+    return { removed: (rowCount ?? 0) > 0, inUse: 0 };
   },
 };
