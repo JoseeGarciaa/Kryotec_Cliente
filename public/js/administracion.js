@@ -23,11 +23,31 @@
   // Toggle activo
   qsa('.btn-toggle-activo').forEach(btn => {
     btn.addEventListener('click', async () => {
-      const id = btn.dataset.id; const next = btn.dataset.next;
+      const id = btn.dataset.id;
+      const next = btn.dataset.next;
+      const nombre = btn.dataset.nombre || '';
+      const label = nombre ? `al usuario ${nombre}` : 'al usuario';
+      const currentActive = String(next) === 'false';
+      const confirmMessage = currentActive
+        ? `¿Inactivar ${label}?`
+        : `¿Reactivar ${label}?`;
+      if (!window.confirm(confirmMessage)) return;
       try {
-        const res = await fetch(`/administracion/${id}/estado`, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ activo: next }) });
-        if(res.ok) location.reload();
-      } catch(e){ console.error(e); }
+        const res = await fetch(`/administracion/${id}/estado`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ activo: next }),
+        });
+        if (res.ok) {
+          location.reload();
+        } else {
+          const data = await res.json().catch(() => ({}));
+          window.alert(data.error || 'No se pudo actualizar el usuario');
+        }
+      } catch (e) {
+        console.error(e);
+        window.alert('No se pudo actualizar el usuario');
+      }
     });
   });
 

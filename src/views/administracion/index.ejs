@@ -106,7 +106,7 @@
                 <td><span class="badge badge-ghost text-xs"><%= u.sede_nombre || (u.sede_id ? ('ID '+u.sede_id) : 'Sin sede') %></span></td>
                 <td class="text-xs"><%= u.sesion_ttl_minutos || sessionTtlDefault %></td>
                 <td>
-                  <button class="badge border-0 <%= u.activo ? 'badge-success' : 'badge-error' %> cursor-pointer btn-toggle-activo" data-id="<%= u.id %>" data-next="<%= u.activo ? 'false' : 'true' %>">
+                  <button class="badge border-0 <%= u.activo ? 'badge-success' : 'badge-error' %> cursor-pointer btn-toggle-activo" data-id="<%= u.id %>" data-next="<%= u.activo ? 'false' : 'true' %>" data-nombre="<%- u.nombre %>">
                     <%= u.activo ? '+ Activo' : 'X Inactivo' %>
                   </button>
                 </td>
