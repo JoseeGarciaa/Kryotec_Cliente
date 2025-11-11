@@ -1,5 +1,48 @@
 <% title = title || 'Órdenes' %>
-<% const currentStateFilter = (typeof stateFilter === 'string' ? stateFilter : 'all'); %>
+<%
+  const currentStateFilter = typeof stateFilter === 'string' ? stateFilter : 'all';
+  const stateQueryValue = currentStateFilter === 'active' ? 'activa' : currentStateFilter === 'inactive' ? 'inhabilitada' : '';
+  const safePage = Number(page) > 0 ? Number(page) : 1;
+  const safePages = Number(pages) > 0 ? Number(pages) : 1;
+  const safeLimit = Number(limit) > 0 ? Number(limit) : 10;
+  const safeTotal = Number(total) >= 0 ? Number(total) : 0;
+  const itemCount = Array.isArray(items) ? items.length : 0;
+  const startIndex = safeTotal === 0 || itemCount === 0 ? 0 : (safePage - 1) * safeLimit + 1;
+  const endIndex = safeTotal === 0 || itemCount === 0 ? 0 : Math.min(safeTotal, startIndex + itemCount - 1);
+  let pageSizeOptionsResolved = Array.isArray(pageSizeOptions) && pageSizeOptions.length ? [...pageSizeOptions] : [5, 10, 15, 20];
+  const pageSizeSet = new Set(pageSizeOptionsResolved);
+  if (!pageSizeSet.has(safeLimit)) {
+    pageSizeOptionsResolved.push(safeLimit);
+  }
+  pageSizeOptionsResolved = pageSizeOptionsResolved
+    .map((value) => Number(value))
+    .filter((value) => Number.isFinite(value) && value > 0)
+    .sort((a, b) => a - b);
+  const baseQueryParams = {};
+  if (stateQueryValue) baseQueryParams.state = stateQueryValue;
+  baseQueryParams.limit = safeLimit;
+  baseQueryParams.page = safePage;
+  const buildQuery = (overrides = {}) => {
+    const params = { ...baseQueryParams };
+    Object.entries(overrides || {}).forEach(([key, value]) => {
+      if (value === null || value === undefined || value === '' || (typeof value === 'number' && !Number.isFinite(value))) {
+        delete params[key];
+      } else {
+        params[key] = value;
+      }
+    });
+    const entries = Object.entries(params)
+      .filter(([, value]) => value !== undefined && value !== null && value !== '')
+      .map(([key, value]) => `${encodeURIComponent(key)}=${encodeURIComponent(String(value))}`);
+    return entries.length ? `?${entries.join('&')}` : '';
+  };
+%>
+
+<% if (typeof error !== 'undefined' && error) { %>
+  <div class="alert alert-error mb-4 text-sm">
+    <span><%= error %></span>
+  </div>
+<% } %>
 
 <div class="flex items-center justify-between mb-2">
   <div>
@@ -25,14 +68,14 @@
     <div class="flex items-center gap-2 text-xs mb-3">
       <span class="uppercase tracking-wide opacity-60">Estado:</span>
       <div class="join">
-        <a class="btn btn-xs join-item <%= currentStateFilter==='all' ? 'btn-primary' : 'btn-ghost' %>" href="/ordenes">Todas</a>
-        <a class="btn btn-xs join-item <%= currentStateFilter==='active' ? 'btn-primary' : 'btn-ghost' %>" href="/ordenes?state=activa">Activas</a>
-        <a class="btn btn-xs join-item <%= currentStateFilter==='inactive' ? 'btn-primary' : 'btn-ghost' %>" href="/ordenes?state=inhabilitada">Inhabilitadas</a>
+        <a class="btn btn-xs join-item <%= currentStateFilter==='all' ? 'btn-primary' : 'btn-ghost' %>" href="/ordenes<%= buildQuery({ state: '', page: 1 }) %>">Todas</a>
+        <a class="btn btn-xs join-item <%= currentStateFilter==='active' ? 'btn-primary' : 'btn-ghost' %>" href="/ordenes<%= buildQuery({ state: 'activa', page: 1 }) %>">Activas</a>
+        <a class="btn btn-xs join-item <%= currentStateFilter==='inactive' ? 'btn-primary' : 'btn-ghost' %>" href="/ordenes<%= buildQuery({ state: 'inhabilitada', page: 1 }) %>">Inhabilitadas</a>
       </div>
     </div>
 
     <div class="overflow-x-auto">
-      <table class="table table-zebra">
+      <table class="table table-zebra" data-orders-table>
         <thead>
           <tr>
             <th># Orden</th>
@@ -73,10 +116,14 @@
                 <td><%= o.ubicacion_destino || '-' %></td>
                 <td><%= o.cliente || '-' %></td>
                 <td>
-                  <% const estadoActivo = o.estado_orden !== false; %>
+                  <% const ordenHabilitada = o.habilitada !== false; %>
+                  <% const estadoActivo = ordenHabilitada && o.estado_orden !== false; %>
                   <span class="badge badge-sm <%= estadoActivo ? 'badge-primary badge-outline' : 'badge-error badge-outline' %>">
                     <%= estadoActivo ? 'Activa' : 'Inhabilitada' %>
                   </span>
+                  <% if (!ordenHabilitada) { %>
+                    <span class="badge badge-xs badge-outline badge-warning ml-1">Manual</span>
+                  <% } %>
                 </td>
                 <td><%= o.fecha_generacion ? new Date(o.fecha_generacion).toLocaleString() : '-' %></td>
                 <td class="text-right">
@@ -89,6 +136,9 @@
           data-ciudad="<%= o.ciudad_destino||'' %>"
           data-ubicacion="<%= o.ubicacion_destino||'' %>"
           data-cliente="<%= o.cliente||'' %>">Editar</button>
+                    <button class="btn btn-xs <%= estadoActivo ? 'btn-warning btn-outline' : 'btn-success btn-outline' %> join-item" data-toggle-order data-id="<%= o.id %>" data-numero="<%= o.numero_orden||'-' %>" data-enabled="<%= estadoActivo ? '1' : '0' %>">
+                      <%= estadoActivo ? 'Inhabilitar' : 'Reactivar' %>
+                    </button>
                     <button class="btn btn-xs btn-error btn-outline join-item" data-delete data-id="<%= o.id %>" data-numero="<%= o.numero_orden||'-' %>">Eliminar</button>
                   </div>
                 </td>
@@ -99,7 +149,48 @@
       </table>
     </div>
   </div>
-  
+</div>
+
+<div class="mt-4 flex flex-col gap-3 md:flex-row md:items-center md:justify-between text-sm">
+  <div>
+    <span class="opacity-70">Mostrando</span>
+    <span class="font-semibold">
+      <% if (safeTotal === 0 || itemCount === 0) { %>
+        0
+      <% } else { %>
+        <%= startIndex %>-<%= endIndex %>
+      <% } %>
+    </span>
+    <span class="opacity-70">de</span>
+    <span class="font-semibold"><%= safeTotal %></span>
+  </div>
+  <div class="flex flex-col items-start gap-3 md:flex-row md:items-center md:gap-6">
+    <form id="orders-limit-form" method="get" action="/ordenes" class="flex items-center gap-2">
+      <% if (stateQueryValue) { %>
+        <input type="hidden" name="state" value="<%= stateQueryValue %>" />
+      <% } %>
+      <input type="hidden" name="page" value="1" />
+      <label for="orders-limit-select" class="label text-xs opacity-70 p-0">Resultados por página:</label>
+      <select id="orders-limit-select" name="limit" class="select select-xs select-bordered w-auto">
+        <% pageSizeOptionsResolved.forEach((opt) => { %>
+          <option value="<%= opt %>" <%= opt === safeLimit ? 'selected' : '' %>><%= opt %></option>
+        <% }) %>
+      </select>
+    </form>
+    <div class="join">
+      <% if (safePage > 1) { %>
+        <a class="btn btn-xs join-item" href="/ordenes<%= buildQuery({ page: safePage - 1 }) %>">Anterior</a>
+      <% } else { %>
+        <span class="btn btn-xs join-item btn-disabled opacity-60">Anterior</span>
+      <% } %>
+      <span class="btn btn-xs join-item btn-disabled">Página <%= safePage %> de <%= safePages %></span>
+      <% if (safePage < safePages) { %>
+        <a class="btn btn-xs join-item" href="/ordenes<%= buildQuery({ page: safePage + 1 }) %>">Siguiente</a>
+      <% } else { %>
+        <span class="btn btn-xs join-item btn-disabled opacity-60">Siguiente</span>
+      <% } %>
+    </div>
+  </div>
 </div>
 
 <!-- Modal importar órdenes -->

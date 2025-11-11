@@ -5,6 +5,9 @@ import { resolveTenant } from '../middleware/tenant';
 import { getRequestSedeId } from '../utils/sede';
 import { ZonasModel } from '../models/Zona';
 
+const PAGE_SIZE_OPTIONS = [5, 10, 15, 20] as const;
+const DEFAULT_PAGE_SIZE = 20;
+
 const pushSedeFilter = (where: string[], params: any[], sedeId: number | null, alias = 'ic') => {
   if (sedeId === null) return;
   params.push(sedeId);
@@ -24,7 +27,10 @@ export const InventarioController = {
     const cat = catRaw ? String(catRaw).toLowerCase() : '';
     const state = stateRaw ? String(stateRaw).toLowerCase() : '';
     const page = Math.max(1, parseInt(String(pageRaw||'1'), 10) || 1);
-    const limit = Math.min(100, Math.max(10, parseInt(String(limitRaw||'20'), 10) || 20));
+    const parsedLimit = parseInt(String(limitRaw ?? DEFAULT_PAGE_SIZE), 10);
+    const normalizedLimit = Number.isFinite(parsedLimit) ? parsedLimit : DEFAULT_PAGE_SIZE;
+    const limit = Math.min(100, Math.max(5, normalizedLimit));
+    const effectiveLimit = limit;
 
     // Multi-scan: lista de RFIDs (param rfids=rfid1,rfid2,...)
     // Normalizamos: solo tokens alfanum de 24 chars, sin duplicados.
@@ -137,7 +143,7 @@ export const InventarioController = {
     }
 
     // Ejecutar consultas según el modo
-    let total = 0; let pages = 1; const offset = (page - 1) * limit;
+  let total = 0; let pages = 1; const offset = (page - 1) * effectiveLimit;
     let items: any; let countsMap: Record<string, number> = { TIC: 0, VIP: 0, Cubes: 0, Otros: 0 };
     if (cajaMode) {
       if (sedeId !== null && !/ic\.sede_id/.test(cajaWhereSQL)) {
@@ -153,7 +159,7 @@ export const InventarioController = {
           ${cajaWhereSQL}`;
       const countRes = await withTenant(tenant, (c) => c.query(countSQL, cajaParams));
       total = countRes.rows[0]?.total || 0;
-      pages = Math.max(1, Math.ceil(total / limit));
+  pages = Math.max(1, Math.ceil(total / effectiveLimit));
       // ITEMS
   const itemsSQL = `SELECT 
 ${selectClause}
@@ -162,7 +168,7 @@ ${selectClause}
     ${cajaWhereSQL}
     ORDER BY ic.id DESC
     LIMIT $${cajaParams.length+1} OFFSET $${cajaParams.length+2}`;
-      items = await withTenant(tenant, (c) => c.query(itemsSQL, [...cajaParams, limit, offset]));
+      items = await withTenant(tenant, (c) => c.query(itemsSQL, [...cajaParams, effectiveLimit, offset]));
       // COUNTS por categoría (sobre el mismo conjunto)
       const countsSQL = `SELECT categoria, COUNT(*)::int AS cnt FROM (
            SELECT ${catExpr} AS categoria
@@ -183,15 +189,15 @@ ${selectClause}
         params
       ));
       total = countRes.rows[0]?.total || 0;
-      pages = Math.max(1, Math.ceil(total / limit));
+  pages = Math.max(1, Math.ceil(total / effectiveLimit));
       items = await withTenant(tenant, (c) => c.query(
   `SELECT 
 ${selectClause}
     ${baseFromClause}
     ${whereSQL}
-    ORDER BY ic.id DESC
-    LIMIT $${params.length+1} OFFSET $${params.length+2}`,
-        [...params, limit, offset]
+      ORDER BY ic.id DESC
+      LIMIT $${params.length+1} OFFSET $${params.length+2}`,
+        [...params, effectiveLimit, offset]
       ));
       // Counts sólo sobre los RFIDs (sin filtros de categoría/estado adicionales para no confundir)
       const countsRes = await withTenant(tenant, (c) => c.query(
@@ -215,7 +221,7 @@ ${selectClause}
         )
       );
       total = countRes.rows[0]?.total || 0;
-      pages = Math.max(1, Math.ceil(total / limit));
+  pages = Math.max(1, Math.ceil(total / effectiveLimit));
       // ITEMS
       items = await withTenant(tenant, (c) =>
         c.query(
@@ -223,9 +229,9 @@ ${selectClause}
 ${selectClause}
             ${baseFromClause}
             ${whereSQL}
-            ORDER BY ic.id DESC
-            LIMIT $${params.length+1} OFFSET $${params.length+2}`,
-          [...params, limit, offset]
+                        ORDER BY ic.id DESC
+                        LIMIT $${params.length+1} OFFSET $${params.length+2}`,
+                      [...params, effectiveLimit, offset]
         )
       );
       // COUNTS
@@ -259,12 +265,13 @@ ${selectClause}
       state,
       page,
       pages,
-      limit,
+      limit: effectiveLimit,
       total,
       counts: { total, tics: countsMap['TIC'], vips: countsMap['VIP'], cubes: countsMap['Cubes'] },
       scannedRfids,
       multiScan: scannedRfids.length > 0,
       cajaMode,
+      pageSizeOptions: PAGE_SIZE_OPTIONS,
     });
   },
   data: async (req: Request, res: Response) => {

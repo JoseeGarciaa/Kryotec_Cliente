@@ -22,6 +22,7 @@ router.post('/calculadora/recomendar', requireAuth, OrdenesController.calculador
 router.post('/calculadora/orden', requireAuth, OrdenesController.calculadoraCrearOrden as any);
 router.post('/create', requireAuth, OrdenesController.create as any);
 router.post('/update', requireAuth, OrdenesController.update as any);
+router.post('/toggle', requireAuth, OrdenesController.toggleState as any);
 router.post('/delete', requireAuth, OrdenesController.remove as any);
 
 export default router;

@@ -16,6 +16,7 @@
   const fZona = document.getElementById('inv-edit-zona');
   const fSeccion = document.getElementById('inv-edit-seccion');
   const locationHint = document.getElementById('inv-edit-location-hint');
+  const limitSelect = document.getElementById('inv-limit-select');
 
   const COLSPAN = 11;
   let rfids = [];
@@ -406,6 +407,15 @@
       if (fZona && fSeccion && fZona.disabled) {
         fZona.disabled = false;
         fSeccion.disabled = false;
+      }
+    });
+  }
+
+  if (limitSelect instanceof HTMLSelectElement) {
+    limitSelect.addEventListener('change', () => {
+      const form = limitSelect.form || document.getElementById('inv-search-form');
+      if (form instanceof HTMLFormElement) {
+        form.submit();
       }
     });
   }

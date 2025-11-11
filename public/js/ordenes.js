@@ -12,6 +12,9 @@
 		const IMPORT_RESULT_KEY = 'ordersImportResult';
 		const LEGACY_SUCCESS_KEY = 'ordersImportSuccess';
 		const BANNER_TIMEOUT_MS = 10000;
+		const limitForm = document.getElementById('orders-limit-form');
+		const limitSelect = document.getElementById('orders-limit-select');
+		const ordersTable = document.querySelector('[data-orders-table]');
 
 		const importForm = document.getElementById('form-import-orders');
 		const importStatus = document.getElementById('import-status');
@@ -302,5 +305,84 @@
 				if (label) label.textContent = el.getAttribute('data-numero') || '';
 				openDialog(modalDelete);
 			}));
+
+		const parseEnabledValue = (value) => {
+			if (typeof value === 'boolean') return value;
+			if (typeof value === 'number') return value !== 0;
+			if (typeof value === 'string') {
+				const normalized = value.trim().toLowerCase();
+				if (['1', 'true', 'si', 'on', 'habilitada', 'habilitado', 'activo', 'activa'].includes(normalized)) {
+					return true;
+				}
+				if (['0', 'false', 'no', 'off', 'inhabilitada', 'inhabilitado', 'inactivo', 'inactiva', 'disabled'].includes(normalized)) {
+					return false;
+				}
+			}
+			return null;
+		};
+
+		if (ordersTable instanceof HTMLElement) {
+			ordersTable.addEventListener('click', async (event) => {
+				const target = event.target instanceof HTMLElement ? event.target : null;
+				const button = target ? target.closest('[data-toggle-order]') : null;
+				if (!(button instanceof HTMLElement)) return;
+				event.preventDefault();
+				const idRaw = button.getAttribute('data-id');
+				const enabledRaw = button.getAttribute('data-enabled');
+				const numero = button.getAttribute('data-numero') || '';
+				const orderId = Number(idRaw);
+				const currentEnabled = parseEnabledValue(enabledRaw);
+				if (!Number.isFinite(orderId) || !orderId) {
+					window.alert('ID de orden inválido.');
+					return;
+				}
+				if (currentEnabled === null) {
+					window.alert('Estado actual desconocido.');
+					return;
+				}
+				const nextEnabled = !currentEnabled;
+				const label = numero ? `la orden ${numero}` : 'esta orden';
+				const confirmMessage = nextEnabled
+					? `Reactivar ${label}?`
+					: `Inhabilitar ${label}?`;
+				if (!window.confirm(confirmMessage)) return;
+				const originalText = button.textContent;
+				button.textContent = 'Procesando...';
+				button.setAttribute('disabled', 'true');
+				try {
+					const response = await fetch('/ordenes/toggle', {
+						method: 'POST',
+						headers: {
+							'Content-Type': 'application/json',
+							Accept: 'application/json',
+						},
+						credentials: 'same-origin',
+						body: JSON.stringify({ id: orderId, habilitada: nextEnabled }),
+					});
+					const payload = await response.json().catch(() => null);
+					if (!response.ok || !payload || payload.ok !== true) {
+						const message = payload && typeof payload.error === 'string' ? payload.error : 'No se pudo actualizar la orden.';
+						window.alert(message);
+						button.removeAttribute('disabled');
+						button.textContent = originalText;
+						return;
+					}
+					window.location.reload();
+				} catch (error) {
+					console.error('Error al cambiar el estado de la orden', error);
+					window.alert('No se pudo actualizar la orden. Inténtalo de nuevo.');
+					button.removeAttribute('disabled');
+					button.textContent = originalText;
+				}
+			});
+		}
+
+		if (limitSelect instanceof HTMLSelectElement) {
+			limitSelect.addEventListener('change', () => {
+				if (limitForm instanceof HTMLFormElement) {
+					limitForm.submit();
+				}
+			});
+		}
 	});
 })();

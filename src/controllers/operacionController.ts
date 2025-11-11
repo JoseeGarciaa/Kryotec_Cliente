@@ -1673,8 +1673,8 @@ export const OperacionController = {
     const tenant = (req as any).user?.tenant;
     const sedeId = getRequestSedeId(req);
     try {
-      const page = Math.max(1, parseInt(String(req.query.page||'1'),10)||1);
-      const limit = Math.min(200, Math.max(10, parseInt(String(req.query.limit||'50'),10)||50));
+  const page = Math.max(1, parseInt(String(req.query.page||'1'),10)||1);
+  const limit = Math.min(200, Math.max(5, parseInt(String(req.query.limit||'10'),10)||10));
       const offset = (page-1)*limit;
       const q = (req.query.q||'').toString().trim();
       const cat = (req.query.cat||'').toString(); // tics | vips | cubes
@@ -1731,8 +1731,8 @@ export const OperacionController = {
   res.json({ ok:true, page, limit, total: totalQ.rows[0]?.total||0, items: rows.rows, meta:{ usedUpdatedAt, debug:{ filters, params: params.slice(0, params.length-2) } } });
     } catch(e:any){
       // Fallback: no bloquear la vista si algo falla. Log y retornar lista vacía.
-      console.error('[bodegaData] error', e);
-      res.json({ ok:true, page:1, limit:50, total:0, items:[], warning: e?.message || 'Error interno (se muestra vacío)' });
+  console.error('[bodegaData] error', e);
+  res.json({ ok:true, page:1, limit:10, total:0, items:[], warning: e?.message || 'Error interno (se muestra vacío)' });
     }
   },
 

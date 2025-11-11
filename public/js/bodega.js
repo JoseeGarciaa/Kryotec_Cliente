@@ -6,9 +6,31 @@
   const infoTotal = document.getElementById('info-total');
   const btnPrev = document.getElementById('btn-prev');
   const btnNext = document.getElementById('btn-next');
+  const pageIndicator = document.getElementById('page-indicator');
+  const limitSelect = document.getElementById('bodega-limit');
   const form = document.getElementById('form-filtros');
-  let page = 1; let limit = 50;
+  const LIMIT_OPTIONS = [5, 10, 15, 20];
+  let page = 1;
+  let limit = limitSelect ? Number(limitSelect.value) : 10;
+  if(!Number.isFinite(limit) || limit <= 0){ limit = 10; }
   let _loadTimer = 0;
+
+  function syncLimitSelect(value){
+    if(!(limitSelect instanceof HTMLSelectElement)) return;
+    if(!LIMIT_OPTIONS.includes(value)){
+      const opt = document.createElement('option');
+      opt.value = String(value);
+      opt.textContent = String(value);
+      limitSelect.appendChild(opt);
+    }
+    limitSelect.value = String(value);
+  }
+
+  function setButtonState(btn, disabled){
+    if(!(btn instanceof HTMLButtonElement)) return;
+    btn.disabled = disabled;
+    btn.classList.toggle('btn-disabled', disabled);
+  }
 
   // Extrae RFIDs de 24 chars del texto (soporta ráfagas pegadas por la pistola)
   function parseRfids(raw){
@@ -50,7 +72,7 @@
     const cat = catEl ? catEl.value : '';
     const rfids = parseRfids(q);
     const multiMode = rfids.length > 1; // modo multi escaneo activo
-    const params = new URLSearchParams({ page:String(page), limit:String(limit) });
+  const params = new URLSearchParams({ page:String(page), limit:String(limit) });
     if(!multiMode && q) params.set('q', q);
     if(cat) params.set('cat', cat);
   tbody.innerHTML = '<tr><td colspan="6" class="text-center"><span class="loading loading-spinner loading-xs"></span> Cargando...</td></tr>';
@@ -83,9 +105,11 @@
             </tr>`).join('');
         }
         renderCards(items);
-        if(infoTotal) infoTotal.textContent = `${items.length} de ${items.length}`;
-        if(btnPrev) btnPrev.disabled = true;
-        if(btnNext) btnNext.disabled = true;
+  if(infoTotal) infoTotal.textContent = items.length ? `Mostrando 1-${items.length} de ${items.length} resultados` : 'Sin resultados';
+  if(pageIndicator) pageIndicator.textContent = 'Página 1 de 1';
+        setButtonState(btnPrev, true);
+        setButtonState(btnNext, true);
+  page = 1;
       } else {
         const res = await fetch('/operacion/bodega/data?'+params.toString());
         const data = await res.json();
@@ -111,19 +135,39 @@
             </tr>`).join('');
         }
         renderCards(data.items);
-        const start = (data.page-1)*data.limit + 1;
-        const end = Math.min(data.page*data.limit, data.total);
-        if(infoTotal) infoTotal.textContent = data.total ? `${start}-${end} de ${data.total}` : 'Sin resultados';
-        if(btnPrev) btnPrev.disabled = page<=1;
-        if(btnNext) btnNext.disabled = end >= data.total;
+        const safeLimit = Number(data.limit) > 0 ? Number(data.limit) : limit;
+        const safeTotal = Number.isFinite(Number(data.total)) ? Number(data.total) : 0;
+        limit = safeLimit;
+        syncLimitSelect(limit);
+        const safePage = Math.max(1, Number(data.page) || page);
+        const totalPages = safeTotal > 0 ? Math.ceil(safeTotal / safeLimit) : 1;
+        const start = safeTotal === 0 || !(data.items||[]).length ? 0 : (safePage - 1) * safeLimit + 1;
+        const end = safeTotal === 0 || !(data.items||[]).length ? 0 : Math.min(safeTotal, start + data.items.length - 1);
+        if(infoTotal){
+          infoTotal.textContent = (safeTotal === 0 || !(data.items||[]).length)
+            ? 'Sin resultados'
+            : `Mostrando ${start}-${end} de ${safeTotal} resultados`;
+        }
+        if(pageIndicator){
+          pageIndicator.textContent = `Página ${Math.min(safePage, totalPages)} de ${totalPages}`;
+        }
+        setButtonState(btnPrev, safePage <= 1 || safeTotal === 0);
+        setButtonState(btnNext, safePage >= totalPages || safeTotal === 0);
+        page = safePage;
       }
     } catch(e){
       console.error(e);
   tbody.innerHTML='<tr><td colspan="6" class="text-center text-error">Error</td></tr>';
     }
   }
-  if(btnPrev) btnPrev.addEventListener('click', ()=>{ if(page>1){ page--; load(); }});
-  if(btnNext) btnNext.addEventListener('click', ()=>{ page++; load(); });
+  if(btnPrev) btnPrev.addEventListener('click', ()=>{
+    if(btnPrev.disabled) return;
+    if(page>1){ page--; load(); }
+  });
+  if(btnNext) btnNext.addEventListener('click', ()=>{
+    if(btnNext.disabled) return;
+    page++; load();
+  });
   if(form) form.addEventListener('submit', (e)=>{ e.preventDefault(); page=1; load(); });
   // Auto-búsqueda en ráfagas: input/paste con chunking 24
   const qEl = document.getElementById('f-q');
@@ -144,6 +188,17 @@
       if(qEl) qEl.focus();
     });
   }
+  if(limitSelect){
+    limitSelect.addEventListener('change', ()=>{
+      const value = Number(limitSelect.value);
+      if(Number.isFinite(value) && value > 0){
+        limit = value;
+        page = 1;
+        load();
+      }
+    });
+  }
+  syncLimitSelect(limit);
   load();
   window.bodegaDiag = () => console.table((window).__bodegaEstados || []);
 })();

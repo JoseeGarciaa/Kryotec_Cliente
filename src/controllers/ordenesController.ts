@@ -133,6 +133,23 @@ const PRODUCT_TEMPLATE_COLUMNS = [
   { header: 'cantidad_producto', key: 'cantidad_producto', width: 14 },
 ];
 
+const ORDER_PAGE_SIZE_OPTIONS = [5, 10, 15, 20] as const;
+const DEFAULT_ORDER_PAGE_SIZE = 10;
+
+type FetchOrdersOptions = {
+  page?: number;
+  limit?: number;
+  sedeId?: number | null;
+};
+
+type FetchOrdersResult = {
+  items: any[];
+  total: number;
+  page: number;
+  limit: number;
+  pages: number;
+};
+
 function parseState(raw: string): OrdenState {
   const value = raw.toLowerCase();
   if (['activa', 'activas', 'active', 'true'].includes(value)) return 'active';
@@ -256,23 +273,37 @@ async function ensureOrdenesArtifacts(tenant: string): Promise<void> {
   });
 }
 
-async function fetchOrders(tenant: string, state: OrdenState, limit = 200, sedeId: number | null = null) {
+async function fetchOrders(
+  tenant: string,
+  state: OrdenState,
+  options: FetchOrdersOptions = {},
+): Promise<FetchOrdersResult> {
+  const requestedPage = Number(options.page ?? 1);
+  const requestedLimit = Number(options.limit ?? DEFAULT_ORDER_PAGE_SIZE);
+  const page = Number.isFinite(requestedPage) && requestedPage > 0 ? Math.floor(requestedPage) : 1;
+  const rawLimit = Number.isFinite(requestedLimit) && requestedLimit > 0 ? Math.floor(requestedLimit) : DEFAULT_ORDER_PAGE_SIZE;
+  const limit = Math.min(200, Math.max(5, rawLimit));
+  const sedeId = typeof options.sedeId === 'number' ? options.sedeId : options.sedeId ?? null;
+
   const filters: string[] = [];
   const params: Array<number | string | null> = [];
+
   if (state === 'active') {
     filters.push('(COALESCE(o.estado_orden, true) AND COALESCE(o.habilitada, true))');
   } else if (state === 'inactive') {
     filters.push('(o.estado_orden = false OR COALESCE(o.habilitada, true) = false)');
   }
+
   if (typeof sedeId === 'number' && Number.isFinite(sedeId)) {
     params.push(sedeId);
     filters.push(`o.sede_origen_id = $${params.length}`);
   }
+
   const where = filters.length ? `WHERE ${filters.join(' AND ')}` : '';
-  params.push(limit);
-  const limitPlaceholder = `$${params.length}`;
-  const { rows } = await withTenant(tenant, (client) => client.query(
-    `SELECT
+  const countSql = `SELECT COUNT(*)::int AS total FROM ordenes o ${where}`;
+  const limitIndex = params.length + 1;
+  const offsetIndex = params.length + 2;
+  const listSql = `SELECT
          o.id,
          o.numero_orden,
          o.codigo_producto,
@@ -292,10 +323,31 @@ async function fetchOrders(tenant: string, state: OrdenState, limit = 200, sedeI
        LEFT JOIN modelos m ON m.modelo_id = o.modelo_sugerido_id
        ${where}
       ORDER BY o.id DESC
-      LIMIT ${limitPlaceholder}`,
-    params
-  ));
-  return rows;
+      LIMIT $${limitIndex} OFFSET $${offsetIndex}`;
+
+  const { total, items, currentPage, pages } = await withTenant(tenant, async (client) => {
+    const countRes = await client.query(countSql, params);
+    const totalRows = countRes.rows[0]?.total || 0;
+    const totalPages = Math.max(1, Math.ceil(totalRows / limit) || 1);
+    const safePage = Math.min(Math.max(1, page), totalPages);
+    const offset = (safePage - 1) * limit;
+    const listParams = [...params, limit, offset];
+    const listRes = await client.query(listSql, listParams);
+    return {
+      total: totalRows,
+      items: listRes.rows,
+      currentPage: safePage,
+      pages: totalPages,
+    };
+  });
+
+  return {
+    items,
+    total,
+    page: currentPage,
+    limit,
+    pages,
+  };
 }
 
 function cleanString(value: string | null | undefined): string | null {
@@ -454,14 +506,27 @@ export const OrdenesController = {
     const sedeId = getRequestSedeId(req);
 
     const stateFilter = parseState(((req.query.state ?? '') as string).toString());
+    const pageRaw = (req.query.page ?? '1') as string;
+    const limitRaw = (req.query.limit ?? DEFAULT_ORDER_PAGE_SIZE) as string;
+    const requestedPage = Number(pageRaw);
+    const requestedLimit = Number(limitRaw);
     try {
       await ensureOrdenesArtifacts(tenant);
-      const items = await fetchOrders(tenant, stateFilter, 200, sedeId);
+      const result = await fetchOrders(tenant, stateFilter, {
+        page: requestedPage,
+        limit: requestedLimit,
+        sedeId,
+      });
       res.render('ordenes/index', {
         title: 'Órdenes',
-        items,
+        items: result.items,
         stateFilter,
         sedeId,
+        page: result.page,
+        pages: result.pages,
+        limit: result.limit,
+        total: result.total,
+        pageSizeOptions: ORDER_PAGE_SIZE_OPTIONS,
       });
     } catch (e: any) {
       res.render('ordenes/index', {
@@ -470,6 +535,11 @@ export const OrdenesController = {
         stateFilter,
         sedeId,
         error: e?.message || 'Error cargando órdenes',
+        page: 1,
+        pages: 1,
+        limit: DEFAULT_ORDER_PAGE_SIZE,
+        total: 0,
+        pageSizeOptions: ORDER_PAGE_SIZE_OPTIONS,
       });
     }
   },
@@ -481,8 +551,20 @@ export const OrdenesController = {
     const sedeId = getRequestSedeId(req);
     try {
       await ensureOrdenesArtifacts(tenant);
-      const items = await fetchOrders(tenant, 'active', 200, sedeId);
-      return res.json({ ok: true, items, sedeId });
+      const result = await fetchOrders(tenant, 'active', {
+        page: Number((req.query.page ?? '1') as string),
+        limit: Number((req.query.limit ?? 200) as string),
+        sedeId,
+      });
+      return res.json({
+        ok: true,
+        items: result.items,
+        sedeId,
+        total: result.total,
+        page: result.page,
+        pages: result.pages,
+        limit: result.limit,
+      });
     } catch (e: any) {
       return res.status(500).json({ ok: false, error: e?.message || 'Error listando órdenes' });
     }
@@ -894,6 +976,60 @@ export const OrdenesController = {
         return res.status(500).json({ ok: false, error: e?.message || 'Error actualizando orden' });
       }
       return res.status(500).send(e?.message || 'Error actualizando orden');
+    }
+  },
+
+  toggleState: async (req: Request, res: Response) => {
+    const t = (req as any).user?.tenant || resolveTenant(req);
+    if (!t) return res.status(400).json({ ok: false, error: 'Tenant no especificado' });
+    const tenant = String(t).startsWith('tenant_') ? String(t) : `tenant_${t}`;
+    const sedeId = getRequestSedeId(req);
+    if (!sedeId) {
+      return res.status(403).json({ ok: false, error: 'El usuario no tiene una sede asignada.' });
+    }
+    const { id, habilitada } = (req.body || {}) as any;
+    const orderId = Number(id);
+    if (!Number.isFinite(orderId) || orderId <= 0) {
+      return res.status(400).json({ ok: false, error: 'ID inválido' });
+    }
+    const parseDesired = (value: any): boolean | null => {
+      if (typeof value === 'boolean') return value;
+      if (typeof value === 'number') {
+        if (value === 1) return true;
+        if (value === 0) return false;
+      }
+      if (typeof value === 'string') {
+        const normalized = value.trim().toLowerCase();
+        if (['1', 'true', 'si', 'on', 'habilitada', 'habilitado', 'activo', 'activa', 'enable', 'enabled'].includes(normalized)) {
+          return true;
+        }
+        if (['0', 'false', 'no', 'off', 'inhabilitada', 'inhabilitado', 'inactivo', 'inactiva', 'disabled', 'disable'].includes(normalized)) {
+          return false;
+        }
+      }
+      return null;
+    };
+    const desired = parseDesired(habilitada);
+    if (desired === null) {
+      return res.status(400).json({ ok: false, error: 'Valor "habilitada" inválido' });
+    }
+    try {
+      await ensureOrdenesArtifacts(tenant);
+      const result = await withTenant(tenant, (client) => client.query(
+        `UPDATE ordenes
+            SET habilitada = $3,
+                estado_orden = CASE WHEN $3 THEN true ELSE false END
+          WHERE id = $1 AND (sede_origen_id = $2 OR sede_origen_id IS NULL)
+          RETURNING id, numero_orden, habilitada, estado_orden`,
+        [orderId, sedeId, desired]
+      ));
+      if (result.rowCount === 0) {
+        return res.status(404).json({ ok: false, error: 'No se encontró la orden en tu sede.' });
+      }
+      const { habilitada: enabled, estado_orden: estadoOrden } = result.rows[0] as { habilitada: boolean; estado_orden: boolean };
+      return res.json({ ok: true, habilitada: enabled !== false, estado_orden: estadoOrden !== false });
+    } catch (e: any) {
+      return res.status(500).json({ ok: false, error: e?.message || 'Error cambiando el estado de la orden' });
     }
   },
 
