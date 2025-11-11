@@ -1795,6 +1795,7 @@ export const OperacionController = {
         `SELECT ic.rfid, ic.estado, ic.sub_estado, ic.validacion_limpieza, ic.validacion_goteo, ic.validacion_desinfeccion
            FROM acond_caja_items aci
            JOIN inventario_credocubes ic ON ic.rfid = aci.rfid
+          WHERE aci.caja_id = $1
           ORDER BY ic.rfid`, [cajaId]));
       return res.json({ ok:true, caja:{ id: cajaId, lote }, tics: ticsQ.rows||[] });
     } catch(e:any){ res.status(500).json({ ok:false, error: e.message||'Error al jalar caja a Inspección' }); }
