@@ -45,6 +45,58 @@
     return out;
   }
 
+  function buildDefaultSedePrompt(data){
+    if(data && typeof data.confirm === 'string' && data.confirm.trim()) return data.confirm;
+    if(data && typeof data.error === 'string' && data.error.trim()) return data.error;
+    return 'Las piezas seleccionadas pertenecen a otra sede. ¿Deseas trasladarlas a esta sede?';
+  }
+
+  const postJSONWithSedeTransfer = (()=>{
+    if(typeof window !== 'undefined' && typeof window.postJSONWithSedeTransfer === 'function'){
+      return window.postJSONWithSedeTransfer;
+    }
+
+    const helper = async function postJSONWithSedeTransfer(url, body, options){
+      const opts = options || {};
+      const headers = Object.assign({ 'Content-Type':'application/json' }, opts.headers || {});
+      const confirmFn = typeof opts.confirmFn === 'function' ? opts.confirmFn : (message) => (typeof window !== 'undefined' && typeof window.confirm === 'function' ? window.confirm(message) : true);
+      const promptBuilder = typeof opts.promptMessage === 'function' ? opts.promptMessage : buildDefaultSedePrompt;
+
+      const send = async (allowTransfer) => {
+        const payload = allowTransfer ? Object.assign({}, body, { allowSedeTransfer: true }) : Object.assign({}, body);
+        try {
+          const res = await fetch(url, { method:'POST', headers, body: JSON.stringify(payload) });
+          let data = null;
+          try { data = await res.json(); } catch { data = null; }
+          return { httpOk: res.ok, status: res.status, data };
+        } catch(err){
+          return {
+            httpOk: false,
+            status: 0,
+            data: { ok:false, error: err?.message || 'Error de red' },
+            networkError: err
+          };
+        }
+      };
+
+      let attempt = await send(false);
+      if(!attempt.httpOk && attempt.data && attempt.data.code === 'SEDE_MISMATCH'){
+        const prompt = promptBuilder(attempt.data);
+        const proceed = confirmFn ? await confirmFn(prompt, attempt.data) : false;
+        if(!proceed){
+          return Object.assign({ cancelled: true }, attempt);
+        }
+        attempt = await send(true);
+      }
+      return Object.assign({ cancelled: false }, attempt);
+    };
+
+    if(typeof window !== 'undefined'){
+      window.postJSONWithSedeTransfer = helper;
+    }
+    return helper;
+  })();
+
   function badgeForRol(rol){
     const norm = String(rol||'').toLowerCase();
     if(norm==='vip') return 'badge-info';
@@ -496,46 +548,95 @@
   addScan?.addEventListener('keydown', async e=>{ if(e.key==='Enter'){ e.preventDefault(); const raw=(addScan.value||'').toUpperCase(); const tokens=parseRfids(raw); if(tokens.length){ const code=tokens[tokens.length-1]; if(code === lastLookupCode) return; addScan.value=''; const success = await lookupAdd(code); if(success) lastLookupCode = code; } }});
   // Inputs de duración removidos
   addClear?.addEventListener('click', resetAdd);
-  addConfirm?.addEventListener('click', async ()=>{
-    const targets = addQueue.filter(entry => Array.isArray(entry.roles) && entry.roles.length>0);
-    if(!targets.length){ if(addMsg) addMsg.textContent = 'No hay cajas elegibles'; return; }
-    addConfirm.disabled = true;
-    if(addMsg) addMsg.textContent = 'Moviendo cajas...';
-    const movedIds = [];
-    const errors = [];
-    for (const entry of targets){
-      try {
-        const res = await fetch('/operacion/add/move',{ method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ caja_id: entry.id })});
-        const ct = res.headers.get('content-type') || '';
-        let payload = null;
-        if(ct.includes('application/json')){ payload = await res.json(); }
-        else { const raw = await res.text(); errors.push(`Caja ${entry.lote}: Respuesta inesperada (${res.status})`); console.error('[Operacion] move respuesta no JSON', { status: res.status, body: raw }); continue; }
-        if(!res.ok || payload?.ok === false){ const message = payload?.error || payload?.message || `Error (${res.status})`; errors.push(`Caja ${entry.lote}: ${message}`); continue; }
-        movedIds.push(entry.id);
-      } catch(e){ errors.push(`Caja ${entry.lote}: ${e?.message || 'Error'}`); }
-    }
-    if(movedIds.length){
-      addQueue = addQueue.filter(q=> !movedIds.includes(q.id));
-      selectedCajaId = null;
-      addCajaId = null;
-      addRoles = [];
-      renderQueue();
-      updateCounts();
-    }
-    if(addMsg){
-      if(errors.length){
-        const detail = errors.slice(0,2).join(' · ');
-        addMsg.textContent = movedIds.length ? `Movidas ${movedIds.length} caja${movedIds.length>1?'s':''}. Errores: ${detail}${errors.length>2?'…':''}` : detail;
-      } else {
-        addMsg.textContent = `Movidas ${movedIds.length} caja${movedIds.length>1?'s':''}`;
-      }
-    }
-    if(movedIds.length){
-      try { await load(); } catch(e){ console.error('[Operacion] reload despues de mover', e); }
-      if(!addQueue.length){ setTimeout(()=>{ try { modal.close(); } catch{} }, 600); }
-    }
-    addConfirm.disabled = false;
-  });
+  addConfirm?.addEventListener('click', async ()=>{
+
+    const targets = addQueue.filter(entry => Array.isArray(entry.roles) && entry.roles.length>0);
+
+    if(!targets.length){ if(addMsg) addMsg.textContent = 'No hay cajas elegibles'; return; }
+
+    addConfirm.disabled = true;
+
+    if(addMsg) addMsg.textContent = 'Moviendo cajas...';
+
+    const movedIds = [];
+
+    const errors = [];
+
+    for (const entry of targets){
+      try {
+        const attempt = await postJSONWithSedeTransfer('/operacion/add/move', { caja_id: entry.id }, {
+          promptMessage: (data) => data?.confirm || data?.error || `La caja ${entry.lote} pertenece a otra sede. ¿Deseas moverla a tu sede actual?`
+        });
+
+        if(attempt.cancelled){
+          errors.push(`Caja ${entry.lote}: operación cancelada`);
+          continue;
+        }
+
+        const payload = attempt.data || null;
+
+        if(!attempt.httpOk){
+          const message = (payload && (payload.error || payload.message)) || `Error (${attempt.status})`;
+          errors.push(`Caja ${entry.lote}: ${message}`);
+          continue;
+        }
+
+        if(!payload || payload.ok === false){
+          const message = (payload && (payload.error || payload.message)) || 'Respuesta inesperada';
+          errors.push(`Caja ${entry.lote}: ${message}`);
+          continue;
+        }
+
+        movedIds.push(entry.id);
+
+      } catch(e){ errors.push(`Caja ${entry.lote}: ${e?.message || 'Error'}`); }
+
+    }
+
+    if(movedIds.length){
+
+      addQueue = addQueue.filter(q=> !movedIds.includes(q.id));
+
+      selectedCajaId = null;
+
+      addCajaId = null;
+
+      addRoles = [];
+
+      renderQueue();
+
+      updateCounts();
+
+    }
+
+    if(addMsg){
+
+      if(errors.length){
+
+        const detail = errors.slice(0,2).join(' · ');
+
+        addMsg.textContent = movedIds.length ? `Movidas ${movedIds.length} caja${movedIds.length>1?'s':''}. Errores: ${detail}${errors.length>2?'…':''}` : detail;
+
+      } else {
+
+        addMsg.textContent = `Movidas ${movedIds.length} caja${movedIds.length>1?'s':''}`;
+
+      }
+
+    }
+
+    if(movedIds.length){
+
+      try { await load(); } catch(e){ console.error('[Operacion] reload despues de mover', e); }
+
+      if(!addQueue.length){ setTimeout(()=>{ try { modal.close(); } catch{} }, 600); }
+
+    }
+
+    addConfirm.disabled = false;
+
+  });
+
   modal?.addEventListener('close', resetAdd);
 
   // Timer action handlers (delegated)

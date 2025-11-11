@@ -1,5 +1,5 @@
 import { Request, Response } from 'express';
-import { withTenant } from '../db/pool';
+import { withTenant, TenantOptions } from '../db/pool';
 import { AlertsModel } from '../models/Alerts';
 import { ZonasModel } from '../models/Zona';
 import { getRequestSedeId } from '../utils/sede';
@@ -25,10 +25,6 @@ const pushSedeFilter = (params: any[], sedeId: number | null, alias = 'ic') => {
   return ` AND ${alias}.sede_id = $${params.length}`;
 };
 
-const runWithSede = <T = any>(tenant: string, sedeId: number | null, fn: (client: any) => Promise<T>) => {
-  return runWithSedeContext(sedeId, () => withTenant<T>(tenant, fn, sedeId !== null ? { sedeId } : undefined));
-};
-
 const LOCATION_ERROR_CODES = new Set([
   'INVALID_ZONA',
   'INVALID_SECCION',
@@ -45,6 +41,175 @@ const parseOptionalNumber = (value: unknown): number | null => {
 
 const isLocationError = (err: any): boolean => {
   return typeof err?.code === 'string' && LOCATION_ERROR_CODES.has(err.code as string);
+};
+
+const fetchSedeNames = async (tenant: string, ids: number[]): Promise<Map<number, string>> => {
+  const cleanIds = Array.from(new Set(ids.filter((id): id is number => typeof id === 'number' && Number.isFinite(id))));
+  const map = new Map<number, string>();
+  if (!cleanIds.length) return map;
+  const result = await withTenant(tenant, (client) =>
+    client.query<{ sede_id: number; nombre: string | null }>(
+      `SELECT sede_id, nombre FROM sedes WHERE sede_id = ANY($1::int[])`,
+      [cleanIds]
+    )
+  );
+  for (const row of result.rows) {
+    if (row && typeof row.sede_id === 'number') {
+      map.set(row.sede_id, row.nombre || `Sede ${row.sede_id}`);
+    }
+  }
+  return map;
+};
+
+const parseSedeMismatchDetail = (detail: string | null | undefined) => {
+  const info: { origenId: number | null; destinoId: number | null; rfid: string | null } = {
+    origenId: null,
+    destinoId: null,
+    rfid: null,
+  };
+  if (typeof detail !== 'string' || !detail) return info;
+  const parts = detail.split(',');
+  for (const part of parts) {
+    const [rawKey, rawValue] = part.split('=').map((v) => v?.trim() ?? '');
+    const value = rawValue || '';
+    if (!rawKey) continue;
+    if (rawKey === 'old_sede_id' || rawKey === 'origen_sede_id') {
+      const num = Number(value);
+      if (Number.isFinite(num)) info.origenId = num;
+    } else if (rawKey === 'target_sede_id' || rawKey === 'destino_sede_id') {
+      const num = Number(value);
+      if (Number.isFinite(num)) info.destinoId = num;
+    } else if (rawKey === 'rfid') {
+      info.rfid = value || null;
+    }
+  }
+  return info;
+};
+
+const allowSedeTransferFromValue = (value: any): boolean => {
+  return value === true || value === 'true' || value === 1 || value === '1' || value === 'si' || value === 'sí';
+};
+
+type SedeAwareRow = { rfid: string; sede_id: number | null | undefined };
+
+const analyzeCrossSedeContext = (rows: SedeAwareRow[], sedeId: number | null) => {
+  const hasSedeContext = typeof sedeId === 'number' && Number.isFinite(sedeId);
+  const mismatched = hasSedeContext
+    ? rows.filter((row) => typeof row.sede_id === 'number' && row.sede_id !== sedeId)
+    : rows.filter((row) => typeof row.sede_id === 'number' && Number.isFinite(row.sede_id));
+  const unknown = rows.filter((row) => typeof row.sede_id !== 'number');
+  const requiresTransfer = mismatched.length > 0 || unknown.length > 0;
+  const origenIds = mismatched
+    .map((row) => (typeof row.sede_id === 'number' ? row.sede_id : null))
+    .filter((id): id is number => id !== null);
+  return { hasSedeContext, mismatched, unknown, requiresTransfer, origenIds };
+};
+
+const ensureCrossSedeAuthorization = async (
+  req: Request,
+  res: Response,
+  rows: SedeAwareRow[],
+  sedeId: number | null,
+  allowFlag: boolean,
+  options?: { fallbackRfids?: string[]; customMessage?: string }
+) => {
+  const { mismatched, unknown, requiresTransfer, origenIds } = analyzeCrossSedeContext(rows, sedeId);
+  const allowCrossTransfer = allowFlag && requiresTransfer;
+  if (requiresTransfer && !allowCrossTransfer) {
+    const promptRows = mismatched.length ? mismatched : rows;
+    const fallback = options?.fallbackRfids || [];
+    const rfids = Array.from(new Set([...promptRows.map((row) => row.rfid), ...fallback]));
+    const targetMessage = options?.customMessage
+      || (!mismatched.length && unknown.length
+        ? `Las piezas seleccionadas no tienen sede registrada. ¿Deseas asignarlas a ${(typeof sedeId === 'number' ? 'tu sede actual' : 'esta sede')}?`
+        : undefined);
+    await respondSedeMismatch(req, res, { code: 'PX001', detail: null }, {
+      rfids,
+      destinoIdOverride: typeof sedeId === 'number' && Number.isFinite(sedeId) ? sedeId : null,
+      origenIds: origenIds.length ? origenIds : undefined,
+      customMessage: targetMessage,
+    });
+    return {
+      blocked: true,
+      allowCrossTransfer: false,
+      requiresTransfer,
+      mismatched,
+      unknown,
+      targetSede: typeof sedeId === 'number' && Number.isFinite(sedeId) ? sedeId : null,
+    } as const;
+  }
+
+  return {
+    blocked: false,
+    allowCrossTransfer,
+    requiresTransfer,
+    mismatched,
+    unknown,
+    targetSede: typeof sedeId === 'number' && Number.isFinite(sedeId) ? sedeId : null,
+  } as const;
+};
+
+const buildTenantOptions = (sedeId: number | null, allowCross: boolean): TenantOptions | undefined => {
+  if (sedeId === null && !allowCross) return undefined;
+  const opts: TenantOptions = {};
+  if (sedeId !== null) opts.sedeId = sedeId;
+  if (allowCross) opts.allowCrossSedeTransfer = true;
+  return opts;
+};
+
+const runWithSede = <T = any>(
+  tenant: string,
+  sedeId: number | null,
+  fn: (client: any) => Promise<T>,
+  options?: { allowCrossSedeTransfer?: boolean }
+) => {
+  const tenantOptions = buildTenantOptions(sedeId ?? null, !!options?.allowCrossSedeTransfer);
+  return runWithSedeContext(sedeId, () => withTenant<T>(tenant, fn, tenantOptions));
+};
+
+const respondSedeMismatch = async (
+  req: Request,
+  res: Response,
+  err: any,
+  context?: { rfids?: string[]; destinoIdOverride?: number | null; origenIds?: number[]; customMessage?: string }
+): Promise<boolean> => {
+  if (err?.code !== 'PX001') return false;
+  const tenant = (req as any).user?.tenant;
+  if (!tenant) {
+    res.status(409).json({ ok: false, code: 'SEDE_MISMATCH', error: 'La transferencia entre sedes no está autorizada.' });
+    return true;
+  }
+
+  const detalle = parseSedeMismatchDetail(err?.detail);
+  const sedeId = context?.destinoIdOverride ?? getRequestSedeId(req) ?? detalle.destinoId ?? null;
+  const origenIds = context?.origenIds?.length ? context?.origenIds : (detalle.origenId !== null ? [detalle.origenId] : []);
+  const sedeIdsForNames = [...(origenIds || []), ...(sedeId !== null ? [sedeId] : []), detalle.destinoId ?? null]
+    .filter((id): id is number => typeof id === 'number' && Number.isFinite(id));
+  const nombres = await fetchSedeNames(tenant, sedeIdsForNames);
+  const origenNombre = origenIds && origenIds.length ? (nombres.get(origenIds[0]) || `Sede ${origenIds[0]}`) : (detalle.origenId !== null ? (nombres.get(detalle.origenId) || `Sede ${detalle.origenId}`) : 'otra sede');
+  const destinoNombre = sedeId !== null ? (nombres.get(sedeId) || (req as any).user?.sede_nombre || `Sede ${sedeId}`) : ((detalle.destinoId !== null ? (nombres.get(detalle.destinoId) || `Sede ${detalle.destinoId}`) : (req as any).user?.sede_nombre || 'la sede actual'));
+  const rfids = [detalle.rfid, ...(context?.rfids || [])].filter((val): val is string => typeof val === 'string' && val.length > 0);
+
+  const mensajeBase = context?.customMessage || (rfids.length === 1
+    ? `La pieza ${rfids[0]} pertenece a ${origenNombre}.`
+    : `Las piezas seleccionadas pertenecen a ${origenNombre}.`);
+  const confirmacion = rfids.length === 1
+    ? `La pieza ${rfids[0]} está registrada en ${origenNombre}. ¿Deseas trasladarla a ${destinoNombre}?`
+    : `Hay ${rfids.length || 'varias'} piezas registradas en ${origenNombre}. ¿Deseas trasladarlas a ${destinoNombre}?`;
+
+  res.status(409).json({
+    ok: false,
+    code: 'SEDE_MISMATCH',
+    error: mensajeBase,
+    confirm: confirmacion,
+    sedes_origen: (origenIds && origenIds.length ? origenIds : (detalle.origenId !== null ? [detalle.origenId] : []))
+      .filter((id): id is number => typeof id === 'number' && Number.isFinite(id))
+      .map((id) => ({ id, nombre: nombres.get(id) || `Sede ${id}` })),
+    sede_destino: sedeId !== null ? { id: sedeId, nombre: destinoNombre } : null,
+    rfids,
+    detail: err?.detail || null,
+  });
+  return true;
 };
 
 const resolveLocationForRequest = async (
@@ -757,6 +922,7 @@ export const OperacionController = {
     const { caja_id } = req.body as any;
     const cajaId = Number(caja_id);
     if(!Number.isFinite(cajaId) || cajaId<=0) return res.status(400).json({ ok:false, error:'caja_id inválido' });
+    const allowSedeTransferFlag = allowSedeTransferFromValue(req.body?.allowSedeTransfer);
     try {
       const itemsQ = await withTenant(tenant, (c)=> c.query(
         `SELECT rfid FROM acond_caja_items WHERE caja_id=$1`,
@@ -764,11 +930,38 @@ export const OperacionController = {
       if(!itemsQ.rowCount) return res.status(404).json({ ok:false, error:'Caja sin items' });
       const rfids = itemsQ.rows.map((r:any)=> r.rfid);
 
+      const sedeRows = await withTenant(tenant, (c)=> c.query(
+        `SELECT ic.rfid, ic.sede_id
+           FROM acond_caja_items aci
+           JOIN inventario_credocubes ic ON ic.rfid = aci.rfid
+          WHERE aci.caja_id=$1`,
+        [cajaId]
+      ));
+      const transferRows = (sedeRows.rows as any[]).map((row) => ({ rfid: row.rfid, sede_id: row.sede_id }));
+      const transferCheck = await ensureCrossSedeAuthorization(
+        req,
+        res,
+        transferRows,
+        sedeId,
+        allowSedeTransferFlag,
+        { fallbackRfids: rfids }
+      );
+      if (transferCheck.blocked) return;
+
       await runWithSede(tenant, sedeId, async (c)=>{
+        const targetSede = transferCheck.targetSede;
         await c.query(`ALTER TABLE ordenes ADD COLUMN IF NOT EXISTS habilitada boolean NOT NULL DEFAULT true`);
         await c.query('BEGIN');
         try {
-          await c.query(`UPDATE inventario_credocubes SET estado='En bodega', sub_estado=NULL, lote=NULL WHERE rfid = ANY($1::text[])`, [rfids]);
+          await c.query(
+            `UPDATE inventario_credocubes ic
+                SET estado='En bodega',
+                    sub_estado=NULL,
+                    lote=NULL,
+                    sede_id = COALESCE($2::int, ic.sede_id)
+              WHERE ic.rfid = ANY($1::text[])`,
+            [rfids, targetSede]
+          );
           await c.query(`DELETE FROM acond_caja_timers WHERE caja_id=$1`, [cajaId]);
           await c.query(`DELETE FROM operacion_caja_timers WHERE caja_id=$1`, [cajaId]);
           await c.query(`DELETE FROM acond_caja_items WHERE caja_id=$1`, [cajaId]);
@@ -776,25 +969,49 @@ export const OperacionController = {
           await c.query('COMMIT');
           res.json({ ok:true, caja_id: cajaId, items: rfids.length, caja_deleted: true });
         } catch(e){ await c.query('ROLLBACK'); throw e; }
-      });
+      }, { allowCrossSedeTransfer: transferCheck.allowCrossTransfer });
     } catch(e:any){ res.status(500).json({ ok:false, error: e.message||'Error devolviendo caja' }); }
   },
   devolucionConfirm: async (req: Request, res: Response) => {
     const tenant = (req as any).user?.tenant;
     const sedeId = getRequestSedeId(req);
     const { rfids } = req.body as any;
-  const list = Array.isArray(rfids)? rfids.filter((x:any)=> typeof x==='string' && x.trim().length===24).slice(0,500):[];
+    const list = Array.isArray(rfids)? rfids.filter((x:any)=> typeof x==='string' && x.trim().length===24).slice(0,500):[];
     if(!list.length) return res.status(400).json({ ok:false, error:'Sin RFIDs' });
+    const allowSedeTransferFlag = allowSedeTransferFromValue(req.body?.allowSedeTransfer);
+    let trackedRfids = list.slice();
     try {
-      const updated = await runWithSede(tenant, sedeId, (c)=> c.query(
+      const stateRows = await withTenant(tenant, (c)=> c.query(
+        `SELECT ic.rfid, ic.sede_id
+           FROM inventario_credocubes ic
+          WHERE ic.rfid = ANY($1::text[])`, [list]));
+      const transferRows = (stateRows.rows as any[]).map((row) => ({ rfid: row.rfid, sede_id: row.sede_id }));
+      const transferCheck = await ensureCrossSedeAuthorization(
+        req,
+        res,
+        transferRows,
+        sedeId,
+        allowSedeTransferFlag,
+        { fallbackRfids: list }
+      );
+      if (transferCheck.blocked) return;
+
+      const tenantOptions = buildTenantOptions(sedeId ?? null, transferCheck.allowCrossTransfer);
+      const targetSede = transferCheck.targetSede;
+      const updated = await withTenant(tenant, (c)=> c.query(
         `UPDATE inventario_credocubes ic
-            SET estado='En bodega', sub_estado=NULL
+            SET estado='En bodega',
+                sub_estado=NULL,
+                sede_id = COALESCE($2::int, ic.sede_id)
           WHERE ic.rfid = ANY($1::text[])
             AND ic.estado='Operación'
             AND ic.sub_estado IN ('Transito','Retorno','Completado')
-          RETURNING ic.rfid`, [list]));
+          RETURNING ic.rfid`, [list, targetSede]), tenantOptions);
       res.json({ ok:true, devueltos: updated.rowCount });
-    } catch(e:any){ res.status(500).json({ ok:false, error: e.message||'Error confirmando devolución' }); }
+    } catch(e:any){
+      if (await respondSedeMismatch(req, res, e, { rfids: trackedRfids })) return;
+      res.status(500).json({ ok:false, error: e.message||'Error confirmando devolución' });
+    }
   },
   // Validar únicamente items en estado Operación / sub_estado Retorno para flujo rápido
   devolucionRetValidate: async (req: Request, res: Response) => {
@@ -826,16 +1043,40 @@ export const OperacionController = {
     const { rfids } = req.body as any;
     const list = Array.isArray(rfids)? rfids.filter((x:any)=> typeof x==='string' && x.trim().length===24).slice(0,800):[];
     if(!list.length) return res.status(400).json({ ok:false, error:'Sin RFIDs' });
+    const allowSedeTransferFlag = allowSedeTransferFromValue(req.body?.allowSedeTransfer);
+    let trackedRfids = list.slice();
     try {
-      const upd = await runWithSede(tenant, sedeId, (c)=> c.query(
+      const stateRows = await withTenant(tenant, (c)=> c.query(
+        `SELECT ic.rfid, ic.sede_id
+           FROM inventario_credocubes ic
+          WHERE ic.rfid = ANY($1::text[])`, [list]));
+      const transferRows = (stateRows.rows as any[]).map((row) => ({ rfid: row.rfid, sede_id: row.sede_id }));
+      const transferCheck = await ensureCrossSedeAuthorization(
+        req,
+        res,
+        transferRows,
+        sedeId,
+        allowSedeTransferFlag,
+        { fallbackRfids: list }
+      );
+      if (transferCheck.blocked) return;
+
+      const tenantOptions = buildTenantOptions(sedeId ?? null, transferCheck.allowCrossTransfer);
+      const targetSede = transferCheck.targetSede;
+      const upd = await withTenant(tenant, (c)=> c.query(
         `UPDATE inventario_credocubes ic
-            SET estado='En bodega', sub_estado=NULL
+            SET estado='En bodega',
+                sub_estado=NULL,
+                sede_id = COALESCE($2::int, ic.sede_id)
           WHERE ic.rfid = ANY($1::text[])
             AND ic.estado='Operación'
             AND ic.sub_estado='Retorno'
-          RETURNING ic.rfid`, [list]));
+          RETURNING ic.rfid`, [list, targetSede]), tenantOptions);
       res.json({ ok:true, devueltos: upd.rowCount });
-    } catch(e:any){ res.status(500).json({ ok:false, error: e.message||'Error confirmando retorno' }); }
+    } catch(e:any){
+      if (await respondSedeMismatch(req, res, e, { rfids: trackedRfids })) return;
+      res.status(500).json({ ok:false, error: e.message||'Error confirmando retorno' });
+    }
   },
   // Nuevo flujo devolución: si resta >50% del cronómetro original de acond, vuelve a Acond (Lista para Despacho) conservando timer; si <=50%, pasa a "En bodega · Pendiente a Inspección".
   devolucionCajaProcess: async (req: Request, res: Response) => {
@@ -844,17 +1085,20 @@ export const OperacionController = {
     const { caja_id } = req.body as any;
     const cajaId = Number(caja_id);
     if(!Number.isFinite(cajaId) || cajaId<=0) return res.status(400).json({ ok:false, error:'caja_id inválido' });
+    const allowSedeTransferFlag = allowSedeTransferFromValue(req.body?.allowSedeTransfer);
+    let trackedRfids: string[] = [];
     try {
-      // Validar elegibilidad: TODOS los items de la caja deben estar en Operación · Transito
       const eligQ = await withTenant(tenant, (c)=> c.query(
         `SELECT COUNT(*)::int AS total,
                 SUM(CASE WHEN ic.estado='Operación' AND ic.sub_estado='Transito' THEN 1 ELSE 0 END)::int AS ok
            FROM acond_caja_items aci
            JOIN inventario_credocubes ic ON ic.rfid = aci.rfid
          WHERE aci.caja_id=$1`, [cajaId]));
-      const row = eligQ.rows[0] as any; if(!row || row.ok < row.total){
+      const row = eligQ.rows[0] as any;
+      if(!row || row.ok < row.total){
         return res.status(400).json({ ok:false, error:'Caja no elegible: requiere Operación · Transito' });
       }
+
       const nowQ = await withTenant(tenant, (c)=> c.query<{ now:string }>(`SELECT NOW()::timestamptz AS now`));
       const nowMs = new Date(nowQ.rows[0].now).getTime();
       const tQ = await withTenant(tenant, (c)=> c.query(`SELECT started_at, duration_sec, active FROM acond_caja_timers WHERE caja_id=$1`, [cajaId]));
@@ -870,28 +1114,58 @@ export const OperacionController = {
           decide = remainingRatio>0.5? 'reuse':'inspeccion';
         }
       }
-      // Obtener RFIDs de la caja
+
       const itemsQ = await withTenant(tenant, (c)=> c.query(
         `SELECT rfid FROM acond_caja_items WHERE caja_id=$1`, [cajaId]));
       if(!itemsQ.rowCount) return res.status(404).json({ ok:false, error:'Caja sin items' });
       const rfids = itemsQ.rows.map((r:any)=> r.rfid);
+      trackedRfids = rfids.slice();
+
+      const sedeRows = await withTenant(tenant, (c)=> c.query(
+        `SELECT rfid, sede_id FROM inventario_credocubes WHERE rfid = ANY($1::text[])`,
+        [rfids]
+      ));
+      const transferRows = (sedeRows.rows as any[]).map((row) => ({ rfid: row.rfid, sede_id: row.sede_id }));
+      const transferCheck = await ensureCrossSedeAuthorization(
+        req,
+        res,
+        transferRows,
+        sedeId,
+        allowSedeTransferFlag,
+        { fallbackRfids: rfids }
+      );
+      if (transferCheck.blocked) return;
+
       await runWithSede(tenant, sedeId, async (c)=>{
         await c.query(`ALTER TABLE ordenes ADD COLUMN IF NOT EXISTS habilitada boolean NOT NULL DEFAULT true`);
         await c.query(`ALTER TABLE ordenes ADD COLUMN IF NOT EXISTS estado_orden boolean DEFAULT true`);
         await c.query('BEGIN');
         try {
+          const targetSede = transferCheck.targetSede;
           const orderRow = await c.query(`SELECT order_id FROM acond_cajas WHERE caja_id=$1 FOR UPDATE`, [cajaId]);
           const orderId = orderRow.rowCount ? orderRow.rows[0].order_id : null;
           if(decide==='reuse'){
-            await c.query(`UPDATE inventario_credocubes SET estado='Acondicionamiento', sub_estado='Lista para Despacho' WHERE rfid = ANY($1::text[]) AND estado='Operación'`, [rfids]);
-            // No tocamos el timer de acond; se conserva tal cual
+            await c.query(
+              `UPDATE inventario_credocubes ic
+                  SET estado='Acondicionamiento',
+                      sub_estado='Lista para Despacho',
+                      sede_id = COALESCE($2::int, ic.sede_id)
+                WHERE ic.rfid = ANY($1::text[])
+                  AND ic.estado='Operación'`,
+              [rfids, targetSede]
+            );
           } else {
-            // Mandar a estado En bodega con sub_estado 'Pendiente a Inspección'
-            await c.query(`UPDATE inventario_credocubes SET estado='En bodega', sub_estado='Pendiente a Inspección' WHERE rfid = ANY($1::text[]) AND estado='Operación'`, [rfids]);
-            // Cancelar completamente cronómetros asociados a la caja en acond y operación
+            await c.query(
+              `UPDATE inventario_credocubes ic
+                  SET estado='En bodega',
+                      sub_estado='Pendiente a Inspección',
+                      sede_id = COALESCE($2::int, ic.sede_id)
+                WHERE ic.rfid = ANY($1::text[])
+                  AND ic.estado='Operación'`,
+              [rfids, targetSede]
+            );
             await c.query(`UPDATE acond_caja_timers SET active=false, started_at=NULL, duration_sec=NULL, updated_at=NOW() WHERE caja_id=$1`, [cajaId]);
             await c.query(`UPDATE operacion_caja_timers SET active=false, started_at=NULL, duration_sec=NULL, updated_at=NOW() WHERE caja_id=$1`, [cajaId]);
-            // Crear tabla de timers manuales para Pendiente a Inspección
             await c.query(`CREATE TABLE IF NOT EXISTS pend_insp_caja_timers (
                caja_id int PRIMARY KEY REFERENCES acond_cajas(caja_id) ON DELETE CASCADE,
                started_at timestamptz,
@@ -899,16 +1173,19 @@ export const OperacionController = {
                active boolean NOT NULL DEFAULT false,
                updated_at timestamptz NOT NULL DEFAULT NOW()
             )`);
-            // No se inicia automáticamente; el usuario podrá asignar el cronómetro manual en la sub vista
           }
           if(orderId){
             await c.query(`UPDATE ordenes SET estado_orden = false, habilitada = false WHERE id = $1`, [orderId]);
           }
           await c.query('COMMIT');
         } catch(e){ await c.query('ROLLBACK'); throw e; }
-      });
+      }, { allowCrossSedeTransfer: transferCheck.allowCrossTransfer });
+
       res.json({ ok:true, action: decide, remaining_ratio: Number(remainingRatio.toFixed(4)) });
-    } catch(e:any){ res.status(500).json({ ok:false, error: e.message||'Error procesando devolución' }); }
+    } catch(e:any){
+      if (await respondSedeMismatch(req, res, e, { rfids: trackedRfids })) return;
+      res.status(500).json({ ok:false, error: e.message||'Error procesando devolución' });
+    }
   },
   // Acción explícita: enviar caja a En bodega · Pendiente a Inspección (opcionalmente iniciar timer manual)
   devolucionCajaToPendInsp: async (req: Request, res: Response) => {
@@ -917,6 +1194,7 @@ export const OperacionController = {
     const { caja_id, durationSec } = req.body as any;
     const cajaId = Number(caja_id);
   const dur = Number(durationSec);
+    const allowSedeTransferFlag = allowSedeTransferFromValue(req.body?.allowSedeTransfer);
     if(!Number.isFinite(cajaId) || cajaId<=0) return res.status(400).json({ ok:false, error:'caja_id inválido' });
     try {
       // Validar elegibilidad primero
@@ -932,14 +1210,41 @@ export const OperacionController = {
         `SELECT rfid FROM acond_caja_items WHERE caja_id=$1`, [cajaId]));
       if(!itemsQ.rowCount) return res.status(404).json({ ok:false, error:'Caja sin items' });
       const rfids = itemsQ.rows.map((r:any)=> r.rfid);
+      const sedeRows = await withTenant(tenant, (c)=> c.query(
+        `SELECT ic.rfid, ic.sede_id
+           FROM acond_caja_items aci
+           JOIN inventario_credocubes ic ON ic.rfid = aci.rfid
+          WHERE aci.caja_id=$1`,
+        [cajaId]
+      ));
+      const transferRows = (sedeRows.rows as any[]).map((row) => ({ rfid: row.rfid, sede_id: row.sede_id }));
+      const transferCheck = await ensureCrossSedeAuthorization(
+        req,
+        res,
+        transferRows,
+        sedeId,
+        allowSedeTransferFlag,
+        { fallbackRfids: rfids }
+      );
+      if (transferCheck.blocked) return;
+
       await runWithSede(tenant, sedeId, async (c)=>{
+        const targetSede = transferCheck.targetSede;
         await c.query(`ALTER TABLE ordenes ADD COLUMN IF NOT EXISTS habilitada boolean NOT NULL DEFAULT true`);
         await c.query(`ALTER TABLE ordenes ADD COLUMN IF NOT EXISTS estado_orden boolean DEFAULT true`);
         await c.query('BEGIN');
         try {
           const orderRow = await c.query(`SELECT order_id FROM acond_cajas WHERE caja_id=$1 FOR UPDATE`, [cajaId]);
           const orderId = orderRow.rowCount ? orderRow.rows[0].order_id : null;
-          await c.query(`UPDATE inventario_credocubes SET estado='En bodega', sub_estado='Pendiente a Inspección' WHERE rfid = ANY($1::text[]) AND estado='Operación'`, [rfids]);
+          await c.query(
+            `UPDATE inventario_credocubes ic
+                SET estado='En bodega',
+                    sub_estado='Pendiente a Inspección',
+                    sede_id = COALESCE($2::int, ic.sede_id)
+              WHERE ic.rfid = ANY($1::text[])
+                AND ic.estado='Operación'`,
+            [rfids, targetSede]
+          );
           await c.query(`UPDATE acond_caja_timers SET active=false, started_at=NULL, duration_sec=NULL, updated_at=NOW() WHERE caja_id=$1`, [cajaId]);
           await c.query(`UPDATE operacion_caja_timers SET active=false, started_at=NULL, duration_sec=NULL, updated_at=NOW() WHERE caja_id=$1`, [cajaId]);
           await c.query(`CREATE TABLE IF NOT EXISTS pend_insp_caja_timers (
@@ -965,7 +1270,7 @@ export const OperacionController = {
           }
           await c.query('COMMIT');
         } catch(e){ await c.query('ROLLBACK'); throw e; }
-      });
+      }, { allowCrossSedeTransfer: transferCheck.allowCrossTransfer });
       res.json({ ok:true });
     } catch(e:any){ res.status(500).json({ ok:false, error: e.message||'Error enviando a Pendiente a Inspección' }); }
   },
@@ -1037,6 +1342,7 @@ export const OperacionController = {
     const tenant = (req as any).user?.tenant;
     const sedeId = getRequestSedeId(req);
     const { caja_id } = req.body as any; const cajaId = Number(caja_id);
+    const allowSedeTransferFlag = allowSedeTransferFromValue(req.body?.allowSedeTransfer);
     if(!Number.isFinite(cajaId) || cajaId<=0) return res.status(400).json({ ok:false, error:'caja_id invalido' });
     try {
       const eligQ = await withTenant(tenant, (c)=> c.query(
@@ -1053,14 +1359,41 @@ export const OperacionController = {
       const itemsQ = await withTenant(tenant, (c)=> c.query(`SELECT rfid FROM acond_caja_items WHERE caja_id=$1`, [cajaId]));
       if(!itemsQ.rowCount) return res.status(404).json({ ok:false, error:'Caja sin items' });
       const rfids = itemsQ.rows.map((r:any)=> r.rfid);
+      const sedeRows = await withTenant(tenant, (c)=> c.query(
+        `SELECT ic.rfid, ic.sede_id
+           FROM acond_caja_items aci
+           JOIN inventario_credocubes ic ON ic.rfid = aci.rfid
+          WHERE aci.caja_id=$1`,
+        [cajaId]
+      ));
+      const transferRows = (sedeRows.rows as any[]).map((row) => ({ rfid: row.rfid, sede_id: row.sede_id }));
+      const transferCheck = await ensureCrossSedeAuthorization(
+        req,
+        res,
+        transferRows,
+        sedeId,
+        allowSedeTransferFlag,
+        { fallbackRfids: rfids }
+      );
+      if (transferCheck.blocked) return;
+
       await runWithSede(tenant, sedeId, async (c)=>{
+        const targetSede = transferCheck.targetSede;
         await c.query(`ALTER TABLE ordenes ADD COLUMN IF NOT EXISTS estado_orden boolean DEFAULT true`);
         await c.query(`ALTER TABLE ordenes ADD COLUMN IF NOT EXISTS habilitada boolean NOT NULL DEFAULT true`);
         await c.query('BEGIN');
         try {
           const orderRow = await c.query(`SELECT order_id FROM acond_cajas WHERE caja_id=$1 FOR UPDATE`, [cajaId]);
           const orderId = orderRow.rowCount ? orderRow.rows[0].order_id : null;
-          await c.query(`UPDATE inventario_credocubes SET estado='Acondicionamiento', sub_estado='Lista para Despacho' WHERE rfid = ANY($1::text[]) AND estado='Operación'`, [rfids]);
+          await c.query(
+            `UPDATE inventario_credocubes ic
+                SET estado='Acondicionamiento',
+                    sub_estado='Lista para Despacho',
+                    sede_id = COALESCE($2::int, ic.sede_id)
+              WHERE ic.rfid = ANY($1::text[])
+                AND ic.estado='Operación'`,
+            [rfids, targetSede]
+          );
           await c.query(`UPDATE inventario_credocubes SET numero_orden=NULL WHERE rfid = ANY($1::text[])`, [rfids]);
           await c.query(`UPDATE acond_cajas SET order_id = NULL WHERE caja_id=$1`, [cajaId]);
           if(orderId){
@@ -1068,7 +1401,7 @@ export const OperacionController = {
           }
           await c.query('COMMIT');
         } catch(e){ await c.query('ROLLBACK'); throw e; }
-      });
+      }, { allowCrossSedeTransfer: transferCheck.allowCrossTransfer });
       res.json({ ok:true, caja_id: cajaId, order_id: null, reusada: true });
     } catch(e:any){ res.status(500).json({ ok:false, error: e.message||'Error reutilizando caja' }); }
   },
@@ -1079,19 +1412,47 @@ export const OperacionController = {
     const sedeId = getRequestSedeId(req);
     const { caja_id } = req.body as any; const cajaId = Number(caja_id);
     if(!Number.isFinite(cajaId) || cajaId<=0) return res.status(400).json({ ok:false, error:'caja_id invalido' });
+    const allowSedeTransferFlag = allowSedeTransferFromValue(req.body?.allowSedeTransfer);
     try {
       const itemsQ = await withTenant(tenant, (c)=> c.query(
         `SELECT rfid FROM acond_caja_items WHERE caja_id=$1`, [cajaId]));
       if(!itemsQ.rowCount) return res.status(404).json({ ok:false, error:'Caja sin items' });
       const rfids = itemsQ.rows.map((r:any)=> r.rfid);
+      const sedeRows = await withTenant(tenant, (c)=> c.query(
+        `SELECT ic.rfid, ic.sede_id
+           FROM acond_caja_items aci
+           JOIN inventario_credocubes ic ON ic.rfid = aci.rfid
+          WHERE aci.caja_id=$1`,
+        [cajaId]
+      ));
+      const transferRows = (sedeRows.rows as any[]).map((row) => ({ rfid: row.rfid, sede_id: row.sede_id }));
+      const transferCheck = await ensureCrossSedeAuthorization(
+        req,
+        res,
+        transferRows,
+        sedeId,
+        allowSedeTransferFlag,
+        { fallbackRfids: rfids }
+      );
+      if (transferCheck.blocked) return;
+
       await runWithSede(tenant, sedeId, async (c)=>{
+        const targetSede = transferCheck.targetSede;
         await c.query(`ALTER TABLE ordenes ADD COLUMN IF NOT EXISTS estado_orden boolean DEFAULT true`);
         await c.query(`ALTER TABLE ordenes ADD COLUMN IF NOT EXISTS habilitada boolean NOT NULL DEFAULT true`);
         await c.query('BEGIN');
         try {
           const orderRow = await c.query(`SELECT order_id FROM acond_cajas WHERE caja_id=$1 FOR UPDATE`, [cajaId]);
           const orderId = orderRow.rowCount ? orderRow.rows[0].order_id : null;
-          await c.query(`UPDATE inventario_credocubes SET estado='Inspección', sub_estado=NULL WHERE rfid = ANY($1::text[]) AND estado='Operación'`, [rfids]);
+          await c.query(
+            `UPDATE inventario_credocubes ic
+                SET estado='Inspección',
+                    sub_estado=NULL,
+                    sede_id = COALESCE($2::int, ic.sede_id)
+              WHERE ic.rfid = ANY($1::text[])
+                AND ic.estado='Operación'`,
+            [rfids, targetSede]
+          );
           await c.query(`UPDATE inventario_credocubes SET numero_orden=NULL WHERE rfid = ANY($1::text[])`, [rfids]);
           await c.query(
             `UPDATE inventario_credocubes ic
@@ -1129,7 +1490,7 @@ export const OperacionController = {
           );
           await c.query('COMMIT');
         } catch(e){ await c.query('ROLLBACK'); throw e; }
-      });
+      }, { allowCrossSedeTransfer: transferCheck.allowCrossTransfer });
       res.json({ ok:true });
     } catch(e:any){ res.status(500).json({ ok:false, error: e.message||'Error enviando a Inspección' }); }
   },
@@ -1201,6 +1562,7 @@ export const OperacionController = {
     const sedeId = getRequestSedeId(req);
     const { rfid } = req.body as any;
     const code = typeof rfid === 'string' ? rfid.trim() : '';
+    const allowSedeTransferFlag = allowSedeTransferFromValue(req.body?.allowSedeTransfer);
     if(code.length !== 24) return res.status(400).json({ ok:false, error:'RFID inválido' });
     try {
       const cajaQ = await withTenant(tenant, (c)=> c.query(
@@ -1257,6 +1619,24 @@ export const OperacionController = {
                 AND ic.sub_estado IN ('Pendiente a Inspección','Pendiente a Inspeccion')`, [cajaId]));
           const pendCount = pendQ.rows[0]?.cnt || 0;
           if(pendCount > 0){
+            const sedeRows = await withTenant(tenant, (c)=> c.query(
+              `SELECT ic.rfid, ic.sede_id
+                 FROM acond_caja_items aci
+                 JOIN inventario_credocubes ic ON ic.rfid = aci.rfid
+                WHERE aci.caja_id=$1`,
+              [cajaId]
+            ));
+            const fallbackRfids = (sedeRows.rows as any[]).map((row) => row.rfid);
+            const transferCheck = await ensureCrossSedeAuthorization(
+              req,
+              res,
+              (sedeRows.rows as any[]).map((row) => ({ rfid: row.rfid, sede_id: row.sede_id })),
+              sedeId,
+              allowSedeTransferFlag,
+              { fallbackRfids }
+            );
+            if (transferCheck.blocked) return;
+
             await runWithSede(tenant, sedeId, async (c)=>{
               await c.query(`CREATE TABLE IF NOT EXISTS pend_insp_caja_timers (
                  caja_id int PRIMARY KEY REFERENCES acond_cajas(caja_id) ON DELETE CASCADE,
@@ -1274,10 +1654,15 @@ export const OperacionController = {
               )`);
               await c.query('BEGIN');
               try {
+                const targetSede = transferCheck.targetSede;
                 await c.query(
-                  `UPDATE inventario_credocubes
-                      SET estado='Inspección', sub_estado=NULL
-                    WHERE rfid IN (SELECT rfid FROM acond_caja_items WHERE caja_id=$1)`, [cajaId]);
+                  `UPDATE inventario_credocubes ic
+                      SET estado='Inspección',
+                          sub_estado=NULL,
+                          sede_id = COALESCE($2::int, ic.sede_id)
+                    WHERE ic.rfid IN (SELECT rfid FROM acond_caja_items WHERE caja_id=$1)`,
+                  [cajaId, targetSede]
+                );
                 await c.query(`DELETE FROM pend_insp_caja_timers WHERE caja_id=$1`, [cajaId]);
                 await c.query(
                   `INSERT INTO inspeccion_caja_timers(caja_id, started_at, duration_sec, active, updated_at)
@@ -1288,7 +1673,7 @@ export const OperacionController = {
                 );
                 await c.query('COMMIT');
               } catch(e){ await c.query('ROLLBACK'); throw e; }
-            });
+            }, { allowCrossSedeTransfer: transferCheck.allowCrossTransfer });
             reactivated = true;
             tics = await fetchTics();
             comps = await fetchVipCube();
@@ -1314,6 +1699,7 @@ export const OperacionController = {
     const { rfid, durationSec } = req.body as any;
     const code = typeof rfid === 'string' ? rfid.trim() : '';
     const dur = Number(durationSec);
+    const allowSedeTransferFlag = allowSedeTransferFromValue(req.body?.allowSedeTransfer);
     if(code.length !== 24) return res.status(400).json({ ok:false, error:'RFID inválido' });
     if(!Number.isFinite(dur) || dur<=0) return res.status(400).json({ ok:false, error:'Se requiere un cronómetro (horas/minutos)' });
     try {
@@ -1334,11 +1720,37 @@ export const OperacionController = {
           WHERE aci.caja_id = $1 AND LOWER(ic.estado)=LOWER('En bodega') AND ic.sub_estado IN ('Pendiente a Inspección','Pendiente a Inspeccion')`, [cajaId]));
       if(!pendQ.rowCount || pendQ.rows[0].cnt<=0) return res.status(400).json({ ok:false, error:'La caja no está Pendiente a Inspección' });
 
+      const sedeRows = await withTenant(tenant, (c)=> c.query(
+        `SELECT ic.rfid, ic.sede_id
+           FROM acond_caja_items aci
+           JOIN inventario_credocubes ic ON ic.rfid = aci.rfid
+          WHERE aci.caja_id=$1`,
+        [cajaId]
+      ));
+      const fallbackRfids = (sedeRows.rows as any[]).map((row) => row.rfid);
+      const transferCheck = await ensureCrossSedeAuthorization(
+        req,
+        res,
+        (sedeRows.rows as any[]).map((row) => ({ rfid: row.rfid, sede_id: row.sede_id })),
+        sedeId,
+        allowSedeTransferFlag,
+        { fallbackRfids }
+      );
+      if (transferCheck.blocked) return;
+
       await runWithSede(tenant, sedeId, async (c)=>{
         await c.query('BEGIN');
         try {
+          const targetSede = transferCheck.targetSede;
           // 1) Mover todos los items de la caja a Inspección, limpiar sub_estado
-          await c.query(`UPDATE inventario_credocubes SET estado='Inspección', sub_estado=NULL WHERE rfid IN (SELECT rfid FROM acond_caja_items WHERE caja_id=$1)`, [cajaId]);
+          await c.query(
+            `UPDATE inventario_credocubes ic
+                SET estado='Inspección',
+                    sub_estado=NULL,
+                    sede_id = COALESCE($2::int, ic.sede_id)
+              WHERE ic.rfid IN (SELECT rfid FROM acond_caja_items WHERE caja_id=$1)`,
+            [cajaId, targetSede]
+          );
           // 2) Resetear checklist solo para TICs
           await c.query(
             `UPDATE inventario_credocubes ic
@@ -1376,15 +1788,13 @@ export const OperacionController = {
           );
           await c.query('COMMIT');
         } catch(e){ await c.query('ROLLBACK'); throw e; }
-      });
+      }, { allowCrossSedeTransfer: transferCheck.allowCrossTransfer });
 
       // Devolver info de checklist (TICs ahora en Inspección)
       const ticsQ = await withTenant(tenant, (c)=> c.query(
         `SELECT ic.rfid, ic.estado, ic.sub_estado, ic.validacion_limpieza, ic.validacion_goteo, ic.validacion_desinfeccion
            FROM acond_caja_items aci
            JOIN inventario_credocubes ic ON ic.rfid = aci.rfid
-           JOIN modelos m ON m.modelo_id = ic.modelo_id
-          WHERE aci.caja_id = $1 AND (m.nombre_modelo ILIKE '%tic%')
           ORDER BY ic.rfid`, [cajaId]));
       return res.json({ ok:true, caja:{ id: cajaId, lote }, tics: ticsQ.rows||[] });
     } catch(e:any){ res.status(500).json({ ok:false, error: e.message||'Error al jalar caja a Inspección' }); }
@@ -1443,6 +1853,7 @@ export const OperacionController = {
     const { caja_id, confirm_rfids } = req.body as any;
     const cajaId = Number(caja_id);
     if(!Number.isFinite(cajaId) || cajaId<=0) return res.status(400).json({ ok:false, error:'caja_id inválido' });
+    const allowSedeTransferFlag = allowSedeTransferFromValue(req.body?.allowSedeTransfer);
     try {
       const list = Array.isArray(confirm_rfids) ? confirm_rfids.filter((x:any)=> typeof x==='string' && x.trim().length===24) : [];
       // Validate against current TICs in Inspección for this caja (can be 0..6)
@@ -1460,12 +1871,32 @@ export const OperacionController = {
       if(!allBelong || list.length !== current.length){
         return res.status(400).json({ ok:false, error:'Faltan checks de TICs o hay RFIDs inválidos' });
       }
+
+      const sedeRows = await withTenant(tenant, (c)=> c.query(
+        `SELECT aci.rfid, ic.sede_id
+           FROM acond_caja_items aci
+           JOIN inventario_credocubes ic ON ic.rfid = aci.rfid
+          WHERE aci.caja_id=$1`,
+        [cajaId]
+      ));
+      const cajaRfids = (sedeRows.rows as any[]).map((row) => row.rfid);
+      const transferCheck = await ensureCrossSedeAuthorization(
+        req,
+        res,
+        (sedeRows.rows as any[]).map((row) => ({ rfid: row.rfid, sede_id: row.sede_id })),
+        sedeId,
+        allowSedeTransferFlag,
+        { fallbackRfids: cajaRfids }
+      );
+      if (transferCheck.blocked) return;
+
       // Con todas las TICs OK: devolver a En bodega SOLO los items que estén actualmente en Inspección (TICs/VIP/CUBE).
       // No tocar piezas previamente marcadas como Inhabilitado.
       await runWithSede(tenant, sedeId, async (c)=>{
         await c.query(`ALTER TABLE ordenes ADD COLUMN IF NOT EXISTS habilitada boolean NOT NULL DEFAULT true`);
         await c.query('BEGIN');
         try {
+          const targetSede = transferCheck.targetSede;
           const cajaParams: any[] = [cajaId];
           let cajaSedeJoin = '';
           if(sedeId !== null){
@@ -1478,10 +1909,11 @@ export const OperacionController = {
           // 1) Devolver a En bodega sólo los RFIDs de esta caja cuyo estado actual sea Inspección
           const upd = await c.query(
             `UPDATE inventario_credocubes ic
-                SET estado='En bodega', sub_estado=NULL, lote=NULL
+                SET estado='En bodega', sub_estado=NULL, lote=NULL,
+                    sede_id = COALESCE($2::int, ic.sede_id)
               WHERE ic.rfid IN (SELECT rfid FROM acond_caja_items WHERE caja_id=$1)
                 AND LOWER(ic.estado) IN ('inspeccion','inspección')
-              RETURNING ic.rfid`, [cajaId]);
+              RETURNING ic.rfid`, [cajaId, targetSede]);
           // 2) Inhabilitar orden asociada (si aplica)
           if (orderId) {
             await c.query(`UPDATE ordenes SET habilitada = false WHERE id = $1`, [orderId]);
@@ -1499,7 +1931,7 @@ export const OperacionController = {
           const count = upd.rowCount || 0;
           return res.json({ ok:true, devueltos: count, caja_deleted: true });
         } catch(e){ await c.query('ROLLBACK'); throw e; }
-      });
+      }, { allowCrossSedeTransfer: transferCheck.allowCrossTransfer });
       // Inalcanzable normalmente: si se llega aquí, algo falló en el transaction handler
       return;
     } catch(e:any){ res.status(500).json({ ok:false, error: e.message||'Error completando inspección' }); }
@@ -1596,68 +2028,66 @@ export const OperacionController = {
              VALUES ($1, $2, NULL, FALSE, NOW())`,
             [piezaId, createdNovedadId]
           );
-          if(inh){
-            await c.query(`UPDATE inventario_credocubes
+          await c.query(`UPDATE inventario_credocubes
                             SET estado='Inhabilitado', sub_estado=NULL, activo=false, lote=NULL
                           WHERE id=$1`, [piezaId]);
 
-            // If all TICs in this caja are now inhabilitadas, send VIP and CUBE back to En bodega and teardown the caja
-            const cajaQ = await c.query(`SELECT caja_id FROM acond_caja_items WHERE rfid=$1 LIMIT 1`, [code]);
-            if(cajaQ.rowCount){
-              const cajaId = cajaQ.rows[0].caja_id as number;
-              // Count TICs and how many are inactive
-              const agg = await c.query(
-                `SELECT
-                   SUM(CASE WHEN m.nombre_modelo ILIKE '%tic%' THEN 1 ELSE 0 END)::int AS total_tics,
-                   SUM(CASE WHEN m.nombre_modelo ILIKE '%tic%' AND ic.activo = false THEN 1 ELSE 0 END)::int AS inact_tics
+          // If all TICs in this caja are now inhabilitadas, send VIP and CUBE back to En bodega and teardown the caja
+          const cajaQ = await c.query(`SELECT caja_id FROM acond_caja_items WHERE rfid=$1 LIMIT 1`, [code]);
+          if(cajaQ.rowCount){
+            const cajaId = cajaQ.rows[0].caja_id as number;
+            // Count TICs and how many are inactive
+            const agg = await c.query(
+              `SELECT
+                 SUM(CASE WHEN m.nombre_modelo ILIKE '%tic%' THEN 1 ELSE 0 END)::int AS total_tics,
+                 SUM(CASE WHEN m.nombre_modelo ILIKE '%tic%' AND ic.activo = false THEN 1 ELSE 0 END)::int AS inact_tics
+               FROM acond_caja_items aci
+               JOIN inventario_credocubes ic ON ic.rfid = aci.rfid
+               JOIN modelos m ON m.modelo_id = ic.modelo_id
+              WHERE aci.caja_id = $1`, [cajaId]);
+            const totalTics = Number(agg.rows?.[0]?.total_tics||0);
+            const inactTics = Number(agg.rows?.[0]?.inact_tics||0);
+            if(totalTics>0 && inactTics === totalTics && piezaRol === 'tic'){
+              // Todos los TICs quedaron inhabilitados: NO devolver VIP/CUBE a Bodega.
+              // Mantener VIP y CUBE en Inspección para su revisión y conservar la caja/timers.
+              const vc = await c.query(`SELECT rfid FROM acond_caja_items WHERE caja_id=$1 AND rol IN ('vip','cube')`, [cajaId]);
+              const vcrfids = (vc.rows||[]).map((r:any)=> r.rfid);
+              if(vcrfids.length){
+                await c.query(`UPDATE inventario_credocubes SET estado='Inspección', sub_estado=NULL WHERE rfid = ANY($1::text[])`, [vcrfids]);
+                // Asegurar timer de Inspección activo (no crear duplicados, reutilizar si existe)
+                await c.query(`CREATE TABLE IF NOT EXISTS inspeccion_caja_timers (
+                  caja_id int PRIMARY KEY REFERENCES acond_cajas(caja_id) ON DELETE CASCADE,
+                  started_at timestamptz,
+                  duration_sec integer,
+                  active boolean NOT NULL DEFAULT false,
+                  updated_at timestamptz NOT NULL DEFAULT NOW()
+                )`);
+                await c.query(`ALTER TABLE inspeccion_caja_timers ADD COLUMN IF NOT EXISTS duration_sec integer`);
+                await c.query(
+                  `INSERT INTO inspeccion_caja_timers(caja_id, started_at, active, updated_at)
+                     VALUES ($1, COALESCE((SELECT started_at FROM inspeccion_caja_timers WHERE caja_id=$1), NOW()), true, NOW())
+                   ON CONFLICT (caja_id) DO UPDATE
+                     SET active = true, updated_at = NOW()`,
+                  [cajaId]
+                );
+              }
+              // Importante: NO desarmar la caja ni borrar timers; requiere revisión de VIP/CUBE.
+              autoReturnedCount = 0;
+            }
+
+            // Después de registrar la novedad, si ya no quedan items en estado 'Inspección' dentro de la caja,
+            // limpiar cronómetro y desmontar la caja.
+            const leftQ = await c.query(
+              `SELECT COUNT(*)::int AS cnt
                  FROM acond_caja_items aci
                  JOIN inventario_credocubes ic ON ic.rfid = aci.rfid
-                 JOIN modelos m ON m.modelo_id = ic.modelo_id
-                WHERE aci.caja_id = $1`, [cajaId]);
-              const totalTics = Number(agg.rows?.[0]?.total_tics||0);
-              const inactTics = Number(agg.rows?.[0]?.inact_tics||0);
-              if(totalTics>0 && inactTics === totalTics && piezaRol === 'tic'){
-                // Todos los TICs quedaron inhabilitados: NO devolver VIP/CUBE a Bodega.
-                // Mantener VIP y CUBE en Inspección para su revisión y conservar la caja/timers.
-                const vc = await c.query(`SELECT rfid FROM acond_caja_items WHERE caja_id=$1 AND rol IN ('vip','cube')`, [cajaId]);
-                const vcrfids = (vc.rows||[]).map((r:any)=> r.rfid);
-                if(vcrfids.length){
-                  await c.query(`UPDATE inventario_credocubes SET estado='Inspección', sub_estado=NULL WHERE rfid = ANY($1::text[])`, [vcrfids]);
-                  // Asegurar timer de Inspección activo (no crear duplicados, reutilizar si existe)
-                  await c.query(`CREATE TABLE IF NOT EXISTS inspeccion_caja_timers (
-                    caja_id int PRIMARY KEY REFERENCES acond_cajas(caja_id) ON DELETE CASCADE,
-                    started_at timestamptz,
-                    duration_sec integer,
-                    active boolean NOT NULL DEFAULT false,
-                    updated_at timestamptz NOT NULL DEFAULT NOW()
-                  )`);
-                  await c.query(`ALTER TABLE inspeccion_caja_timers ADD COLUMN IF NOT EXISTS duration_sec integer`);
-                  await c.query(
-                    `INSERT INTO inspeccion_caja_timers(caja_id, started_at, active, updated_at)
-                       VALUES ($1, COALESCE((SELECT started_at FROM inspeccion_caja_timers WHERE caja_id=$1), NOW()), true, NOW())
-                     ON CONFLICT (caja_id) DO UPDATE
-                       SET active = true, updated_at = NOW()`,
-                    [cajaId]
-                  );
-                }
-                // Importante: NO desarmar la caja ni borrar timers; requiere revisión de VIP/CUBE.
-                autoReturnedCount = 0;
-              }
-
-              // Después de registrar la novedad, si ya no quedan items en estado 'Inspección' dentro de la caja,
-              // limpiar cronómetro y desmontar la caja.
-              const leftQ = await c.query(
-                `SELECT COUNT(*)::int AS cnt
-                   FROM acond_caja_items aci
-                   JOIN inventario_credocubes ic ON ic.rfid = aci.rfid
-                  WHERE aci.caja_id = $1 AND LOWER(ic.estado) IN ('inspeccion','inspección')`, [cajaId]);
-              const remain = Number(leftQ.rows?.[0]?.cnt||0);
-              if(remain === 0){
-                await c.query(`DELETE FROM inspeccion_caja_timers WHERE caja_id=$1`, [cajaId]);
-                await c.query(`DELETE FROM acond_caja_items WHERE caja_id=$1`, [cajaId]);
-                await c.query(`DELETE FROM acond_cajas WHERE caja_id=$1`, [cajaId]);
-                clearedCaja = true;
-              }
+                WHERE aci.caja_id = $1 AND LOWER(ic.estado) IN ('inspeccion','inspección')`, [cajaId]);
+            const remain = Number(leftQ.rows?.[0]?.cnt||0);
+            if(remain === 0){
+              await c.query(`DELETE FROM inspeccion_caja_timers WHERE caja_id=$1`, [cajaId]);
+              await c.query(`DELETE FROM acond_caja_items WHERE caja_id=$1`, [cajaId]);
+              await c.query(`DELETE FROM acond_cajas WHERE caja_id=$1`, [cajaId]);
+              clearedCaja = true;
             }
           }
           await c.query('COMMIT');
@@ -2084,167 +2514,218 @@ export const OperacionController = {
   preacondScan: async (req: Request, res: Response) => {
     const tenant = (req as any).user?.tenant;
     const sedeId = getRequestSedeId(req);
-    const { target, rfids, keepLote } = req.body as any;
-    const t = typeof target === 'string' ? target.toLowerCase() : '';
-    const input = Array.isArray(rfids) ? rfids : (rfids ? [rfids] : []);
-    const codes = [...new Set(input.filter((x: any) => typeof x === 'string').map((s: string) => s.trim()).filter(Boolean))];
-    if (!codes.length || (t !== 'congelamiento' && t !== 'atemperamiento')) {
-      return res.status(400).json({ ok: false, error: 'Entrada inválida' });
-    }
+    const allowSedeTransferFlag = allowSedeTransferFromValue(req.body?.allowSedeTransfer);
 
-    const normalize = (val: string | null | undefined): string => {
-      return typeof val === 'string'
-        ? val.normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim().toLowerCase()
-        : '';
-    };
-
-    // Fetch current state for provided RFIDs
-    const found = await withTenant(tenant, (c) => c.query(
-      `SELECT ic.rfid, ic.estado, ic.sub_estado, ic.activo, ic.sede_id, m.nombre_modelo
-         FROM inventario_credocubes ic
-         JOIN modelos m ON m.modelo_id = ic.modelo_id
-        WHERE ic.rfid = ANY($1::text[])`,
-      [codes]));
-
-    const ticSet = new Set((found.rows as any[])
-      .filter(r => /tic/i.test(r.nombre_modelo || ''))
-      .map(r => r.rfid));
-
-    const rejects: { rfid: string; reason: string }[] = [];
-    const accept: string[] = [];
-    for (const code of codes) {
-      if (!ticSet.has(code)) {
-        rejects.push({ rfid: code, reason: 'No es TIC o no existe' });
-        continue;
+    try {
+      const { target, rfids, keepLote } = req.body as any;
+      const t = typeof target === 'string' ? target.toLowerCase() : '';
+      const input = Array.isArray(rfids) ? rfids : (rfids ? [rfids] : []);
+      const codes = [...new Set(input.filter((x: any) => typeof x === 'string').map((s: string) => s.trim()).filter(Boolean))];
+      if (!codes.length || (t !== 'congelamiento' && t !== 'atemperamiento')) {
+        return res.status(400).json({ ok: false, error: 'Entrada inválida' });
       }
-      const cur = (found.rows as any[]).find(r => r.rfid === code);
-      if (cur?.activo === false) {
-        rejects.push({ rfid: code, reason: 'Item inhabilitado (activo=false)' });
-        continue;
-      }
-      if (t === 'atemperamiento') {
-        if (cur?.estado === 'Pre Acondicionamiento' && cur?.sub_estado === 'Congelado') {
-          accept.push(code);
-        } else if (cur?.estado === 'Pre Acondicionamiento' && (cur?.sub_estado === 'Atemperamiento' || cur?.sub_estado === 'Atemperado')) {
-          rejects.push({ rfid: code, reason: 'Ya está en Atemperamiento' });
+
+      const normalize = (val: string | null | undefined): string => {
+        return typeof val === 'string'
+          ? val.normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim().toLowerCase()
+          : '';
+      };
+
+      // Fetch current state for provided RFIDs
+      const found = await withTenant(tenant, (c) => c.query(
+        `SELECT ic.rfid, ic.estado, ic.sub_estado, ic.activo, ic.sede_id, m.nombre_modelo
+           FROM inventario_credocubes ic
+           JOIN modelos m ON m.modelo_id = ic.modelo_id
+          WHERE ic.rfid = ANY($1::text[])`,
+        [codes]));
+
+      const ticSet = new Set((found.rows as any[])
+        .filter(r => /tic/i.test(r.nombre_modelo || ''))
+        .map(r => r.rfid));
+
+      const rejects: { rfid: string; reason: string }[] = [];
+      const accept: string[] = [];
+      for (const code of codes) {
+        if (!ticSet.has(code)) {
+          rejects.push({ rfid: code, reason: 'No es TIC o no existe' });
+          continue;
+        }
+        const cur = (found.rows as any[]).find(r => r.rfid === code);
+        if (cur?.activo === false) {
+          rejects.push({ rfid: code, reason: 'Item inhabilitado (activo=false)' });
+          continue;
+        }
+        if (t === 'atemperamiento') {
+          if (cur?.estado === 'Pre Acondicionamiento' && cur?.sub_estado === 'Congelado') {
+            accept.push(code);
+          } else if (cur?.estado === 'Pre Acondicionamiento' && (cur?.sub_estado === 'Atemperamiento' || cur?.sub_estado === 'Atemperado')) {
+            rejects.push({ rfid: code, reason: 'Ya está en Atemperamiento' });
+          } else {
+            rejects.push({ rfid: code, reason: 'Debe estar Congelado' });
+          }
         } else {
-          rejects.push({ rfid: code, reason: 'Debe estar Congelado' });
-        }
-      } else {
-        const estadoNorm = normalize(cur?.estado);
-        const subEstadoNorm = normalize(cur?.sub_estado);
-        const enBodega = estadoNorm.includes('bodega');
-        const desdeAtemperamiento = estadoNorm === 'pre acondicionamiento' && (subEstadoNorm === 'atemperamiento' || subEstadoNorm === 'atemperado');
-        const subEstadoTieneValor = !!subEstadoNorm;
-        // Congelamiento: no aceptar si ya está en Congelamiento o si proviene de otra fase
-        if (cur?.estado === 'Pre Acondicionamiento' && (cur?.sub_estado === 'Congelamiento' || cur?.sub_estado === 'Congelado')) {
-          rejects.push({ rfid: code, reason: 'Ya está en Congelamiento' });
-        } else if (enBodega && subEstadoTieneValor) {
-          rejects.push({ rfid: code, reason: `Subestado no permitido en Bodega (${cur?.sub_estado || 'pendiente'})` });
-        } else if (!enBodega && !desdeAtemperamiento) {
-          rejects.push({ rfid: code, reason: 'Solo se acepta desde En bodega o Atemperamiento' });
-        } else {
-          accept.push(code);
+          const estadoNorm = normalize(cur?.estado);
+          const subEstadoNorm = normalize(cur?.sub_estado);
+          const enBodega = estadoNorm.includes('bodega');
+          const desdeAtemperamiento = estadoNorm === 'pre acondicionamiento' && (subEstadoNorm === 'atemperamiento' || subEstadoNorm === 'atemperado');
+          const subEstadoTieneValor = !!subEstadoNorm;
+          // Congelamiento: no aceptar si ya está en Congelamiento o si proviene de otra fase
+          if (cur?.estado === 'Pre Acondicionamiento' && (cur?.sub_estado === 'Congelamiento' || cur?.sub_estado === 'Congelado')) {
+            rejects.push({ rfid: code, reason: 'Ya está en Congelamiento' });
+          } else if (enBodega && subEstadoTieneValor) {
+            rejects.push({ rfid: code, reason: `Subestado no permitido en Bodega (${cur?.sub_estado || 'pendiente'})` });
+          } else if (!enBodega && !desdeAtemperamiento) {
+            rejects.push({ rfid: code, reason: 'Solo se acepta desde En bodega o Atemperamiento' });
+          } else {
+            accept.push(code);
+          }
         }
       }
-    }
 
-    if (accept.length) {
-      let locationResult: { apply: boolean; zonaId: number | null; seccionId: number | null } | null = null;
-      try {
-        locationResult = await resolveLocationForRequest(tenant, sedeId, req.body);
-      } catch (err: any) {
-        if (isLocationError(err)) {
-          return res.status(400).json({ ok: false, error: err.message || 'Ubicación inválida' });
+      if (accept.length) {
+        console.log('[preacondScan] transfer check', {
+          allowFlag: allowSedeTransferFlag,
+          bodyAllow: req.body?.allowSedeTransfer,
+          sedeId,
+          acceptCount: accept.length,
+        });
+        let locationResult: { apply: boolean; zonaId: number | null; seccionId: number | null } | null = null;
+        try {
+          locationResult = await resolveLocationForRequest(tenant, sedeId, req.body);
+        } catch (err: any) {
+          if (isLocationError(err)) {
+            return res.status(400).json({ ok: false, error: err.message || 'Ubicación inválida' });
+          }
+          throw err;
         }
-        throw err;
-      }
 
-      if (t === 'congelamiento') {
-        const moveCongParams: any[] = [accept];
-        await withTenant(tenant, (c) => c.query(
-          `UPDATE inventario_credocubes ic
-              SET estado = 'Pre Acondicionamiento', sub_estado = 'Congelamiento'
-              FROM modelos m
-             WHERE ic.modelo_id = m.modelo_id
-               AND ic.rfid = ANY($1::text[])
-               AND ic.activo = true
-               AND (m.nombre_modelo ILIKE '%tic%')`,
-          moveCongParams), sedeId !== null ? { sedeId } : undefined);
-        // Alert: moved to Congelamiento
-        await withTenant(tenant, async (c) => {
-          try {
-            const lotesParams: any[] = [accept];
-            const lotesSede = pushSedeFilter(lotesParams, sedeId);
-            const lotesQ = await c.query<{ lote: string }>(
-              `SELECT DISTINCT COALESCE(lote,'') AS lote FROM inventario_credocubes ic WHERE ic.rfid = ANY($1::text[])${lotesSede}`,
-              lotesParams
+        const acceptedRows = (found.rows as any[]).filter(r => accept.includes(r.rfid));
+        const hasSedeContext = typeof sedeId === 'number' && Number.isFinite(sedeId);
+        const mismatchedAccepted = hasSedeContext
+          ? acceptedRows.filter(r => typeof r.sede_id === 'number' && r.sede_id !== sedeId)
+          : acceptedRows.filter(r => typeof r.sede_id === 'number');
+        const unknownSedeAccepted = acceptedRows.filter(r => typeof r.sede_id !== 'number');
+        const requiresTransfer = mismatchedAccepted.length > 0 || unknownSedeAccepted.length > 0;
+        const allowCrossTransfer = allowSedeTransferFlag && requiresTransfer;
+        console.log('[preacondScan] mismatch state', {
+          hasSedeContext,
+          allowCrossTransfer,
+          allowSedeTransferFlag,
+          requiresTransfer,
+          mismatched: mismatchedAccepted.map(r => r.sede_id),
+          unknown: unknownSedeAccepted.length,
+        });
+
+        if (requiresTransfer && !allowCrossTransfer) {
+          const promptRows = mismatchedAccepted.length ? mismatchedAccepted : acceptedRows;
+          const sedeIds = mismatchedAccepted
+            .map(row => (typeof row.sede_id === 'number' ? row.sede_id : null))
+            .filter((id): id is number => id !== null);
+          const uniqueOrigen = Array.from(new Set(sedeIds));
+          return respondSedeMismatch(req, res, { code: 'PX001', detail: null }, {
+            rfids: promptRows.map(r => r.rfid),
+            destinoIdOverride: typeof sedeId === 'number' ? sedeId : null,
+            origenIds: uniqueOrigen.length ? uniqueOrigen : undefined,
+            customMessage: (!mismatchedAccepted.length && unknownSedeAccepted.length)
+              ? `Las piezas seleccionadas no tienen sede registrada. ¿Deseas asignarlas a ${(typeof sedeId === 'number' ? 'tu sede actual' : 'esta sede')}?`
+              : undefined,
+          });
+        }
+
+        await runWithSede(tenant, sedeId, async (client) => {
+          const cfgRes = await client.query(
+            "SELECT current_setting('app.allow_cross_sede_transfer', true) AS allow, current_setting('app.current_sede_id', true) AS sede"
+          );
+          console.log('[preacondScan] session settings', cfgRes.rows?.[0] || null);
+          const targetSede = typeof sedeId === 'number' ? sedeId : null;
+          console.log('[preacondScan] applying transfer', { allowCrossTransfer, targetSede, accept });
+          if (t === 'congelamiento') {
+            await client.query(
+              `UPDATE inventario_credocubes ic
+                  SET estado = 'Pre Acondicionamiento',
+                      sub_estado = 'Congelamiento',
+                      sede_id = COALESCE($2::int, ic.sede_id)
+                  FROM modelos m
+                 WHERE ic.modelo_id = m.modelo_id
+                   AND ic.rfid = ANY($1::text[])
+                   AND ic.activo = true
+                   AND (m.nombre_modelo ILIKE '%tic%')`,
+              [accept, targetSede]
             );
-            const lotes = lotesQ.rows.map(r => (r.lote || '').trim()).filter(Boolean);
-            const lotesMsg = lotes.length ? ` (Lote${lotes.length > 1 ? 's' : ''}: ${lotes.join(', ')})` : '';
-            await AlertsModel.create(c, {
-              tipo_alerta: 'inventario:preacond:inicio_congelamiento',
-              descripcion: `${accept.length} TIC${accept.length > 1 ? 's' : ''} a Congelamiento${lotesMsg}`
-            });
-          } catch {}
-        });
-      } else {
-        const preserve = !!keepLote; // if true, do not clear lote
-        if (preserve) {
-          const moveAtempParams: any[] = [accept];
-          await withTenant(tenant, (c) => c.query(
-            `UPDATE inventario_credocubes ic
-                SET estado = 'Pre Acondicionamiento', sub_estado = 'Atemperamiento'
-                FROM modelos m
-               WHERE ic.modelo_id = m.modelo_id
-                 AND ic.rfid = ANY($1::text[])
-                 AND ic.activo = true
-                 AND (m.nombre_modelo ILIKE '%tic%')
-                 AND ic.estado = 'Pre Acondicionamiento' AND ic.sub_estado = 'Congelado'`,
-            moveAtempParams), sedeId !== null ? { sedeId } : undefined);
-        } else {
-          const moveAtempClearParams: any[] = [accept];
-          await withTenant(tenant, (c) => c.query(
-            `UPDATE inventario_credocubes ic
-                SET estado = 'Pre Acondicionamiento', sub_estado = 'Atemperamiento', lote = NULL
-                FROM modelos m
-               WHERE ic.modelo_id = m.modelo_id
-                 AND ic.rfid = ANY($1::text[])
-                 AND ic.activo = true
-                 AND (m.nombre_modelo ILIKE '%tic%')
-                 AND ic.estado = 'Pre Acondicionamiento' AND ic.sub_estado = 'Congelado'`,
-            moveAtempClearParams), sedeId !== null ? { sedeId } : undefined);
-        }
-        // Alert: moved to Atemperamiento
-        await withTenant(tenant, async (c) => {
-          try {
-            await AlertsModel.create(c, {
-              tipo_alerta: 'inventario:preacond:inicio_atemperamiento',
-              descripcion: `${accept.length} TIC${accept.length>1?'s':''} a Atemperamiento`
-            });
-          } catch {}
-        });
-      }
+            try {
+              const lotesParams: any[] = [accept];
+              const lotesSede = pushSedeFilter(lotesParams, sedeId);
+              const lotesQ = await client.query(
+                `SELECT DISTINCT COALESCE(lote,'') AS lote FROM inventario_credocubes ic WHERE ic.rfid = ANY($1::text[])${lotesSede}`,
+                lotesParams
+              );
+              const lotes = (lotesQ.rows as Array<{ lote: string | null }>).map((row) => (row.lote || '').trim()).filter(Boolean);
+              const lotesMsg = lotes.length ? ` (Lote${lotes.length > 1 ? 's' : ''}: ${lotes.join(', ')})` : '';
+              await AlertsModel.create(client, {
+                tipo_alerta: 'inventario:preacond:inicio_congelamiento',
+                descripcion: `${accept.length} TIC${accept.length > 1 ? 's' : ''} a Congelamiento${lotesMsg}`
+              });
+            } catch {}
+          } else {
+            const preserve = !!keepLote;
+            if (preserve) {
+              await client.query(
+                `UPDATE inventario_credocubes ic
+                    SET estado = 'Pre Acondicionamiento',
+                        sub_estado = 'Atemperamiento',
+                        sede_id = COALESCE($2::int, ic.sede_id)
+                    FROM modelos m
+                   WHERE ic.modelo_id = m.modelo_id
+                     AND ic.rfid = ANY($1::text[])
+                     AND ic.activo = true
+                     AND (m.nombre_modelo ILIKE '%tic%')
+                     AND ic.estado = 'Pre Acondicionamiento' AND ic.sub_estado = 'Congelado'`,
+                [accept, targetSede]
+              );
+            } else {
+              await client.query(
+                `UPDATE inventario_credocubes ic
+                    SET estado = 'Pre Acondicionamiento',
+                        sub_estado = 'Atemperamiento',
+                        lote = NULL,
+                        sede_id = COALESCE($2::int, ic.sede_id)
+                    FROM modelos m
+                   WHERE ic.modelo_id = m.modelo_id
+                     AND ic.rfid = ANY($1::text[])
+                     AND ic.activo = true
+                     AND (m.nombre_modelo ILIKE '%tic%')
+                     AND ic.estado = 'Pre Acondicionamiento' AND ic.sub_estado = 'Congelado'`,
+                [accept, targetSede]
+              );
+            }
+            try {
+              await AlertsModel.create(client, {
+                tipo_alerta: 'inventario:preacond:inicio_atemperamiento',
+                descripcion: `${accept.length} TIC${accept.length > 1 ? 's' : ''} a Atemperamiento`
+              });
+            } catch {}
+          }
 
-      if (locationResult?.apply) {
-        const params: any[] = [accept, locationResult.zonaId, locationResult.seccionId];
-        await withTenant(
-          tenant,
-          (c) =>
-            c.query(
+          if (locationResult?.apply) {
+            await client.query(
               `UPDATE inventario_credocubes
                   SET zona_id = $2, seccion_id = $3
                 WHERE rfid = ANY($1::text[])`,
-              params
-            ),
-          sedeId !== null ? { sedeId } : undefined
-        );
+              [accept, locationResult.zonaId, locationResult.seccionId]
+            );
+          }
+  }, { allowCrossSedeTransfer: allowCrossTransfer });
+
+        // Do NOT auto-assign lote on scan; keep items without lote until a timer starts
       }
 
-  // Do NOT auto-assign lote on scan; keep items without lote until a timer starts
+      res.json({ ok: true, moved: accept, rejected: rejects, target: t });
+    } catch (err: any) {
+      console.error('[preacondScan] caught error', { code: err?.code, detail: err?.detail, message: err?.message });
+      if (await respondSedeMismatch(req, res, err, { rfids: (req.body?.rfids || []) })) return;
+      console.error('[preacondScan] error', err);
+      return res.status(500).json({ ok: false, error: 'Error al procesar la solicitud' });
     }
-
-    res.json({ ok: true, moved: accept, rejected: rejects, target: t });
   },
 
   // Lookup lote de una TIC congelada y devolver resumen de todas las TICs congeladas de ese lote
@@ -2278,70 +2759,102 @@ export const OperacionController = {
   // Move entire lote (all TICs in estado Pre Acondicionamiento sub_estado Congelado) to Atemperamiento
   preacondLoteMove: async (req: Request, res: Response) => {
     const tenant = (req as any).user?.tenant;
-    const sedeId = getRequestSedeId(req);
+  const sedeId = getRequestSedeId(req);
+  const allowSedeTransferFlag = allowSedeTransferFromValue(req.body?.allowSedeTransfer);
     const { lote, keepLote } = req.body as any;
     const loteVal = typeof lote === 'string' ? lote.trim() : '';
     if(!loteVal) return res.status(400).json({ ok:false, error:'Lote requerido' });
-    // Fetch TICs in lote
-    const tics = await withTenant(tenant, (c)=> c.query(
-      `SELECT ic.rfid, ic.sub_estado, ic.estado
-         FROM inventario_credocubes ic
-         JOIN modelos m ON m.modelo_id = ic.modelo_id
-        WHERE ic.lote = $1
-          AND ic.estado = 'Pre Acondicionamiento'
-          AND ic.sub_estado IN ('Congelado','Congelamiento')
-          AND (m.nombre_modelo ILIKE '%tic%')
-        ORDER BY ic.rfid`, [loteVal]));
-    if(!tics.rowCount) return res.status(404).json({ ok:false, error:'Lote sin TICs válidas' });
-    // Only move the ones strictly Congelado
-    const congelados = tics.rows.filter(r=> r.sub_estado === 'Congelado').map((r: any)=> r.rfid);
-    if(!congelados.length) return res.status(400).json({ ok:false, error:'No hay TICs en estado Congelado' });
 
-    let locationResult: { apply: boolean; zonaId: number | null; seccionId: number | null } | null = null;
-    try {
-      locationResult = await resolveLocationForRequest(tenant, sedeId, req.body);
-    } catch (err: any) {
-      if (isLocationError(err)) {
-        return res.status(400).json({ ok: false, error: err.message || 'Ubicación inválida' });
+  let trackedRfids: string[] = [];
+
+  try {
+      // Fetch TICs in lote
+      const tics = await withTenant(tenant, (c)=> c.query(
+        `SELECT ic.rfid, ic.sub_estado, ic.estado, ic.sede_id
+           FROM inventario_credocubes ic
+           JOIN modelos m ON m.modelo_id = ic.modelo_id
+          WHERE ic.lote = $1
+            AND ic.estado = 'Pre Acondicionamiento'
+            AND ic.sub_estado IN ('Congelado','Congelamiento')
+            AND (m.nombre_modelo ILIKE '%tic%')
+          ORDER BY ic.rfid`, [loteVal]));
+      if(!tics.rowCount) return res.status(404).json({ ok:false, error:'Lote sin TICs válidas' });
+      // Only move the ones strictly Congelado
+      const congeladosRows = tics.rows.filter((r: any)=> r.sub_estado === 'Congelado');
+  const congelados = congeladosRows.map((r: any)=> r.rfid);
+  trackedRfids = congelados.slice();
+      if(!congelados.length) return res.status(400).json({ ok:false, error:'No hay TICs en estado Congelado' });
+
+      let locationResult: { apply: boolean; zonaId: number | null; seccionId: number | null } | null = null;
+      try {
+        locationResult = await resolveLocationForRequest(tenant, sedeId, req.body);
+      } catch (err: any) {
+        if (isLocationError(err)) {
+          return res.status(400).json({ ok: false, error: err.message || 'Ubicación inválida' });
+        }
+        throw err;
       }
-      throw err;
-    }
 
-    if(keepLote){
-      await withTenant(tenant, (c)=> c.query(
-        `UPDATE inventario_credocubes ic SET sub_estado = 'Atemperamiento'
-          WHERE ic.rfid = ANY($1::text[])`,
-        [congelados]), sedeId !== null ? { sedeId } : undefined);
-    } else {
-      await withTenant(tenant, (c)=> c.query(
-        `UPDATE inventario_credocubes ic SET sub_estado = 'Atemperamiento', lote = NULL
-          WHERE ic.rfid = ANY($1::text[])`,
-        [congelados]), sedeId !== null ? { sedeId } : undefined);
-    }
+      const hasSedeContext = typeof sedeId === 'number' && Number.isFinite(sedeId);
+      const mismatched = hasSedeContext
+        ? congeladosRows.filter((row: any) => typeof row.sede_id === 'number' && row.sede_id !== sedeId)
+        : [];
+      const allowCrossTransfer = allowSedeTransferFlag && mismatched.length > 0;
 
-    if (locationResult?.apply) {
-      const params: any[] = [congelados, locationResult.zonaId, locationResult.seccionId];
-      await withTenant(
-        tenant,
-        (c) =>
-          c.query(
-            `UPDATE inventario_credocubes
-                SET zona_id = $2, seccion_id = $3
-              WHERE rfid = ANY($1::text[])`,
-            params
-          ),
-        sedeId !== null ? { sedeId } : undefined
-      );
-    }
+      if (mismatched.length && !allowCrossTransfer) {
+        const sedeIds = mismatched
+          .map(row => (typeof row.sede_id === 'number' ? row.sede_id : null))
+          .filter((id): id is number => id !== null);
+        const uniqueOrigen = Array.from(new Set(sedeIds));
+        return respondSedeMismatch(req, res, { code: 'PX001', detail: null }, {
+          rfids: mismatched.map(r => r.rfid),
+          destinoIdOverride: typeof sedeId === 'number' ? sedeId : null,
+          origenIds: uniqueOrigen,
+        });
+      }
 
-    // Alert: lote moved to Atemperamiento
-    try {
-      await withTenant(tenant, (c)=> AlertsModel.create(c, {
-        tipo_alerta: 'inventario:preacond:inicio_atemperamiento',
-        descripcion: `${congelados.length} TIC${congelados.length>1?'s':''} a Atemperamiento (Lote: ${loteVal})`
-      }));
-    } catch {}
-    res.json({ ok:true, moved: congelados, lote: loteVal });
+      const tenantOptions = buildTenantOptions(sedeId ?? null, allowCrossTransfer);
+
+      if(keepLote){
+        await withTenant(tenant, (c)=> c.query(
+          `UPDATE inventario_credocubes ic SET sub_estado = 'Atemperamiento'
+            WHERE ic.rfid = ANY($1::text[])`,
+          [congelados]), tenantOptions);
+      } else {
+        await withTenant(tenant, (c)=> c.query(
+          `UPDATE inventario_credocubes ic SET sub_estado = 'Atemperamiento', lote = NULL
+            WHERE ic.rfid = ANY($1::text[])`,
+          [congelados]), tenantOptions);
+      }
+
+      if (locationResult?.apply) {
+        const params: any[] = [congelados, locationResult.zonaId, locationResult.seccionId];
+        await withTenant(
+          tenant,
+          (c) =>
+            c.query(
+              `UPDATE inventario_credocubes
+                  SET zona_id = $2, seccion_id = $3
+                WHERE rfid = ANY($1::text[])`,
+              params
+            ),
+          tenantOptions
+        );
+      }
+
+      // Alert: lote moved to Atemperamiento
+      try {
+        await withTenant(tenant, (c)=> AlertsModel.create(c, {
+          tipo_alerta: 'inventario:preacond:inicio_atemperamiento',
+          descripcion: `${congelados.length} TIC${congelados.length>1?'s':''} a Atemperamiento (Lote: ${loteVal})`
+  }), tenantOptions);
+      } catch {}
+      res.json({ ok:true, moved: congelados, lote: loteVal });
+    } catch (err: any) {
+      if (await respondSedeMismatch(req, res, err, { rfids: trackedRfids })) return;
+      console.error('[preacondLoteMove] error', err);
+      return res.status(500).json({ ok:false, error:'Error al mover el lote' });
+    }
   },
 
   // Validate RFIDs before moving (registro-like UX)
@@ -3158,6 +3671,7 @@ export const OperacionController = {
     const tenant = (req as any).user?.tenant;
     const sedeId = getRequestSedeId(req);
     const { rfids, order_id } = req.body as any;
+    const allowSedeTransferFlag = allowSedeTransferFromValue(req.body?.allowSedeTransfer);
     let orderId: number | null = null;
     if(order_id != null){
       const n = Number(order_id);
@@ -3205,7 +3719,7 @@ export const OperacionController = {
           GROUP BY c.caja_id
          HAVING bool_and(ic2.estado='Acondicionamiento' AND ic2.sub_estado IN ('Ensamblaje','Ensamblado'))
        )
-  SELECT ic.rfid, ic.estado, ic.sub_estado, ic.lote, ic.activo, m.nombre_modelo,
+  SELECT ic.rfid, ic.estado, ic.sub_estado, ic.lote, ic.activo, ic.sede_id, m.nombre_modelo,
               CASE WHEN aci.rfid IS NOT NULL THEN true ELSE false END AS ya_en_caja
          FROM inventario_credocubes ic
          JOIN modelos m ON m.modelo_id = ic.modelo_id
@@ -3244,9 +3758,20 @@ export const OperacionController = {
     }
     if(!(haveCube && haveVip && ticCount===6)) return res.status(400).json({ ok:false, error:'Composición inválida', message:'Composición inválida (1 cube, 1 vip, 6 tics)' });
     if(litrajes.size>1) return res.status(400).json({ ok:false, error:'Todos los items deben tener el mismo litraje', message:'Todos los items deben tener el mismo litraje' });
+    const transferRows = (rows.rows as any[]).map((row) => ({ rfid: row.rfid, sede_id: row.sede_id }));
+    const transferCheck = await ensureCrossSedeAuthorization(
+      req,
+      res,
+      transferRows,
+      sedeId,
+      allowSedeTransferFlag,
+      { fallbackRfids: codes }
+    );
+    if (transferCheck.blocked) return;
     // All good: create caja and assign nuevo lote (random unique pattern)
   let loteNuevo = await generateNextCajaLote(tenant);
   await runWithSede(tenant, sedeId, async (c) => {
+      const targetSede = transferCheck.targetSede;
       await c.query('BEGIN');
       try {
         // Ensure dependent tables/columns
@@ -3343,13 +3868,36 @@ export const OperacionController = {
         // Clear lote for TICs first (as per requirement) then set estado/sub_estado + assign lote to all
         const ticRfids = roles.filter(r=>r.rol==='tic').map(r=>r.rfid);
         if(ticRfids.length){
-          await c.query(`UPDATE inventario_credocubes SET lote = NULL WHERE rfid = ANY($1::text[])`, [ticRfids]);
+          await c.query(
+            `UPDATE inventario_credocubes ic
+                SET lote = NULL,
+                    sede_id = COALESCE($2::int, ic.sede_id)
+               WHERE ic.rfid = ANY($1::text[])`,
+            [ticRfids, targetSede]
+          );
         }
         // Assign lote & move to Acondicionamiento/Ensamblaje
         if(orderNumero){
-          await c.query(`UPDATE inventario_credocubes SET estado='Acondicionamiento', sub_estado='Ensamblaje', lote=$1, numero_orden=$3 WHERE rfid = ANY($2::text[])`, [loteNuevo, codes, orderNumero]);
+          await c.query(
+            `UPDATE inventario_credocubes ic
+                SET estado='Acondicionamiento',
+                    sub_estado='Ensamblaje',
+                    lote=$1,
+                    numero_orden=$4,
+                    sede_id = COALESCE($3::int, ic.sede_id)
+              WHERE ic.rfid = ANY($2::text[])`,
+            [loteNuevo, codes, targetSede, orderNumero]
+          );
         } else {
-          await c.query(`UPDATE inventario_credocubes SET estado='Acondicionamiento', sub_estado='Ensamblaje', lote=$1 WHERE rfid = ANY($2::text[])`, [loteNuevo, codes]);
+          await c.query(
+            `UPDATE inventario_credocubes ic
+                SET estado='Acondicionamiento',
+                    sub_estado='Ensamblaje',
+                    lote=$1,
+                    sede_id = COALESCE($3::int, ic.sede_id)
+              WHERE ic.rfid = ANY($2::text[])`,
+            [loteNuevo, codes, targetSede]
+          );
         }
         if (locationResult?.apply) {
           await c.query(
@@ -3375,7 +3923,7 @@ export const OperacionController = {
         const status = Number.isInteger(e?.statusCode) ? Number(e.statusCode) : 500;
         res.status(status).json({ ok:false, error: e?.message || 'Error creando caja' });
       }
-    });
+    }, { allowCrossSedeTransfer: transferCheck.allowCrossTransfer });
   },
   // ============================= ACONDICIONAMIENTO · CAJA TIMERS =============================
   acondCajaTimerStart: async (req: Request, res: Response) => {
@@ -3638,19 +4186,67 @@ export const OperacionController = {
   acondDespachoMove: async (req: Request, res: Response) => {
     const tenant = (req as any).user?.tenant;
     const sedeId = getRequestSedeId(req);
-  const { rfid, durationSec, order_id, allowIncomplete } = req.body as any;
-  const allowIncompleteFlag = allowIncomplete === true;
-  const code = typeof rfid === 'string' ? rfid.trim() : '';
-  const dur = Number(durationSec);
-  if(code.length !== 24) return res.status(400).json({ ok:false, error:'RFID inválido' });
-  if(!Number.isFinite(dur) || dur <= 0) return res.status(400).json({ ok:false, error:'durationSec requerido (>0)' });
+    const { rfid, durationSec, order_id, allowIncomplete } = req.body as any;
+    const allowIncompleteFlag = allowIncomplete === true;
+    const allowSedeTransferFlag = allowSedeTransferFromValue(req.body?.allowSedeTransfer);
+    const code = typeof rfid === 'string' ? rfid.trim() : '';
+    const dur = Number(durationSec);
+    if(code.length !== 24) return res.status(400).json({ ok:false, error:'RFID inválido' });
+    if(!Number.isFinite(dur) || dur <= 0) return res.status(400).json({ ok:false, error:'durationSec requerido (>0)' });
     try {
-  await runWithSede(tenant, sedeId, async (c) => {
+      const cajaInfoQ = await withTenant(tenant, (c)=> c.query(
+        `SELECT c.caja_id, c.lote, c.order_id
+           FROM acond_caja_items aci
+           JOIN acond_cajas c ON c.caja_id = aci.caja_id
+          WHERE aci.rfid=$1
+          LIMIT 1`,
+        [code]
+      ));
+      if(!cajaInfoQ.rowCount){ return res.status(404).json({ ok:false, error:'RFID no pertenece a caja' }); }
+      const cajaInfo = cajaInfoQ.rows[0] as any;
+      const cajaId = cajaInfo.caja_id;
+
+      const itemsSedeQ = await withTenant(tenant, (c)=> c.query(
+        `SELECT ic.rfid, ic.sede_id
+           FROM acond_caja_items aci
+           JOIN inventario_credocubes ic ON ic.rfid = aci.rfid
+          WHERE aci.caja_id=$1`,
+        [cajaId]
+      ));
+      if(!itemsSedeQ.rowCount){ return res.status(404).json({ ok:false, error:'Caja sin items' }); }
+      const transferRows = (itemsSedeQ.rows as any[]).map((row) => ({ rfid: row.rfid, sede_id: row.sede_id }));
+      const transferCheck = await ensureCrossSedeAuthorization(
+        req,
+        res,
+        transferRows,
+        sedeId,
+        allowSedeTransferFlag,
+        { fallbackRfids: transferRows.map((r) => r.rfid) }
+      );
+      if (transferCheck.blocked) return;
+
+      await runWithSede(tenant, sedeId, async (c) => {
+        const targetSede = transferCheck.targetSede;
         await c.query('BEGIN');
         try {
-  const cajaQ = await c.query(`SELECT c.caja_id, c.lote, c.order_id FROM acond_caja_items aci JOIN acond_cajas c ON c.caja_id=aci.caja_id WHERE aci.rfid=$1 LIMIT 1`, [code]);
+          const cajaQ = await c.query(
+            `SELECT c.caja_id, c.lote, c.order_id
+               FROM acond_caja_items aci
+               JOIN acond_cajas c ON c.caja_id = aci.caja_id
+              WHERE aci.rfid=$1
+              LIMIT 1`,
+            [code]
+          );
           if(!cajaQ.rowCount){ await c.query('ROLLBACK'); return res.status(404).json({ ok:false, error:'RFID no pertenece a caja' }); }
-          const cajaId = cajaQ.rows[0].caja_id; const lote = cajaQ.rows[0].lote; const cajaOrderId = cajaQ.rows[0].order_id ?? null;
+          const cajaRow = cajaQ.rows[0] as any;
+          const cajaIdActual = cajaRow.caja_id;
+          const lote = cajaRow.lote;
+          const cajaOrderId = cajaRow.order_id ?? null;
+
+          if(cajaIdActual !== cajaId){
+            await c.query('ROLLBACK');
+            return res.status(409).json({ ok:false, error:'La caja cambió durante el proceso, intenta nuevamente' });
+          }
     // Bloquear si cronómetro de ensamblaje aún activo (no se ha marcado Ensamblado)
     const timerQ = await c.query(`SELECT active, started_at, duration_sec FROM acond_caja_timers WHERE caja_id=$1`, [cajaId]);
     const timerRow = timerQ.rowCount ? timerQ.rows[0] : null;
@@ -3725,10 +4321,11 @@ export const OperacionController = {
           const estadoFiltro = allowIncompleteFlag ? "IN ('Ensamblado','Ensamblaje')" : "='Ensamblado'";
           const upd = await c.query(
             `UPDATE inventario_credocubes ic
-        SET sub_estado='Lista para Despacho'
+                SET sub_estado='Lista para Despacho',
+                    sede_id = COALESCE($2::int, ic.sede_id)
                WHERE ic.rfid IN (SELECT rfid FROM acond_caja_items WHERE caja_id=$1)
                  AND ic.estado='Acondicionamiento'
-                 AND ic.sub_estado ${estadoFiltro}`, [cajaId]);
+                 AND ic.sub_estado ${estadoFiltro}`, [cajaId, targetSede]);
           // Si viene order_id y la caja no tiene uno asignado todavía, asociarlo
           if(order_id!=null && cajaOrderId==null){
             const parsed = Number(order_id);
@@ -3747,7 +4344,7 @@ export const OperacionController = {
           await c.query('COMMIT');
           res.json({ ok:true, caja_id: cajaId, lote, moved: upd.rowCount, timer: { durationSec: dur }, forced: allowIncompleteFlag });
         } catch(e){ await c.query('ROLLBACK'); throw e; }
-      });
+      }, { allowCrossSedeTransfer: transferCheck.allowCrossTransfer });
     } catch(e:any){
       res.status(500).json({ ok:false, error: e.message||'Error moviendo a despacho' });
     }
@@ -3758,10 +4355,31 @@ export const OperacionController = {
     const sedeId = getRequestSedeId(req);
     const { caja_id } = req.body as any;
     const cajaId = Number(caja_id);
+    const allowSedeTransferFlag = allowSedeTransferFromValue(req.body?.allowSedeTransfer);
     if(!Number.isFinite(cajaId) || cajaId <= 0) return res.status(400).json({ ok:false, error:'caja_id inválido' });
     try {
+      const sedeRowsQ = await withTenant(tenant, (c)=> c.query(
+        `SELECT ic.rfid, ic.sede_id
+           FROM acond_caja_items aci
+           JOIN inventario_credocubes ic ON ic.rfid = aci.rfid
+          WHERE aci.caja_id=$1`,
+        [cajaId]
+      ));
+      if(!sedeRowsQ.rowCount) return res.status(404).json({ ok:false, error:'Caja sin items o no existe' });
+      const transferRows = (sedeRowsQ.rows as any[]).map((row) => ({ rfid: row.rfid, sede_id: row.sede_id }));
+      const transferCheck = await ensureCrossSedeAuthorization(
+        req,
+        res,
+        transferRows,
+        sedeId,
+        allowSedeTransferFlag,
+        { fallbackRfids: transferRows.map((r) => r.rfid) }
+      );
+      if (transferCheck.blocked) return;
+
       let moved = 0;
       await runWithSede(tenant, sedeId, async (c)=>{
+        const targetSede = transferCheck.targetSede;
         await c.query('BEGIN');
         try {
           const itemsQ = await c.query(
@@ -3776,14 +4394,15 @@ export const OperacionController = {
           if(!allEnsamblado){ await c.query('ROLLBACK'); return res.status(400).json({ ok:false, error:'Caja no está completamente Ensamblada' }); }
           const upd = await c.query(
             `UPDATE inventario_credocubes ic
-                SET sub_estado='Lista para Despacho'
+                SET sub_estado='Lista para Despacho',
+                    sede_id = COALESCE($2::int, ic.sede_id)
                WHERE ic.rfid IN (SELECT rfid FROM acond_caja_items WHERE caja_id=$1)
                  AND ic.estado='Acondicionamiento'
-                 AND ic.sub_estado='Ensamblado'`, [cajaId]);
+                 AND ic.sub_estado='Ensamblado'`, [cajaId, targetSede]);
           moved = upd.rowCount || 0;
           await c.query('COMMIT');
         } catch(e){ await c.query('ROLLBACK'); throw e; }
-      });
+      }, { allowCrossSedeTransfer: transferCheck.allowCrossTransfer });
       res.json({ ok:true, moved });
     } catch(e:any){ res.status(500).json({ ok:false, error: e.message||'Error moviendo caja' }); }
   },
@@ -3879,8 +4498,10 @@ export const OperacionController = {
   // Move all items of caja from Lista para Despacho -> Operación (sub_estado 'Transito')
   operacionCajaMove: async (req: Request, res: Response) => {
     const tenant = (req as any).user?.tenant;
+    const sedeId = getRequestSedeId(req);
     const { code } = req.body as any;
     let val = typeof code === 'string' ? code.trim() : '';
+    const allowSedeTransferFlag = allowSedeTransferFromValue(req.body?.allowSedeTransfer);
     if(!val) return res.status(400).json({ ok:false, error:'Código requerido' });
     try {
       let cajaId: number | null = null;
@@ -3893,19 +4514,40 @@ export const OperacionController = {
         if(r2.rowCount) cajaId = r2.rows[0].caja_id;
       }
       if(cajaId==null) return res.status(404).json({ ok:false, error:'Caja no encontrada' });
-      await withTenant(tenant, async (c)=>{
+      const sedeRowsQ = await withTenant(tenant, (c)=> c.query(
+        `SELECT ic.rfid, ic.sede_id
+           FROM acond_caja_items aci
+           JOIN inventario_credocubes ic ON ic.rfid = aci.rfid
+          WHERE aci.caja_id=$1`,
+        [cajaId]
+      ));
+      if(!sedeRowsQ.rowCount) return res.status(404).json({ ok:false, error:'Caja sin items' });
+      const transferRows = (sedeRowsQ.rows as any[]).map((row) => ({ rfid: row.rfid, sede_id: row.sede_id }));
+      const transferCheck = await ensureCrossSedeAuthorization(
+        req,
+        res,
+        transferRows,
+        sedeId,
+        allowSedeTransferFlag,
+        { fallbackRfids: transferRows.map((r) => r.rfid) }
+      );
+      if (transferCheck.blocked) return;
+
+      await runWithSede(tenant, sedeId, async (c)=>{
+        const targetSede = transferCheck.targetSede;
         await c.query('BEGIN');
         try {
           // Only move those currently listos para despacho
             await c.query(
             `UPDATE inventario_credocubes ic
-          SET estado='Operación', sub_estado='Transito', zona_id = NULL, seccion_id = NULL
+          SET estado='Operación', sub_estado='Transito', zona_id = NULL, seccion_id = NULL,
+              sede_id = COALESCE($2::int, ic.sede_id)
                  WHERE ic.rfid IN (SELECT rfid FROM acond_caja_items WHERE caja_id=$1)
                    AND ic.estado='Acondicionamiento'
-                   AND ic.sub_estado IN ('Lista para Despacho','Listo')`, [cajaId]);
+                   AND ic.sub_estado IN ('Lista para Despacho','Listo')`, [cajaId, targetSede]);
           await c.query('COMMIT');
         } catch(e){ await c.query('ROLLBACK'); throw e; }
-      });
+      }, { allowCrossSedeTransfer: transferCheck.allowCrossTransfer });
       res.json({ ok:true, caja_id: cajaId });
     } catch(e:any){ res.status(500).json({ ok:false, error: e.message||'Error moviendo a Operación' }); }
   },
@@ -4196,22 +4838,46 @@ export const OperacionController = {
     const sedeId = getRequestSedeId(req);
     const { caja_id } = req.body as any;
     const id = Number(caja_id);
+    const allowSedeTransferFlag = allowSedeTransferFromValue(req.body?.allowSedeTransfer);
     if(!Number.isFinite(id) || id<=0) return res.status(400).json({ ok:false, error:'caja_id inválido' });
     try {
+      const sedeRowsQ = await withTenant(tenant, (c)=> c.query(
+        `SELECT ic.rfid, ic.sede_id
+           FROM acond_caja_items aci
+           JOIN inventario_credocubes ic ON ic.rfid = aci.rfid
+          WHERE aci.caja_id=$1`,
+        [id]
+      ));
+      if(!sedeRowsQ.rowCount) return res.status(404).json({ ok:false, error:'Caja sin items' });
+      const transferRows = (sedeRowsQ.rows as any[]).map((row) => ({ rfid: row.rfid, sede_id: row.sede_id }));
+      const transferCheck = await ensureCrossSedeAuthorization(
+        req,
+        res,
+        transferRows,
+        sedeId,
+        allowSedeTransferFlag,
+        { fallbackRfids: transferRows.map((r) => r.rfid) }
+      );
+      if (transferCheck.blocked) return;
+
       await runWithSede(tenant, sedeId, async (c)=>{
+        const targetSede = transferCheck.targetSede;
         await c.query('BEGIN');
         try {
-          const moveParams: any[] = [id];
           const upd = await c.query(
             `UPDATE inventario_credocubes ic
-                SET estado='Operación', sub_estado='Transito', zona_id = NULL, seccion_id = NULL
+                SET estado='Operación',
+                    sub_estado='Transito',
+                    zona_id = NULL,
+                    seccion_id = NULL,
+                    sede_id = COALESCE($2::int, ic.sede_id)
                WHERE ic.rfid IN (SELECT rfid FROM acond_caja_items WHERE caja_id=$1)
                  AND ic.estado='Acondicionamiento'
-                 AND ic.sub_estado IN ('Lista para Despacho','Listo')`, moveParams);
+                 AND ic.sub_estado IN ('Lista para Despacho','Listo')`, [id, targetSede]);
           await c.query('COMMIT');
           res.json({ ok:true, moved: upd.rowCount });
         } catch(e){ await c.query('ROLLBACK'); throw e; }
-      });
+      }, { allowCrossSedeTransfer: transferCheck.allowCrossTransfer });
     } catch(e:any){ res.status(500).json({ ok:false, error: e.message||'Error moviendo' }); }
   },
   // Nuevo flujo simplificado: escanear un RFID (o lote) de una caja que está en Lista para Despacho y devolver toda la caja con su cronómetro original (acond_caja_timers)

@@ -3,8 +3,9 @@ import { config } from '../config';
 import { getCurrentSedeContext } from '../utils/sedeContext';
 import { getCurrentUserContext } from '../utils/userContext';
 
-type TenantOptions = {
+export type TenantOptions = {
   sedeId?: number;
+  allowCrossSedeTransfer?: boolean;
 };
 
 // Single global pool, we can set per-tenant search_path per connection
@@ -88,8 +89,10 @@ export async function withTenant<T>(tenantSchema: string, fn: (client: PoolClien
   const ctxSedeId = getCurrentSedeContext();
   const sedeId = typeof explicitSedeId === 'number' ? explicitSedeId : ctxSedeId;
   const userId = getCurrentUserContext();
+  const allowCross = options?.allowCrossSedeTransfer === true;
   let resetSede = false;
   let resetUser = false;
+  let resetCross = false;
     if (typeof sedeId === 'number') {
       await ensureSedeSyncArtifacts(client, tenantSchema);
       await client.query('SELECT set_config($1, $2, false)', ['app.current_sede_id', String(sedeId)]);
@@ -104,6 +107,13 @@ export async function withTenant<T>(tenantSchema: string, fn: (client: PoolClien
       resetUser = true;
     }
 
+    if (allowCross) {
+      await client.query('SELECT set_config($1, $2, false)', ['app.allow_sede_transfer', '1']);
+      await client.query('SELECT set_config($1, $2, false)', ['app.allow_cross_sede_transfer', '1']);
+      await client.query('SELECT set_config($1, $2, false)', ['app.allow_cross_sede_transfer_bool', 'true']);
+      resetCross = true;
+    }
+
     try {
       return await fn(client);
     } finally {
@@ -112,6 +122,11 @@ export async function withTenant<T>(tenantSchema: string, fn: (client: PoolClien
       }
       if (resetUser) {
         await client.query('RESET app.current_user_id').catch(() => {});
+      }
+      if (resetCross) {
+        await client.query('RESET app.allow_sede_transfer').catch(() => {});
+        await client.query('RESET app.allow_cross_sede_transfer').catch(() => {});
+        await client.query('RESET app.allow_cross_sede_transfer_bool').catch(() => {});
       }
     }
   } finally {

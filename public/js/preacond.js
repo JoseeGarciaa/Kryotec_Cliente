@@ -677,20 +677,42 @@
     const seccionId = selectSeccion ? String(selectSeccion.value || '').trim() : '';
     selectedZonaId = zonaId;
     selectedSeccionId = seccionId;
-    let j;
-    if(scanMode==='lote' && target==='atemperamiento'){
-      const r = await fetch('/operacion/preacond/lote/move', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ lote: loteDetected, keepLote, zona_id: zonaId, seccion_id: seccionId }) });
-      j = await r.json().catch(()=>({ok:false}));
-      if(j.ok){ j.moved = j.moved || (loteItemsCache.map(it=>it.rfid)); }
-    } else {
-      const r = await fetch('/operacion/preacond/scan', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ target, rfids: valid, keepLote, zona_id: zonaId, seccion_id: seccionId }) });
-      j = await r.json().catch(()=>({ok:false}));
+
+    const sendRequest = async (allowTransfer = false) => {
+      const extra = allowTransfer ? { allowSedeTransfer: true } : {};
+      try {
+        if(scanMode==='lote' && target==='atemperamiento'){
+          const payload = { lote: loteDetected, keepLote, zona_id: zonaId, seccion_id: seccionId, ...extra };
+          const r = await fetch('/operacion/preacond/lote/move', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload) });
+          const data = await r.json().catch(()=>({ ok:false }));
+          if(r.ok && data.ok){ data.moved = data.moved || (loteItemsCache.map(it=>it.rfid)); }
+          return { httpOk: r.ok, data };
+        }
+        const payload = { target, rfids: valid, keepLote, zona_id: zonaId, seccion_id: seccionId, ...extra };
+        const r = await fetch('/operacion/preacond/scan', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload) });
+        const data = await r.json().catch(()=>({ ok:false }));
+        return { httpOk: r.ok, data };
+      } catch (err) {
+        return { httpOk: false, data: { ok:false, error: err?.message || 'Error de red' } };
+      }
+    };
+
+    let attempt = await sendRequest(false);
+    if(!attempt.httpOk && attempt.data?.code === 'SEDE_MISMATCH'){
+      const prompt = attempt.data.confirm || attempt.data.error || 'Las piezas pertenecen a otra sede. ¿Deseas trasladarlas a esta sede?';
+      if(!window.confirm(prompt)){
+        msg.textContent = 'Operación cancelada.';
+        return;
+      }
+      attempt = await sendRequest(true);
     }
-    if(!j.ok){ msg.textContent = j.error || 'Error al confirmar'; return; }
+
+    const result = attempt.data || { ok:false };
+    if(!result.ok){ msg.textContent = result.error || 'Error al confirmar'; return; }
     dlg?.close?.();
     // Si es atemperamiento y usuario desea iniciar cronómetro aquí mismo
     const wantTimer = target==='atemperamiento' && scanStartTimer && scanStartTimer.checked;
-    const movedRfids = Array.isArray(j.moved)? j.moved.slice():[];
+    const movedRfids = Array.isArray(result.moved)? result.moved.slice():[];
     if(wantTimer && movedRfids.length){
       await loadData(); // refrescar antes de calcular sin lote
       // Duración

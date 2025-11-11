@@ -74,6 +74,47 @@
     return out;
   }
 
+  function buildDefaultSedePrompt(data){
+    if(data && typeof data.confirm === 'string' && data.confirm.trim()){ return data.confirm; }
+    if(data && typeof data.error === 'string' && data.error.trim()){ return data.error; }
+    return 'Las piezas seleccionadas pertenecen a otra sede. ¿Deseas trasladarlas a esta sede?';
+  }
+
+  async function postJSONWithSedeTransfer(url, body, options){
+    const opts = options || {};
+    const headers = Object.assign({ 'Content-Type':'application/json' }, opts.headers || {});
+    const confirmFn = typeof opts.confirmFn === 'function' ? opts.confirmFn : (message) => window.confirm(message);
+    const promptBuilder = typeof opts.promptMessage === 'function' ? opts.promptMessage : buildDefaultSedePrompt;
+
+    const send = async (allowTransfer) => {
+      const payload = allowTransfer ? Object.assign({}, body, { allowSedeTransfer: true }) : Object.assign({}, body);
+      try {
+        const res = await fetch(url, { method:'POST', headers, body: JSON.stringify(payload) });
+        let data = null;
+        try { data = await res.json(); } catch { data = null; }
+        return { httpOk: res.ok, status: res.status, data };
+      } catch(err){
+        return {
+          httpOk: false,
+          status: 0,
+          data: { ok:false, error: err?.message || 'Error de red' },
+          networkError: err
+        };
+      }
+    };
+
+    let attempt = await send(false);
+    if(!attempt.httpOk && attempt.data && attempt.data.code === 'SEDE_MISMATCH'){
+      const prompt = promptBuilder(attempt.data);
+      const proceed = confirmFn ? await confirmFn(prompt, attempt.data) : false;
+      if(!proceed){
+        return Object.assign({ cancelled: true }, attempt);
+      }
+      attempt = await send(true);
+    }
+    return Object.assign({ cancelled: false }, attempt);
+  }
+
   const atemperamientoCache = { map: new Map(), fetchedAt: 0, pending: null };
   const ATEMP_CACHE_TTL_MS = 30000;
 
@@ -1436,9 +1477,12 @@
       ensamSeccionId = seccionId;
       crearBtn.disabled = true; if(msg) msg.textContent='Creando caja...';
       try {
-        const res = await fetch('/operacion/acond/ensamblaje/create',{ method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ rfids, order_id: orderId, zona_id: zonaId, seccion_id: seccionId })});
-        const json = await res.json();
-        if(!res.ok || !json.ok) throw new Error(json.error||'Error creando caja');
+        const attempt = await postJSONWithSedeTransfer('/operacion/acond/ensamblaje/create', { rfids, order_id: orderId, zona_id: zonaId, seccion_id: seccionId }, {
+          promptMessage: (data) => data?.confirm || data?.error || 'Las piezas seleccionadas pertenecen a otra sede. ¿Deseas trasladarlas a tu sede actual?'
+        });
+        if(attempt.cancelled){ if(msg) msg.textContent = 'Operación cancelada.'; return; }
+        const json = attempt.data || {};
+        if(!attempt.httpOk || !json.ok) throw new Error(json.error||'Error creando caja');
         // Inicia cronómetro inmediatamente
         try { await fetch('/operacion/acond/caja/timer/start',{ method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ caja_id: json.caja_id, durationSec: durMin*60 })}); } catch(e){ console.warn('No se pudo iniciar timer', e); }
         if(msg) msg.textContent = `Caja ${json.lote} creada`;
@@ -1778,20 +1822,21 @@
             continue;
           }
         }
-        try{
-          const res = await fetch('/operacion/acond/despacho/move',{ method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ rfid, durationSec, allowIncomplete: needsForce })});
-          let payload = null;
-          try { payload = await res.json(); } catch { payload = null; }
-          if(!res.ok || !payload || payload.ok === false){
-            const message = payload && (payload.error || payload.message) ? (payload.error || payload.message) : `Error (${res.status})`;
-            errors.push(`Caja ${entry.lote}: ${message}`);
-            continue;
-          }
-          processedIds.push(entry.cajaId);
-          if(Array.isArray(entry.rfids)) entry.rfids.forEach(code => codesToRelease.add(code));
-        } catch(err){
-          errors.push(`Caja ${entry.lote}: ${err?.message || 'Error'}`);
+        const attempt = await postJSONWithSedeTransfer('/operacion/acond/despacho/move', { rfid, durationSec, allowIncomplete: needsForce }, {
+          promptMessage: (data) => data?.confirm || data?.error || `La caja ${entry.lote} pertenece a otra sede. ¿Deseas trasladarla a tu sede actual?`
+        });
+        if(attempt.cancelled){
+          errors.push(`Caja ${entry.lote}: operación cancelada por el usuario.`);
+          continue;
         }
+        const payload = attempt.data || {};
+        if(!attempt.httpOk || payload.ok === false){
+          const message = payload.error || payload.message || `Error (${attempt.status || 0})`;
+          errors.push(`Caja ${entry.lote}: ${message}`);
+          continue;
+        }
+        processedIds.push(entry.cajaId);
+        if(Array.isArray(entry.rfids)) entry.rfids.forEach(code => codesToRelease.add(code));
       }
       if(processedIds.length){
         queue = queue.filter(entry => !processedIds.includes(entry.cajaId));

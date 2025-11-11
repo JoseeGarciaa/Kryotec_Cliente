@@ -17,6 +17,58 @@
     lastLookupCode: null
   };
 
+  function buildDefaultSedePrompt(payload){
+    if(payload && typeof payload.confirm === 'string' && payload.confirm.trim()) return payload.confirm;
+    if(payload && typeof payload.error === 'string' && payload.error.trim()) return payload.error;
+    return 'Las piezas seleccionadas pertenecen a otra sede. ¿Deseas trasladarlas a esta sede?';
+  }
+
+  const postJSONWithSedeTransfer = (()=>{
+    if(typeof window !== 'undefined' && typeof window.postJSONWithSedeTransfer === 'function'){
+      return window.postJSONWithSedeTransfer;
+    }
+
+    const helper = async function postJSONWithSedeTransfer(url, body, options){
+      const opts = options || {};
+      const headers = Object.assign({ 'Content-Type':'application/json' }, opts.headers || {});
+      const confirmFn = typeof opts.confirmFn === 'function' ? opts.confirmFn : (message) => (typeof window !== 'undefined' && typeof window.confirm === 'function' ? window.confirm(message) : true);
+      const promptBuilder = typeof opts.promptMessage === 'function' ? opts.promptMessage : buildDefaultSedePrompt;
+
+      const send = async (allowTransfer) => {
+        const payload = allowTransfer ? Object.assign({}, body, { allowSedeTransfer: true }) : Object.assign({}, body);
+        try {
+          const res = await fetch(url, { method:'POST', headers, body: JSON.stringify(payload) });
+          let data = null;
+          try { data = await res.json(); } catch { data = null; }
+          return { httpOk: res.ok, status: res.status, data };
+        } catch(err){
+          return {
+            httpOk: false,
+            status: 0,
+            data: { ok:false, error: err?.message || 'Error de red' },
+            networkError: err
+          };
+        }
+      };
+
+      let attempt = await send(false);
+      if(!attempt.httpOk && attempt.data && attempt.data.code === 'SEDE_MISMATCH'){
+        const prompt = promptBuilder(attempt.data);
+        const proceed = confirmFn ? await confirmFn(prompt, attempt.data) : false;
+        if(!proceed){
+          return Object.assign({ cancelled: true }, attempt);
+        }
+        attempt = await send(true);
+      }
+      return Object.assign({ cancelled: false }, attempt);
+    };
+
+    if(typeof window !== 'undefined'){
+      window.postJSONWithSedeTransfer = helper;
+    }
+    return helper;
+  })();
+
   function msElapsed(timer){ if(!timer||!timer.startsAt) return 0; return (Date.now()+state.serverOffset) - new Date(timer.startsAt).getTime(); }
   function timerDisplay(ms){ const s=Math.max(0,Math.floor(ms/1000)); const h=Math.floor(s/3600); const m=Math.floor((s%3600)/60); const sec=s%60; return `${h}:${String(m).padStart(2,'0')}:${String(sec).padStart(2,'0')}`; }
   function msRemaining(timer){ if(!timer||!timer.startsAt||!timer.durationSec) return null; const end = new Date(timer.startsAt).getTime() + timer.durationSec*1000; return end - (Date.now()+state.serverOffset); }
@@ -598,9 +650,24 @@
         scanMsg && (scanMsg.textContent='Faltan checks en las TICs presentes');
         return;
       }
-      const r = await fetch('/operacion/inspeccion/complete',{ method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ caja_id: state.cajaSel.id, confirm_rfids: confirm })});
-      const j = await r.json();
-      if(!j.ok){ completeBtn.disabled=false; scanMsg && (scanMsg.textContent=j.error||'Error'); return; }
+      const attempt = await postJSONWithSedeTransfer('/operacion/inspeccion/complete', { caja_id: state.cajaSel.id, confirm_rfids: confirm }, {
+        promptMessage: (payload) => {
+          const label = state.cajaSel?.lote || state.cajaSel?.codigoCaja || `#${state.cajaSel?.id}`;
+          return payload?.confirm || payload?.error || `La caja ${label} pertenece a otra sede. ¿Deseas trasladarla a tu sede actual?`;
+        }
+      });
+      if(attempt.cancelled){
+        completeBtn.disabled=false;
+        scanMsg && (scanMsg.textContent='Operación cancelada.');
+        return;
+      }
+      const payload = attempt.data || {};
+      if(!attempt.httpOk || payload.ok === false){
+        const message = payload.error || payload.message || `Error (${attempt.status || 0})`;
+        scanMsg && (scanMsg.textContent = message);
+        completeBtn.disabled=false;
+        return;
+      }
       // Reset panel and reload list
       if(state.lastLookupCode){
         const entry = updateBulkEntry(state.lastLookupCode, { status:'done', message:'Inspección completada' });
@@ -690,9 +757,19 @@
     }catch(_e){ addMsg && (addMsg.textContent='Error validando'); return; }
     addMsg && (addMsg.textContent='Agregando...');
     try {
-      const r = await fetch('/operacion/inspeccion/pull',{ method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ rfid: code, durationSec: sec })});
-  const j = await r.json();
-  if(!j.ok){ addMsg && (addMsg.textContent=j.error||'Error'); return; }
+      const attempt = await postJSONWithSedeTransfer('/operacion/inspeccion/pull', { rfid: code, durationSec: sec }, {
+        promptMessage: (payload) => payload?.confirm || payload?.error || `La caja ${code} pertenece a otra sede. ¿Deseas trasladarla a tu sede actual?`
+      });
+      if(attempt.cancelled){
+        addMsg && (addMsg.textContent='Operación cancelada.');
+        return;
+      }
+      const payload = attempt.data || {};
+      if(!attempt.httpOk || payload.ok === false){
+        const message = payload.error || payload.message || `Error (${attempt.status || 0})`;
+        addMsg && (addMsg.textContent=message);
+        return;
+      }
   // No mostrar el panel derecho automáticamente: exigir identificación por RFID.
   // Solo refrescamos la lista de cajas de la izquierda.
   state.cajaSel = null; state.tics = []; state.ticChecks.clear(); state.activeTic = null; state.inInspeccion = false;

@@ -40,6 +40,58 @@
   let serverOffset = 0; // serverNow - Date.now()
   let tick = null; let poll = null;
 
+  function buildDefaultSedePrompt(payload){
+    if(payload && typeof payload.confirm === 'string' && payload.confirm.trim()) return payload.confirm;
+    if(payload && typeof payload.error === 'string' && payload.error.trim()) return payload.error;
+    return 'Las piezas seleccionadas pertenecen a otra sede. ¿Deseas trasladarlas a esta sede?';
+  }
+
+  const postJSONWithSedeTransfer = (()=>{
+    if(typeof window !== 'undefined' && typeof window.postJSONWithSedeTransfer === 'function'){
+      return window.postJSONWithSedeTransfer;
+    }
+
+    const helper = async function postJSONWithSedeTransfer(url, body, options){
+      const opts = options || {};
+      const headers = Object.assign({ 'Content-Type':'application/json' }, opts.headers || {});
+      const confirmFn = typeof opts.confirmFn === 'function' ? opts.confirmFn : (message) => (typeof window !== 'undefined' && typeof window.confirm === 'function' ? window.confirm(message) : true);
+      const promptBuilder = typeof opts.promptMessage === 'function' ? opts.promptMessage : buildDefaultSedePrompt;
+
+      const send = async (allowTransfer) => {
+        const payload = allowTransfer ? Object.assign({}, body, { allowSedeTransfer: true }) : Object.assign({}, body);
+        try {
+          const res = await fetch(url, { method:'POST', headers, body: JSON.stringify(payload) });
+          let data = null;
+          try { data = await res.json(); } catch { data = null; }
+          return { httpOk: res.ok, status: res.status, data };
+        } catch(err){
+          return {
+            httpOk: false,
+            status: 0,
+            data: { ok:false, error: err?.message || 'Error de red' },
+            networkError: err
+          };
+        }
+      };
+
+      let attempt = await send(false);
+      if(!attempt.httpOk && attempt.data && attempt.data.code === 'SEDE_MISMATCH'){
+        const prompt = promptBuilder(attempt.data);
+        const proceed = confirmFn ? await confirmFn(prompt, attempt.data) : false;
+        if(!proceed){
+          return Object.assign({ cancelled: true }, attempt);
+        }
+        attempt = await send(true);
+      }
+      return Object.assign({ cancelled: false }, attempt);
+    };
+
+    if(typeof window !== 'undefined'){
+      window.postJSONWithSedeTransfer = helper;
+    }
+    return helper;
+  })();
+
   function msRemaining(timer){ if(!timer||!timer.endsAt) return 0; return new Date(timer.endsAt).getTime() - (Date.now()+serverOffset); }
   function timerDisplay(rem){ if(rem<=0) return 'Finalizado'; const s=Math.max(0,Math.floor(rem/1000)); const h=Math.floor(s/3600); const m=Math.floor((s%3600)/60); const sec=s%60; return `${h}:${String(m).padStart(2,'0')}:${String(sec).padStart(2,'0')}`; }
   function progressPct(timer){ if(!timer||!timer.startsAt||!timer.endsAt) return 0; const start=new Date(timer.startsAt).getTime(); const end=new Date(timer.endsAt).getTime(); const now=Date.now()+serverOffset; if(now<=start) return 0; if(now>=end) return 100; return ((now-start)/(end-start))*100; }
@@ -158,6 +210,15 @@
   const lookupQueue = [];
   let lookupBusy = false;
   let scanBuffer = '';
+
+  function cajaLabelById(rawId){
+    const key = String(rawId);
+    const scanned = scannedCajas.get(key);
+    if(scanned && scanned.codigoCaja) return scanned.codigoCaja;
+    const listed = (data.cajas||[]).find(c=> String(c.id) === key);
+    if(listed && (listed.codigoCaja || listed.lote)) return listed.codigoCaja || listed.lote;
+    return key;
+  }
 
   function inferTipo(nombre){ const n=(nombre||'').toLowerCase(); if(n.includes('vip')) return 'vip'; if(n.includes('tic')) return 'tic'; if(n.includes('cube')||n.includes('cubo')) return 'cube'; return 'otro'; }
   function miniCardHTML(c){
@@ -419,8 +480,19 @@
       try {
         if(scanMsg) scanMsg.textContent='Aplicando...';
         if(act==='reuse'){
-          const r = await fetch('/operacion/devolucion/reuse',{ method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ caja_id: id })});
-          const j = await r.json(); if(!j.ok) throw new Error(j.error||'Error');
+          const cajaLabel = cajaLabelById(id);
+          const attempt = await postJSONWithSedeTransfer('/operacion/devolucion/reuse', { caja_id: id }, {
+            promptMessage: (payload) => payload?.confirm || payload?.error || `La caja ${cajaLabel} pertenece a otra sede. ¿Deseas trasladarla a tu sede actual?`
+          });
+          if(attempt.cancelled){
+            if(scanMsg) scanMsg.textContent = 'Operación cancelada.';
+            return;
+          }
+          const payload = attempt.data || {};
+          if(!attempt.httpOk || payload.ok === false){
+            const message = payload.error || payload.message || `Error (${attempt.status || 0})`;
+            throw new Error(message);
+          }
           if(scanMsg) scanMsg.textContent='Caja enviada a Acondicionamiento · Lista para Despacho';
           await load();
           removeScanned(id);
@@ -445,16 +517,37 @@
       if(scanMsg) scanMsg.textContent = 'Debes asignar horas o minutos antes de enviar';
       return;
     }
+    const currentId = piCajaId;
+    let shouldReset = true;
     try {
-      const r = await fetch('/operacion/devolucion/to-pend-insp',{ method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ caja_id: piCajaId, durationSec: sec })});
-      const j = await r.json(); if(!j.ok) throw new Error(j.error||'Error');
+      const cajaLabel = cajaLabelById(currentId);
+      const attempt = await postJSONWithSedeTransfer('/operacion/devolucion/to-pend-insp', { caja_id: currentId, durationSec: sec }, {
+        promptMessage: (payload) => payload?.confirm || payload?.error || `La caja ${cajaLabel} pertenece a otra sede. ¿Deseas trasladarla a tu sede actual?`
+      });
+      if(attempt.cancelled){
+        shouldReset = false;
+        if(scanMsg) scanMsg.textContent = 'Operación cancelada.';
+        return;
+      }
+      const payload = attempt.data || {};
+      if(!attempt.httpOk || payload.ok === false){
+        const message = payload.error || payload.message || `Error (${attempt.status || 0})`;
+        throw new Error(message);
+      }
       if(scanMsg) scanMsg.textContent='Caja enviada a Bodega · Pendiente a Inspección';
       // refrescar inmediatamente la lista para que desaparezca y limpiar panel derecho
       await load();
-      removeScanned(piCajaId);
+      removeScanned(currentId);
       clearScanUI('');
     } catch(e){ if(scanMsg) scanMsg.textContent = e.message || 'Error'; }
-    finally { piCajaId=null; piHours && (piHours.value=''); piMins && (piMins.value=''); try{ piDlg.close(); }catch{ piDlg.classList.add('hidden'); } }
+    finally {
+      if(shouldReset){
+        piCajaId=null;
+        piHours && (piHours.value='');
+        piMins && (piMins.value='');
+        try{ piDlg.close(); }catch{ piDlg.classList.add('hidden'); }
+      }
+    }
   });
   piCancel?.addEventListener('click', ()=>{ piCajaId=null; piHours && (piHours.value=''); piMins && (piMins.value=''); try{ piDlg.close(); }catch{ piDlg.classList.add('hidden'); } });
 
