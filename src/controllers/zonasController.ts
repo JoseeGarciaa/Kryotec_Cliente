@@ -148,11 +148,11 @@ export const ZonasController = {
 
       const removal = await withTenant(tenant, (client) => ZonasModel.removeZona(client, zonaId));
       if (!removal.removed) {
-        let detail = 'La zona está en uso.';
+        let detail = 'La zona está en uso. Revisa las secciones o elementos vinculados antes de eliminarla.';
         if (removal.secciones > 0) {
-          detail = `La zona tiene ${removal.secciones} sección${removal.secciones === 1 ? '' : 'es'} asociada${removal.secciones === 1 ? '' : 's'}.`;
+          detail = `La zona tiene ${removal.secciones} sección${removal.secciones === 1 ? '' : 'es'} asociada${removal.secciones === 1 ? '' : 's'}. Primero elimina o reasigna esas secciones en Administración > Zonas.`;
         } else if (removal.inventario > 0) {
-          detail = `La zona tiene ${removal.inventario} elemento${removal.inventario === 1 ? '' : 's'} en inventario.`;
+          detail = `La zona tiene ${removal.inventario} elemento${removal.inventario === 1 ? '' : 's'} en inventario. Gestiona esos registros desde Inventario antes de eliminar la zona.`;
         }
         return redirectWithMessage(res, '/administracion/zonas', { error: `No se pudo eliminar la zona. ${detail}` }, { sede_id: zona.sede_id });
       }
@@ -240,8 +240,8 @@ export const ZonasController = {
       const removal = await withTenant(tenant, (client) => ZonasModel.removeSeccion(client, seccionId));
       if (!removal.removed) {
         const detail = removal.inUse > 0
-          ? `La sección tiene ${removal.inUse} elemento${removal.inUse === 1 ? '' : 's'} asignado${removal.inUse === 1 ? '' : 's'}.`
-          : 'La sección está en uso.';
+          ? `La sección tiene ${removal.inUse} elemento${removal.inUse === 1 ? '' : 's'} asignado${removal.inUse === 1 ? '' : 's'}. Gestiona esos registros en Inventario antes de eliminar la sección.`
+          : 'La sección está en uso. Gestiona los elementos relacionados en Inventario antes de eliminarla.';
         return redirectWithMessage(res, '/administracion/zonas', { error: `No se pudo eliminar la sección. ${detail}` }, { sede_id: seccion.sede_id });
       }
       redirectWithMessage(res, '/administracion/zonas', { ok: 'Sección eliminada' }, { sede_id: seccion.sede_id });
