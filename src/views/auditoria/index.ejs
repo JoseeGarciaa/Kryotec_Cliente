@@ -1,11 +1,11 @@
-<div class="max-w-3xl mx-auto">
+<div class="w-full mx-auto max-w-none">
   <h1 class="text-xl font-semibold mb-4">Auditoría</h1>
 
   <form method="get" class="card bg-base-200/50 border border-base-300/40 mb-4">
     <div class="card-body grid grid-cols-1 md:grid-cols-3 gap-3">
       <div class="form-control md:col-span-2">
         <div class="label"><span class="label-text">Escanee o escriba el RFID</span></div>
-  <input autofocus name="q" value="<%= (typeof item !== 'undefined' && item && item.rfid) ? item.rfid : '' %>" class="input input-bordered input-md font-mono" placeholder="XXXXXXXXXXXXXXXXXXXXXXXX" maxlength="24" autocomplete="off" data-rfid-input />
+  <input autofocus name="q" value="<%= item ? item.rfid : '' %>" class="input input-bordered input-md font-mono" placeholder="XXXXXXXXXXXXXXXXXXXXXXXX" maxlength="24" autocomplete="off" data-rfid-input />
       </div>
       <div class="flex items-end">
         <button type="submit" class="btn btn-primary">Buscar</button>
@@ -18,6 +18,7 @@
   <% } %>
 
   <% if (item) { %>
+  <div data-selected-panel>
     <div class="card bg-base-200/50 border border-base-300/40 mb-4">
       <div class="card-body">
         <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
@@ -41,11 +42,11 @@
       </div>
     </div>
 
-    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-      <div class="card bg-base-200/50 border border-base-300/40">
+    <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+      <div class="card bg-base-200/50 border border-base-300/40 h-full">
         <div class="card-body">
           <h3 class="font-semibold mb-2">Auditar</h3>
-          <form method="post" action="/auditoria/auditar-rfid" class="space-y-3">
+          <form method="post" action="/auditoria/auditar-rfid" class="space-y-3" data-single-submit>
             <input type="hidden" name="rfid" value="<%= item.rfid %>" />
             <div class="form-control">
               <label class="label"><span class="label-text">Estado auditoría</span></label>
@@ -65,10 +66,10 @@
         </div>
       </div>
 
-      <div class="card bg-base-200/50 border border-base-300/40">
+      <div class="card bg-base-200/50 border border-base-300/40 h-full">
         <div class="card-body">
           <h3 class="font-semibold mb-2">Inhabilitar</h3>
-          <form method="post" action="/auditoria/inhabilitar" class="space-y-3">
+          <form method="post" action="/auditoria/inhabilitar" class="space-y-3" data-single-submit>
             <input type="hidden" name="rfid" value="<%= item.rfid %>" />
             <div class="form-control">
               <label class="label"><span class="label-text">Motivo</span></label>
@@ -89,6 +90,7 @@
         </div>
       </div>
     </div>
+  </div>
   <% } %>
 
   <div class="card bg-base-200/50 border border-base-300/40 overflow-x-auto mt-6">
@@ -157,7 +159,7 @@
   <dialog id="aud-edit-modal" class="modal">
     <div class="modal-box">
       <h3 class="font-semibold mb-3">Editar auditoría</h3>
-      <form id="aud-edit-form" method="post" action="/auditoria/0/update" class="space-y-3">
+  <form id="aud-edit-form" method="post" action="/auditoria/0/update" class="space-y-3" data-single-submit>
         <div class="form-control">
           <label class="label"><span class="label-text">Estado auditoría</span></label>
           <select name="auditada" id="aud-edit-auditada" class="select select-bordered select-sm">

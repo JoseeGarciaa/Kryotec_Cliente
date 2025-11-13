@@ -48,7 +48,8 @@
             <li><a class="<%= currentPath.startsWith('/dashboard') ? 'active' : '' %>" href="/dashboard">Dashboard</a></li>
             <li><a class="<%= currentPath.startsWith('/registro') ? 'active' : '' %>" href="/registro">Registro</a></li>
             <li><a class="<%= currentPath.startsWith('/inventario') ? 'active' : '' %>" href="/inventario">Inventario</a></li>
-            <li><a class="<%= currentPath.startsWith('/ordenes') ? 'active' : '' %>" href="/ordenes">Órdenes</a></li>
+            <li><a class="<%= currentPath.startsWith('/ordenes') && !currentPath.startsWith('/ordenes/calculadora') ? 'active' : '' %>" href="/ordenes">Órdenes</a></li>
+            <li><a class="<%= currentPath.startsWith('/ordenes/calculadora') ? 'active' : '' %>" href="/ordenes/calculadora">Calculadora de órdenes</a></li>
           <% } %>
           <% if (roleLower === 'bodeguero') { %>
             <li><a class="<%= currentPath.startsWith('/registro') ? 'active' : '' %>" href="/registro">Registro</a></li>

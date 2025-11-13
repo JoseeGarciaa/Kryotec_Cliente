@@ -133,7 +133,7 @@ export const AuditoriaController = {
     } catch (e) {
       console.error('[auditoria][auditByRfid] error:', e);
     }
-    return res.redirect('/auditoria?q='+encodeURIComponent(rfid));
+  return res.redirect('/auditoria');
   }
   ,
   async create(req: Request, res: Response) {

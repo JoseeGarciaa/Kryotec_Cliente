@@ -65,17 +65,46 @@
     return helper;
   })();
 
+  const sedesData = Array.isArray(window.TRASLADO_SEDES) ? window.TRASLADO_SEDES : [];
+  const sedeMap = new Map(sedesData.map((item) => {
+    const id = String(item?.sede_id ?? '');
+    const nombre = (item?.nombre && item.nombre.trim().length)
+      ? item.nombre.trim()
+      : (id ? `Sede ${id}` : 'Sede');
+    return [id, nombre];
+  }));
+
   const scanInput = document.getElementById('tras-scan');
   const listEl = document.getElementById('tras-list');
   const msgEl = document.getElementById('tras-msg');
   const processBtn = document.getElementById('tras-process');
   const clearBtn = document.getElementById('tras-clear');
   const clearDoneBtn = document.getElementById('tras-clear-done');
+  const transferBtn = document.getElementById('tras-transfer');
+  const targetSelect = document.getElementById('tras-target');
   const countEl = document.getElementById('tras-count');
   const hintEl = document.getElementById('tras-hint');
 
   const queue = [];
   let buffer = '';
+
+  function getSedeName(id) {
+    if (!id) return '';
+    const key = String(id);
+    if (sedeMap.has(key)) return sedeMap.get(key);
+    const option = targetSelect?.querySelector(`option[value="${key}"]`);
+    if (option && option.textContent) return option.textContent.trim();
+    return `Sede ${key}`;
+  }
+
+  function getSelectedTarget() {
+    if (!targetSelect) return null;
+    const value = targetSelect.value;
+    if (!value) return null;
+    const numericId = Number(value);
+    if (!Number.isFinite(numericId) || numericId <= 0) return null;
+    return { id: numericId, label: getSedeName(value) };
+  }
 
   function updateCount(){ if(countEl){ countEl.textContent = queue.length ? `(${queue.length})` : ''; } }
 
@@ -105,6 +134,86 @@
       </div>`;
     }).join('');
     updateCount();
+  }
+
+  function handleTrasladoAttempt(attempt, candidates, context){
+    const ctx = context || {};
+    if(attempt.cancelled){
+      candidates.forEach(entry => {
+        entry.status = 'pending';
+        entry.message = ctx.cancelMessage || 'Operación cancelada.';
+      });
+      if(msgEl) msgEl.textContent = ctx.cancelMessage || 'Operación cancelada por el usuario.';
+      renderQueue();
+      return;
+    }
+    const payload = attempt.data || {};
+    if(!attempt.httpOk || payload.ok === false){
+      const message = payload.error || payload.message || ctx.errorMessage || `Error (${attempt.status || 0})`;
+      candidates.forEach(entry => { entry.status = 'error'; entry.message = message; });
+      if(msgEl) msgEl.textContent = message;
+      renderQueue();
+      return;
+    }
+
+    const mode = (payload.mode || ctx.mode || 'to_current');
+    const targetNameRaw = ctx.targetName || (payload.target && payload.target.nombre ? payload.target.nombre : '');
+    const targetName = targetNameRaw ? String(targetNameRaw) : '';
+
+    const movedMap = new Map((payload.moved || []).map(item => [String(item.rfid || '').toUpperCase(), item]));
+    const alreadyMap = new Map((payload.already || []).map(item => [String(item.rfid || '').toUpperCase(), item]));
+    const missingSet = new Set((payload.not_found || []).map(r => String(r || '').toUpperCase()));
+    const errorMap = new Map((payload.errors || []).map(err => [String(err.rfid || '').toUpperCase(), err.message || err.error || 'Error']));
+
+    queue.forEach(entry => {
+      const key = entry.code;
+      if(movedMap.has(key)){
+        entry.status = 'done';
+        const info = movedMap.get(key) || {};
+        if(mode === 'to_destination'){
+          const dest = info.next_sub_estado || info.target_sede_nombre || targetName || 'destino';
+          entry.message = `En traslado → ${dest}`;
+        } else {
+          const details = [];
+          if(info.prev_sede_id !== undefined && info.prev_sede_id !== null){ details.push(`de sede ${info.prev_sede_id}`); }
+          if(info.prev_estado){ details.push(`estado ${info.prev_estado}`); }
+          entry.message = details.length ? `Trasladada ${details.join(', ')}` : 'Trasladada';
+        }
+      } else if(alreadyMap.has(key)){
+        entry.status = 'done';
+        const info = alreadyMap.get(key) || {};
+        if(mode === 'to_destination'){
+          const dest = info.prev_sub_estado || targetName || 'destino';
+          entry.message = `Ya estaba en traslado → ${dest}`;
+        } else {
+          entry.message = 'Ya estaba en tu sede en "En bodega".';
+        }
+      } else if(missingSet.has(key)){
+        entry.status = 'error';
+        entry.message = 'RFID no encontrado';
+      } else if(errorMap.has(key)){
+        entry.status = 'error';
+        entry.message = errorMap.get(key);
+      } else if(entry.status === 'processing'){
+        entry.status = 'error';
+        entry.message = 'Sin respuesta del servidor';
+      }
+    });
+
+    const movedCount = Array.isArray(payload.moved) ? payload.moved.length : 0;
+    const alreadyCount = Array.isArray(payload.already) ? payload.already.length : 0;
+    const missingCount = Array.isArray(payload.not_found) ? payload.not_found.length : 0;
+    const errorCount = Array.isArray(payload.errors) ? payload.errors.length : 0;
+
+    if(msgEl){
+      if(mode === 'to_destination'){
+        const label = targetName ? targetName : 'la sede destino';
+        msgEl.textContent = `Marcadas en traslado ${movedCount} hacia ${label}. Sin cambios ${alreadyCount}. No encontradas ${missingCount}. Errores ${errorCount}.`;
+      } else {
+        msgEl.textContent = `Trasladadas ${movedCount}. Sin cambios ${alreadyCount}. No encontradas ${missingCount}. Errores ${errorCount}.`;
+      }
+    }
+    renderQueue();
   }
 
   function addCodes(codes){
@@ -198,76 +307,74 @@
     if(queue.length !== before){ renderQueue(); if(msgEl) msgEl.textContent = 'Se limpiaron los registros completados.'; }
   });
 
-  processBtn?.addEventListener('click', async ()=>{
-    if(!queue.length){ if(msgEl) msgEl.textContent = 'No hay RFIDs en la cola.'; return; }
+  async function processQueueFor(mode){
+    if(!queue.length){
+      if(msgEl) msgEl.textContent = 'No hay RFIDs en la cola.';
+      return;
+    }
     const candidates = queue.filter(entry => entry.status === 'pending' || entry.status === 'error');
-    if(!candidates.length){ if(msgEl) msgEl.textContent = 'Todos los RFIDs ya fueron procesados.'; return; }
-    processBtn.disabled = true;
+    if(!candidates.length){
+      if(msgEl) msgEl.textContent = 'Todos los RFIDs ya fueron procesados.';
+      return;
+    }
+
+    let targetMeta = null;
+    if(mode === 'to_destination'){
+      targetMeta = getSelectedTarget();
+      if(!targetMeta){
+        if(msgEl) msgEl.textContent = 'Selecciona una sede destino antes de trasladar.';
+        return;
+      }
+    }
+
+    const triggerBtn = mode === 'to_destination' ? transferBtn : processBtn;
+    if(triggerBtn){ triggerBtn.disabled = true; }
+
     candidates.forEach(entry => { entry.status = 'processing'; entry.message = ''; });
     renderQueue();
-    if(msgEl) msgEl.textContent = 'Trasladando piezas...';
+
+    if(msgEl){
+      msgEl.textContent = mode === 'to_destination'
+        ? `Marcando piezas en traslado hacia ${targetMeta?.label || 'la sede destino'}...`
+        : 'Trasladando piezas a tu sede...';
+    }
+
     try {
       const rfids = candidates.map(entry => entry.code);
-  const attempt = await postJSONWithSedeTransfer('/traslado/apply', { rfids }, {
+      const body = mode === 'to_destination'
+        ? { mode, rfids, targetSedeId: targetMeta.id }
+        : { mode, rfids };
+
+      const attempt = await postJSONWithSedeTransfer('/traslado/apply', body, {
         promptMessage: (payload) => payload?.confirm || payload?.error || 'Las piezas seleccionadas pertenecen a otra sede. ¿Deseas trasladarlas a tu sede actual?'
       });
-      if(attempt.cancelled){
-        candidates.forEach(entry => { entry.status = 'pending'; entry.message = 'Operación cancelada.'; });
-        if(msgEl) msgEl.textContent = 'Operación cancelada por el usuario.';
-        renderQueue();
-        return;
-      }
-      const payload = attempt.data || {};
-      if(!attempt.httpOk || payload.ok === false){
-        const message = payload.error || payload.message || `Error (${attempt.status || 0})`;
-        candidates.forEach(entry => { entry.status = 'error'; entry.message = message; });
-        if(msgEl) msgEl.textContent = message;
-        renderQueue();
-        return;
-      }
-      const movedMap = new Map((payload.moved || []).map(item => [String(item.rfid || '').toUpperCase(), item]));
-      const alreadyMap = new Map((payload.already || []).map(item => [String(item.rfid || '').toUpperCase(), item]));
-      const missingSet = new Set((payload.not_found || []).map(r => String(r || '').toUpperCase()));
-      const errorMap = new Map((payload.errors || []).map(err => [String(err.rfid || '').toUpperCase(), err.message || err.error || 'Error']));
-      queue.forEach(entry => {
-        const key = entry.code;
-        if(movedMap.has(key)){
-          entry.status = 'done';
-          const info = movedMap.get(key) || {};
-          const details = [];
-          if(info.prev_sede_id !== undefined && info.prev_sede_id !== null){ details.push(`de sede ${info.prev_sede_id}`); }
-          if(info.prev_estado){ details.push(`estado ${info.prev_estado}`); }
-          entry.message = details.length ? `Trasladada ${details.join(', ')}` : 'Trasladada';
-        } else if(alreadyMap.has(key)){
-          entry.status = 'done';
-          entry.message = 'Ya estaba en tu sede en &quot;En bodega&quot;.';
-        } else if(missingSet.has(key)){
-          entry.status = 'error';
-          entry.message = 'RFID no encontrado';
-        } else if(errorMap.has(key)){
-          entry.status = 'error';
-          entry.message = errorMap.get(key);
-        } else if(entry.status === 'processing'){
-          entry.status = 'error';
-          entry.message = 'Sin respuesta del servidor';
-        }
+
+      handleTrasladoAttempt(attempt, candidates, {
+        mode,
+        targetName: targetMeta?.label,
+        cancelMessage: 'Operación cancelada por el usuario.',
+        errorMessage: mode === 'to_destination'
+          ? 'No se pudo marcar las piezas en traslado.'
+          : 'No se pudo trasladar las piezas a tu sede.'
       });
-      const movedCount = Array.isArray(payload.moved) ? payload.moved.length : 0;
-      const alreadyCount = Array.isArray(payload.already) ? payload.already.length : 0;
-      const missingCount = Array.isArray(payload.not_found) ? payload.not_found.length : 0;
-      const errorCount = Array.isArray(payload.errors) ? payload.errors.length : 0;
-      if(msgEl){
-        msgEl.textContent = `Trasladadas ${movedCount}. Sin cambios ${alreadyCount}. No encontradas ${missingCount}. Errores ${errorCount}.`;
-      }
-      renderQueue();
     } catch(err){
-      const message = err?.message || 'Error inesperado al trasladar';
+      const message = err?.message || (mode === 'to_destination'
+        ? 'Error inesperado al marcar las piezas en traslado'
+        : 'Error inesperado al trasladar las piezas');
       candidates.forEach(entry => { entry.status = 'error'; entry.message = message; });
       if(msgEl) msgEl.textContent = message;
       renderQueue();
     } finally {
-      processBtn.disabled = false;
+      if(triggerBtn){ triggerBtn.disabled = false; }
     }
+  }
+
+  processBtn?.addEventListener('click', async () => {
+    await processQueueFor('to_current');
+  });
+
+  transferBtn?.addEventListener('click', async () => {
+    await processQueueFor('to_destination');
   });
 
   renderQueue();

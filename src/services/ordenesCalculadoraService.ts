@@ -147,7 +147,8 @@ async function fetchCatalogo(tenant: string, sedeId: number): Promise<CatalogoCa
         WHERE sede_id = $1
           AND (activo IS DISTINCT FROM false)
           AND (numero_orden IS NULL OR numero_orden = '')
-          AND (estado IS NULL OR estado NOT IN ('Inhabilitado','Baja','De baja','Descartado','Reservado','Operación'))
+          AND LOWER(COALESCE(TRIM(estado), '')) = 'en bodega'
+          AND COALESCE(TRIM(sub_estado), '') = ''
           AND LOWER(REPLACE(nombre_unidad, ' ', '')) LIKE 'credocube%'
         GROUP BY modelo_id`,
       [sedeId],
@@ -194,8 +195,8 @@ function calcularRecomendaciones(
 
   for (const modelo of modelos) {
     if (!modelo || typeof modelo.modelo_id !== 'number') continue;
-    const stockDisponible = inventario.get(modelo.modelo_id) ?? 0;
-    if (stockDisponible <= 0) continue;
+  const stockDisponible = inventario.get(modelo.modelo_id) ?? 0;
+  if (stockDisponible <= 0) continue;
 
     const dimFrente = Number(modelo.dim_int_frente ?? 0);
     const dimProfundo = Number(modelo.dim_int_profundo ?? 0);
@@ -239,8 +240,8 @@ function calcularRecomendaciones(
       ? Math.max(1, Math.ceil(volumenTotal / volumenCajaM3))
       : Math.max(1, cajasPorItemMax);
 
-    const cajasTotales = Math.max(cajasPorItemMax, cajasPorVolumen);
-    if (cajasTotales <= 0) continue;
+  const cajasTotales = Math.max(cajasPorItemMax, cajasPorVolumen);
+  if (cajasTotales <= 0) continue;
 
     const volumenTotalCajas = volumenCajaM3 * cajasTotales;
     const ocupacion = volumenTotalCajas > 0 ? Math.min(1, volumenTotal / volumenTotalCajas) : null;
@@ -290,7 +291,7 @@ function calcularRecomendaciones(
       det.sobrante_unidades = Math.max(0, det.cajas_requeridas * det.capacidad_por_caja - cantidad);
     });
 
-    const deficit = cajasTotales > stockDisponible ? cajasTotales - stockDisponible : 0;
+  const deficit = cajasTotales > stockDisponible ? cajasTotales - stockDisponible : 0;
 
     recomendaciones.push({
       modelo_id: modelo.modelo_id,

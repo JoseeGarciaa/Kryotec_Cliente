@@ -119,7 +119,7 @@ const TEMPLATE_COLUMNS = [
   { header: 'codigo_producto', key: 'codigo_producto', width: 22 },
   { header: 'cantidad', key: 'cantidad', width: 12 },
   { header: 'ciudad_destino', key: 'ciudad_destino', width: 20 },
-  { header: 'ubicacion_destino', key: 'ubicacion_destino', width: 24 },
+  { header: 'direccion_destino', key: 'ubicacion_destino', width: 24 },
   { header: 'cliente', key: 'cliente', width: 24 },
 ];
 
@@ -668,8 +668,8 @@ export const OrdenesController = {
       ['numero_orden', 'Identificador único de la orden. Obligatorio.'],
       ['codigo_producto', 'SKU o referencia interna del producto. Opcional.'],
       ['cantidad', 'Cantidad solicitada. Solo números enteros mayores a cero.'],
-      ['ciudad_destino', 'Ciudad o municipio donde se entregará la orden.'],
-      ['ubicacion_destino', 'Dirección exacta, centro logístico o sede destino.'],
+  ['ciudad_destino', 'Ciudad o municipio donde se entregará la orden.'],
+  ['direccion_destino', 'Dirección exacta, centro logístico o sede destino.'],
   ['cliente', 'Nombre o razón social del cliente asociado.'],
     ];
 
@@ -1129,6 +1129,26 @@ export const OrdenesController = {
         return res.status(400).json({ ok: false, error: 'La plantilla no contiene hojas' });
       }
 
+      const headerRow = sheet.getRow(1);
+      const headerMap = new Map<string, number>();
+      headerRow.eachCell((_cell, colNumber) => {
+        const text = cellText(headerRow, colNumber).toLowerCase();
+        if (text) headerMap.set(text, colNumber);
+      });
+      const resolveColumn = (aliases: string[], fallback: number) => {
+        for (const alias of aliases) {
+          const idx = headerMap.get(alias.toLowerCase());
+          if (typeof idx === 'number' && idx > 0) return idx;
+        }
+        return fallback;
+      };
+      const colNumero = resolveColumn(['numero_orden'], 1);
+      const colCodigo = resolveColumn(['codigo_producto'], 2);
+      const colCantidad = resolveColumn(['cantidad'], 3);
+      const colCiudad = resolveColumn(['ciudad_destino'], 4);
+      const colDireccion = resolveColumn(['direccion_destino', 'ubicacion_destino'], 5);
+      const colCliente = resolveColumn(['cliente'], 6);
+
       const entries: ParsedOrder[] = [];
       const issues: ImportIssue[] = [];
       const seen = new Set<string>();
@@ -1137,7 +1157,7 @@ export const OrdenesController = {
         if (rowNumber === 1) return; // encabezado
         if (isRowEmpty(row)) return;
 
-        const numero = cellText(row, 1);
+  const numero = cellText(row, colNumero);
         if (!numero) {
           issues.push({ row: rowNumber, message: 'numero_orden es obligatorio' });
           return;
@@ -1148,7 +1168,7 @@ export const OrdenesController = {
         }
         seen.add(numero);
 
-        const cantidadCell = row.getCell(3);
+  const cantidadCell = row.getCell(colCantidad);
         const cantidadText = cantidadCell.text?.trim() ?? '';
         let cantidad: number | null = null;
         if (cantidadText !== '') {
@@ -1162,11 +1182,11 @@ export const OrdenesController = {
 
         entries.push({
           numero,
-          codigo: cleanString(cellText(row, 2)),
+          codigo: cleanString(cellText(row, colCodigo)),
           cantidad,
-          ciudad: cleanString(cellText(row, 4)),
-          ubicacion: cleanString(cellText(row, 5)),
-          cliente: cleanString(cellText(row, 6)),
+          ciudad: cleanString(cellText(row, colCiudad)),
+          ubicacion: cleanString(cellText(row, colDireccion)),
+          cliente: cleanString(cellText(row, colCliente)),
           row: rowNumber,
         });
       });

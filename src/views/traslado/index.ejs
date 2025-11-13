@@ -5,10 +5,10 @@
     <div class="lg:col-span-2 rounded-xl border border-base-300/50 bg-base-200/5 p-5 flex flex-col gap-5">
       <div class="space-y-2">
         <p class="text-sm opacity-70 leading-relaxed">
-          Escanea o pega los RFIDs (24 caracteres) de las piezas que deseas trasladar a tu sede actual. Los códigos válidos se agregan a la cola automáticamente y puedes revisarlos antes de ejecutar el traslado.
+          Escanea o pega los RFIDs (24 caracteres) de las piezas que deseas procesar. Los códigos válidos se agregan a la cola automáticamente y puedes revisarlos antes de ejecutar el traslado.
         </p>
         <p class="text-xs opacity-60">
-          Cada traslado enviará las piezas a <span class="font-semibold">En bodega</span>, limpiará <span class="font-semibold">sub&nbsp;estado</span>, <span class="font-semibold">lote</span>, <span class="font-semibold">orden</span> y quitará cualquier zona o sección asociada.
+          Usa <span class="font-semibold">Trasladar a mi sede</span> para traerlas a tu sede actual o <span class="font-semibold">Trasladar a</span> para marcarlas como <em>En traslado</em> hacia otra sede.
         </p>
       </div>
       <div class="form-control">
@@ -16,8 +16,24 @@
         <textarea id="tras-scan" class="textarea textarea-bordered font-mono text-sm min-h-[120px]" placeholder="Escanea o pega los RFIDs aquí" autocomplete="off"></textarea>
         <span id="tras-hint" class="mt-1 text-[11px] opacity-50">Los RFIDs válidos se detectan automáticamente. El campo muestra cuántos caracteres faltan cuando quedan códigos incompletos.</span>
       </div>
-      <div class="flex flex-wrap gap-2">
-        <button id="tras-process" class="btn btn-primary">Trasladar a mi sede</button>
+      <div class="flex flex-col gap-4">
+        <div class="flex flex-wrap items-center gap-2">
+          <button id="tras-process" class="btn btn-primary">Trasladar a mi sede</button>
+          <span class="text-[11px] opacity-60">Devuelve las piezas a tu sede actual y las deja en estado &laquo;En bodega&raquo;.</span>
+        </div>
+        <div class="flex flex-wrap items-center gap-2">
+          <select id="tras-target" class="select select-bordered select-sm min-w-[200px]">
+            <option value="" selected disabled>Selecciona sede destino</option>
+            <% if (Array.isArray(sedes)) { sedes.forEach((sede) => { %>
+              <% const displayName = (sede && typeof sede.nombre === 'string' && sede.nombre.trim().length)
+                ? sede.nombre.trim()
+                : ('Sede ' + sede.sede_id); %>
+              <option value="<%= sede.sede_id %>"><%= displayName %></option>
+            <% }) } %>
+          </select>
+          <button id="tras-transfer" class="btn btn-secondary">Marcar en traslado</button>
+          <span class="text-[11px] opacity-60">Sirve cuando el destino es otra sede; las piezas quedan como &laquo;En traslado&raquo; y se reservan.</span>
+        </div>
         <button id="tras-clear" class="btn">Limpiar todo</button>
         <button id="tras-clear-done" class="btn btn-ghost">Quitar completados</button>
       </div>
@@ -32,12 +48,15 @@
     <div class="rounded-xl border border-base-300/40 bg-base-200/5 p-5 space-y-4">
       <h2 class="text-sm font-semibold tracking-wide uppercase opacity-80">Glosario rápido</h2>
       <ul class="list-disc list-inside text-xs opacity-70 space-y-2">
-        <li>El traslado se realiza usando la sede asignada a tu usuario.</li>
-        <li>Se eliminan vínculos con cajas y se limpia cualquier cronómetro relacionado.</li>
-        <li>Si alguna pieza ya está en tu sede y en estado &laquo;En bodega&raquo;, se marcará como &laquo;sin cambios&raquo;.</li>
-        <li>Si la operación requiere transferir piezas de otra sede se solicitará confirmación antes de continuar.</li>
+        <li><span class="font-semibold">Trasladar a mi sede</span>: mueve las piezas a tu sede actual en estado &laquo;En bodega&raquo;, limpiando sub estado, lote, orden y vínculos con cajas.</li>
+        <li><span class="font-semibold">Marcar en traslado</span>: requiere elegir sede destino. Cambia el estado a &laquo;En traslado&raquo; con el nombre de la sede destino y las excluye del inventario disponible.</li>
+        <li>Si una pieza ya cumple la condición del modo elegido, se muestra como &laquo;sin cambios&raquo;.</li>
+        <li>Todas las piezas procesadas se desasocian de cualquier caja antes de actualizar su estado.</li>
       </ul>
     </div>
   </div>
 </div>
+<script>
+  window.TRASLADO_SEDES = JSON.parse('<%- JSON.stringify(sedes || []) %>');
+</script>
 <script src="/static/js/traslado.js?v=<%= assetVersion %>" defer></script>
