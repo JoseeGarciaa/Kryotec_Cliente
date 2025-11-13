@@ -220,6 +220,9 @@ async function ensureOrdenesArtifacts(tenant: string): Promise<void> {
       sede_origen_id integer,
       created_by integer
     )`);
+    await client.query('ALTER TABLE IF EXISTS inventario_credocubes DROP CONSTRAINT IF EXISTS fk_inv_numero_orden');
+    await client.query('ALTER TABLE IF EXISTS inventario_credocubes DROP CONSTRAINT IF EXISTS inventario_credocubes_numero_orden_fkey');
+    await client.query('ALTER TABLE IF EXISTS ordenes DROP CONSTRAINT IF EXISTS ordenes_numero_orden_key');
   await client.query("ALTER TABLE ordenes ADD COLUMN IF NOT EXISTS estado text DEFAULT 'borrador' NOT NULL");
   await client.query('ALTER TABLE ordenes ADD COLUMN IF NOT EXISTS modelo_sugerido_id integer');
   await client.query('ALTER TABLE ordenes ADD COLUMN IF NOT EXISTS cantidad_modelos integer');
@@ -238,17 +241,6 @@ async function ensureOrdenesArtifacts(tenant: string): Promise<void> {
         ALTER TABLE ordenes
           ADD CONSTRAINT ordenes_cantidad_modelos_check
           CHECK (cantidad_modelos IS NULL OR cantidad_modelos >= 0);
-      END IF;
-    END $$;`);
-    await client.query(`DO $$
-    BEGIN
-      IF NOT EXISTS (
-        SELECT 1 FROM information_schema.table_constraints
-         WHERE constraint_schema = current_schema()
-           AND table_name = 'ordenes'
-           AND constraint_name = 'ordenes_numero_orden_key'
-      ) THEN
-        ALTER TABLE ordenes ADD CONSTRAINT ordenes_numero_orden_key UNIQUE (numero_orden);
       END IF;
     END $$;`);
     await client.query(`CREATE INDEX IF NOT EXISTS ordenes_fecha_generacion_idx ON ordenes(fecha_generacion)`);
@@ -641,7 +633,7 @@ export const OrdenesController = {
     const steps = [
       'Ingresa la información en la hoja "Órdenes" a partir de la celda A2. Cada fila corresponde a una nueva orden.',
       'Conserva el encabezado y el orden de las columnas. Si no necesitas un dato, deja la celda vacía.',
-  'La columna "numero_orden" es obligatoria y debe ser única. Si repites una orden, se actualizará con los nuevos datos.',
+  'La columna "numero_orden" es obligatoria. Puedes repetir el mismo número para registrar varios productos asociados a la misma orden.',
   'La columna "cantidad" acepta solo números enteros positivos. El formato se aplica automáticamente.',
   'La fecha de generación se asigna automáticamente durante la importación. No necesitas agregarla.',
   'Guarda el archivo en formato XLSX y súbelo desde la opción "Importar Excel" en la plataforma.',
@@ -665,7 +657,7 @@ export const OrdenesController = {
     legendHeader.height = 24;
 
     const legendRows: Array<[string, string]> = [
-      ['numero_orden', 'Identificador único de la orden. Obligatorio.'],
+      ['numero_orden', 'Identificador de la orden. Obligatorio. Puedes repetirlo si deseas separar productos por fila.'],
       ['codigo_producto', 'SKU o referencia interna del producto. Opcional.'],
       ['cantidad', 'Cantidad solicitada. Solo números enteros mayores a cero.'],
   ['ciudad_destino', 'Ciudad o municipio donde se entregará la orden.'],
@@ -883,13 +875,6 @@ export const OrdenesController = {
       }
       return res.redirect('/ordenes');
     } catch (e: any) {
-      if (e?.code === '23505') {
-        const message = 'El número de orden ya existe, actualiza la orden existente para modificarla.';
-        if ((req.headers['content-type'] || '').includes('application/json')) {
-          return res.status(409).json({ ok: false, error: message });
-        }
-        return res.status(409).send(message);
-      }
       if ((req.headers['content-type'] || '').includes('application/json')) {
         return res.status(500).json({ ok: false, error: e?.message || 'Error creando orden' });
       }
@@ -1151,7 +1136,6 @@ export const OrdenesController = {
 
       const entries: ParsedOrder[] = [];
       const issues: ImportIssue[] = [];
-      const seen = new Set<string>();
 
       sheet.eachRow((row, rowNumber) => {
         if (rowNumber === 1) return; // encabezado
@@ -1162,12 +1146,6 @@ export const OrdenesController = {
           issues.push({ row: rowNumber, message: 'numero_orden es obligatorio' });
           return;
         }
-        if (seen.has(numero)) {
-          issues.push({ row: rowNumber, message: 'numero_orden duplicado en la plantilla' });
-          return;
-        }
-        seen.add(numero);
-
   const cantidadCell = row.getCell(colCantidad);
         const cantidadText = cantidadCell.text?.trim() ?? '';
         let cantidad: number | null = null;
@@ -1234,23 +1212,16 @@ export const OrdenesController = {
       }
 
       let inserted = 0;
-      let updated = 0;
+      let duplicates = 0;
 
       await withTenant(tenant, async (client) => {
         await client.query('BEGIN');
         try {
           for (const entry of allowedEntries) {
+            const alreadyExisted = existing.has(entry.numero);
             await client.query(
               `INSERT INTO ordenes (numero_orden, codigo_producto, cantidad, ciudad_destino, ubicacion_destino, cliente, fecha_generacion, sede_origen_id, created_by)
-               VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
-               ON CONFLICT (numero_orden) DO UPDATE
-                 SET codigo_producto = EXCLUDED.codigo_producto,
-                     cantidad = EXCLUDED.cantidad,
-                     ciudad_destino = EXCLUDED.ciudad_destino,
-                     ubicacion_destino = EXCLUDED.ubicacion_destino,
-                     cliente = EXCLUDED.cliente,
-                     sede_origen_id = COALESCE(ordenes.sede_origen_id, EXCLUDED.sede_origen_id),
-                     created_by = COALESCE(ordenes.created_by, EXCLUDED.created_by)`,
+               VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
               [
                 entry.numero,
                 entry.codigo,
@@ -1263,12 +1234,11 @@ export const OrdenesController = {
                 createdBy,
               ]
             );
-            if (existing.has(entry.numero)) {
-              updated += 1;
-            } else {
-              inserted += 1;
-              existing.add(entry.numero);
+            if (alreadyExisted) {
+              duplicates += 1;
             }
+            inserted += 1;
+            existing.add(entry.numero);
           }
           await client.query('COMMIT');
         } catch (err) {
@@ -1282,7 +1252,7 @@ export const OrdenesController = {
         summary: {
           processed: allowedEntries.length,
           inserted,
-          updated,
+          duplicates,
           issues,
         },
       });

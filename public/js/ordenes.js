@@ -206,9 +206,10 @@
 					const summary = payload.summary || {};
 					const processed = typeof summary.processed === 'number' ? summary.processed : 0;
 					const inserted = typeof summary.inserted === 'number' ? summary.inserted : 0;
-					const updated = typeof summary.updated === 'number' ? summary.updated : 0;
+					const duplicates = typeof summary.duplicates === 'number' ? summary.duplicates : 0;
 					const issues = Array.isArray(summary.issues) ? summary.issues : [];
-					const baseStatus = `Se procesaron ${processed} órdenes. ${inserted} nuevas y ${updated} actualizadas.`;
+					const dupText = duplicates > 0 ? ` ${duplicates} registros comparten un número de orden ya existente.` : '';
+					const baseStatus = `Se procesaron ${processed} órdenes. Guardadas: ${inserted}.${dupText}`;
 					if (importStatus) {
 						importStatus.classList.remove('hidden');
 						importStatus.classList.remove('text-error');
@@ -233,8 +234,8 @@
 
 					const bannerPayload = {
 						message: issues.length
-							? `Órdenes procesadas con observaciones. Nuevas: ${inserted}. Actualizadas: ${updated}. Omitidas: ${issues.length}.`
-							: `Órdenes importadas correctamente. Nuevas: ${inserted}. Actualizadas: ${updated}.`,
+							? `Órdenes procesadas con observaciones. Guardadas: ${inserted}. Repetidas (mismo número): ${duplicates}. Omitidas: ${issues.length}.`
+							: `Órdenes importadas correctamente. Guardadas: ${inserted}. Repetidas (mismo número): ${duplicates}.`,
 					};
 					if (issues.length) {
 						bannerPayload.issues = issues.slice(0, 10).map((issue) => ({

@@ -88,9 +88,12 @@
     const timerHtml = hasCountdown
       ? `<span class='badge badge-neutral badge-xs font-mono' data-insp-timer='${caja.id}' id='insp-timer-${caja.id}'>↓ ${timerDisplay(Math.max(0, msRemaining(caja.timer)||0))}</span>`
       : `<span class='badge badge-outline badge-xs opacity-70'>Sin cronómetro</span>`;
-    return `<div class='caja-card rounded-lg border border-base-300/40 bg-base-200/10 p-3 flex flex-col gap-2'>
-      <div class='flex items-center justify-between text-[10px] tracking-wide uppercase opacity-60'><span>Caja</span><span class='font-mono'>${caja.codigoCaja||''}</span></div>
-      <div class='font-semibold text-xs leading-tight break-all pr-2' title='${caja.codigoCaja||''}'>${caja.codigoCaja||''}</div>
+    const code = caja.codigoCaja || '';
+    const displayName = caja.nombreCaja || code || '';
+    const titleText = displayName && code && displayName !== code ? `${displayName} · ${code}` : displayName || code;
+    return `<div class='caja-card rounded-lg border border-base-300/40 bg-base-200/10 p-3 flex flex-col gap-2' title='${titleText}'>
+      <div class='text-[10px] uppercase opacity-60 tracking-wide'>Caja</div>
+      <div class='font-semibold text-xs leading-tight break-all pr-2'>${displayName}</div>
       <div class='flex flex-wrap gap-1 text-[9px] flex-1'>${compBadges || "<span class='badge badge-ghost badge-xs'>Sin items</span>"}</div>
       <div class='flex items-center justify-between text-[10px] opacity-70'>
         <span class='badge badge-outline badge-xs'>Inspección</span>
@@ -354,7 +357,7 @@
   function renderChecklist(){
     if(!panel||!list) return;
     panel.classList.remove('hidden');
-    panelLote && (panelLote.textContent = state.cajaSel?.lote || '—');
+      panelLote && (panelLote.textContent = state.cajaSel?.nombreCaja || state.cajaSel?.lote || '—');
     panelCount && (panelCount.textContent = String(state.tics.length||0));
     // Render componentes si vienen
     if(panelComps){

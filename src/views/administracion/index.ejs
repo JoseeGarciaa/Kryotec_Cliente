@@ -106,8 +106,18 @@
                 <td><span class="badge badge-ghost text-xs"><%= u.sede_nombre || (u.sede_id ? ('ID '+u.sede_id) : 'Sin sede') %></span></td>
                 <td class="text-xs"><%= u.sesion_ttl_minutos || sessionTtlDefault %></td>
                 <td>
-                  <button class="badge border-0 <%= u.activo ? 'badge-success' : 'badge-error' %> cursor-pointer btn-toggle-activo" data-id="<%= u.id %>" data-next="<%= u.activo ? 'false' : 'true' %>" data-nombre="<%- u.nombre %>">
-                    <%= u.activo ? '+ Activo' : 'X Inactivo' %>
+                  <button
+                    type="button"
+                    class="btn-toggle-activo inline-flex items-center gap-2 rounded-full border px-3 py-1 text-xs font-semibold transition-colors <%= u.activo
+                      ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-400 hover:bg-emerald-500/20'
+                      : 'border-rose-500/40 bg-rose-500/10 text-rose-400 hover:bg-rose-500/20'
+                    %>"
+                    data-id="<%= u.id %>"
+                    data-next="<%= u.activo ? 'false' : 'true' %>"
+                    data-nombre="<%- u.nombre %>"
+                  >
+                    <span class="h-2.5 w-2.5 rounded-full <%= u.activo ? 'bg-emerald-400' : 'bg-rose-400' %>"></span>
+                    <span><%= u.activo ? 'Activo' : 'Inactivo' %></span>
                   </button>
                 </td>
                 <td class="text-xs"><%= u.ultimo_ingreso ? new Date(u.ultimo_ingreso).toLocaleString('es-CO') : '-' %></td>

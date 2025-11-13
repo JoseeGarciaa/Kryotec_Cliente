@@ -816,6 +816,7 @@ export const OperacionController = {
       const pendSede = pushSedeFilter(pendParams, sedeId, 'ic');
    const pendQ = await withTenant(tenant, (c)=> c.query(
      `SELECT ic.rfid,
+       ic.nombre_unidad,
        m.nombre_modelo,
        ic.estado,
        ic.sub_estado,
@@ -869,6 +870,7 @@ export const OperacionController = {
           rfid: r.rfid,
           rol: r.rol,
           nombre: r.nombre_modelo,
+          nombre_unidad: r.nombre_unidad || null,
           estado: r.estado,
           sub_estado: r.sub_estado,
           caja: r.caja_lote || null,
@@ -894,9 +896,13 @@ export const OperacionController = {
             orderNumero: p.order_num || null
           };
         }
-        g.componentes.push({ codigo: p.rfid, tipo: p.rol, estado: p.estado, sub_estado: p.sub_estado });
+        g.componentes.push({ codigo: p.rfid, tipo: p.rol, estado: p.estado, sub_estado: p.sub_estado, nombreUnidad: p.nombre_unidad || null });
       }
       const cajas = Object.values(cajasMap);
+      cajas.forEach((c:any) => {
+        const cubeComp = (c.componentes||[]).find((cmp:any) => cmp?.tipo === 'cube' && cmp?.nombreUnidad);
+        c.nombreCaja = cubeComp?.nombreUnidad?.trim() || c.codigoCaja;
+      });
       // ==== Agregación por orden (conteo de cajas y esperado) ====
       // Obtener order_id únicos
       const orderIds = [...new Set(cajas.filter(c=> c.orderId).map(c=> c.orderId))];
@@ -1503,11 +1509,12 @@ export const OperacionController = {
       const nowRes = await withTenant(tenant, (c)=> c.query<{ now:string }>(`SELECT NOW()::timestamptz AS now`));
       const rowsQ = await withTenant(tenant, (c)=> c.query(
         `SELECT c.caja_id, c.lote,
-                aci.rol,
-                ic.rfid,
-                ic.estado,
-                ic.sub_estado,
-                m.nombre_modelo
+          aci.rol,
+          ic.rfid,
+          ic.estado,
+          ic.sub_estado,
+          ic.nombre_unidad,
+          m.nombre_modelo
            FROM inventario_credocubes ic
       LEFT JOIN acond_caja_items aci ON aci.rfid = ic.rfid
       LEFT JOIN acond_cajas c ON c.caja_id = aci.caja_id
@@ -1526,7 +1533,7 @@ export const OperacionController = {
             timer: null as null | { startsAt: string }
           };
         }
-        mapa[id].componentes.push({ codigo: r.rfid, tipo: r.rol||inferRol(r.nombre_modelo||'') , estado: r.estado, sub_estado: r.sub_estado });
+        mapa[id].componentes.push({ codigo: r.rfid, tipo: r.rol||inferRol(r.nombre_modelo||'') , estado: r.estado, sub_estado: r.sub_estado, nombreUnidad: r.nombre_unidad || null });
         if(id && !ids.includes(id)) ids.push(id);
       }
       function inferRol(nombre:string){ const n=nombre.toLowerCase(); if(n.includes('vip')) return 'vip'; if(n.includes('tic')) return 'tic'; if(n.includes('cube')||n.includes('cubo')) return 'cube'; return 'otro'; }
@@ -1551,6 +1558,10 @@ export const OperacionController = {
           }
         });
       }
+      Object.values(mapa).forEach((c:any) => {
+        const cubeComp = (c.componentes||[]).find((cmp:any) => cmp?.tipo === 'cube' && cmp?.nombreUnidad);
+        c.nombreCaja = cubeComp?.nombreUnidad?.trim() || c.codigoCaja;
+      });
       const cajas = Object.values(mapa).filter((c:any)=> (c.componentes||[]).length>0);
       res.json({ ok:true, serverNow: nowRes.rows[0]?.now, cajas });
     } catch(e:any){ res.status(500).json({ ok:false, error: e.message||'Error inspección data' }); }
@@ -3432,7 +3443,7 @@ export const OperacionController = {
           const itemsParams: any[] = [cajasRows.map(r=>r.caja_id)];
           const itemsSede = pushSedeFilter(itemsParams, sedeId);
           const itemsQ = await withTenant(tenant, (c) => c.query(
-            `SELECT c.caja_id, aci.rol, ic.rfid, ic.sub_estado, m.litraje
+            `SELECT c.caja_id, aci.rol, ic.rfid, ic.sub_estado, ic.nombre_unidad, m.litraje
                FROM acond_caja_items aci
                JOIN acond_cajas c ON c.caja_id = aci.caja_id
                JOIN inventario_credocubes ic ON ic.rfid = aci.rfid
@@ -3476,8 +3487,8 @@ export const OperacionController = {
             cajasRows = cajasQ.rows;
             const itemsParams2: any[] = [cajasRows.map(r=>r.caja_id)];
             const itemsSede2 = pushSedeFilter(itemsParams2, sedeId);
-            const itemsQ = await withTenant(tenant, (c) => c.query(
-              `SELECT c.caja_id, aci.rol, aci.rfid, ic.sub_estado
+              const itemsQ = await withTenant(tenant, (c) => c.query(
+                `SELECT c.caja_id, aci.rol, ic.rfid, ic.sub_estado, ic.nombre_unidad
                  FROM acond_caja_items aci
                  JOIN acond_cajas c ON c.caja_id = aci.caja_id
                  JOIN inventario_credocubes ic ON ic.rfid = aci.rfid
@@ -3511,10 +3522,10 @@ export const OperacionController = {
   const nowIso = nowRes.rows[0]?.now;
   const nowMs = nowIso ? new Date(nowIso).getTime() : Date.now();
   // Map caja items by caja_id for componentes list
-  const componentesPorCaja: Record<string, { tipo:string; codigo:string; sub_estado?:string }[]> = {};
+  const componentesPorCaja: Record<string, { tipo:string; codigo:string; sub_estado?:string; nombreUnidad?:string|null }[]> = {};
   for(const it of cajaItemsRows){
-    const arr = componentesPorCaja[it.caja_id] || (componentesPorCaja[it.caja_id] = []);
-    arr.push({ tipo: it.rol, codigo: it.rfid, sub_estado: (it as any).sub_estado });
+    const arr = componentesPorCaja[it.caja_id] || (componentesPorCaja[it.caja_id] = [] as { tipo:string; codigo:string; sub_estado?:string; nombreUnidad?:string|null }[]);
+    arr.push({ tipo: it.rol, codigo: it.rfid, sub_estado: (it as any).sub_estado, nombreUnidad: (it as any).nombre_unidad || null });
   }
   const cajasUI = cajasRows.map(r => {
     let startsAt: string | null = r.timer_started_at || null;
@@ -3528,10 +3539,13 @@ export const OperacionController = {
       }
     }
     const comps = componentesPorCaja[r.caja_id] || [];
-    const allEnsamblado = comps.length>0 && comps.every(cmp=> cmp.sub_estado==='Ensamblado');
+    const allEnsamblado = comps.length>0 && comps.every((cmp) => cmp.sub_estado==='Ensamblado');
+    const cubeComp = comps.find((cmp) => cmp.tipo === 'cube' && cmp.nombreUnidad);
+    const nombreCaja = cubeComp?.nombreUnidad?.trim() || r.lote || `Caja #${r.caja_id}`;
     return {
       id: r.caja_id,
       codigoCaja: r.lote || `Caja #${r.caja_id}`,
+      nombreCaja,
       estado: allEnsamblado ? 'Ensamblado' : 'Ensamblaje',
       createdAt: r.created_at,
       updatedAt: r.created_at,
@@ -3565,6 +3579,7 @@ export const OperacionController = {
       caja_id: r.caja_id,
       codigo: r.rfid,
       nombre: r.nombre_modelo, // mover modelo a nombre
+      nombre_unidad: r.nombre_unidad || null,
   estado: r.sub_estado || r.estado, // ahora mostrar sub_estado real
       lote: r.caja_lote || r.lote, // mostrar lote de la caja si existe
       updatedAt: r.updated_at,
@@ -4723,7 +4738,7 @@ export const OperacionController = {
         const itemsParams: any[] = [cajaIds];
         const itemsSede = pushSedeFilter(itemsParams, sedeId);
         const itemsSql =
-          `SELECT c.caja_id, aci.rol, ic.rfid, ic.estado, ic.sub_estado, m.nombre_modelo
+          `SELECT c.caja_id, aci.rol, ic.rfid, ic.estado, ic.sub_estado, ic.nombre_unidad, m.nombre_modelo
              FROM acond_caja_items aci
              JOIN acond_cajas c ON c.caja_id = aci.caja_id
              JOIN inventario_credocubes ic ON ic.rfid = aci.rfid
@@ -4740,7 +4755,8 @@ export const OperacionController = {
           rol: row.rol,
           estado: row.estado,
             sub_estado: row.sub_estado,
-          nombre: row.nombre_modelo
+          nombre: row.nombre_modelo,
+          nombreUnidad: row.nombre_unidad || null
         });
       }
       const nowIso = nowRes.rows[0]?.now;
@@ -4755,6 +4771,8 @@ export const OperacionController = {
         }
         // Derivar estado de la caja basado en sub_estados:
   const items = mapaItems[r.caja_id]||[];
+  const cubeComp = items.find((it)=> it.rol==='cube' && it.nombreUnidad);
+  const nombreCaja = cubeComp?.nombreUnidad?.trim() || r.lote;
         const anyTransito = items.some(it=> it.sub_estado==='Transito');
         const anyRetorno = items.some(it=> it.sub_estado==='Retorno');
         let estadoCaja = 'Operación';
@@ -4763,11 +4781,12 @@ export const OperacionController = {
         return {
           id: r.caja_id,
           codigoCaja: r.lote,
+          nombreCaja,
           estado: estadoCaja,
           orderId: (r as any).order_id ?? null,
           orderNumero: (r as any).order_num ?? null,
           timer,
-          componentes: items.map(it=> ({ codigo: it.codigo, tipo: it.rol, nombre: it.nombre, estado: it.estado, sub_estado: it.sub_estado }))
+          componentes: items.map(it=> ({ codigo: it.codigo, tipo: it.rol, nombre: it.nombre, estado: it.estado, sub_estado: it.sub_estado, nombreUnidad: it.nombreUnidad || null }))
         };
       });
       res.json({ ok:true, now: nowIso, cajas: cajasUI });

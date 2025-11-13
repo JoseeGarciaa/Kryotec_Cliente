@@ -130,14 +130,18 @@
       if(timer){
         badge = `<span class="badge badge-xs ${badgeCls} gap-1" data-op-timer data-caja="${caja.id}">${timerTxt}</span>`;
       } else { badge=''; }
+    const code = caja.codigoCaja || '';
+    const displayName = caja.nombreCaja || code || '';
+    const codeLine = code && displayName !== code ? `<span class="block font-mono text-[10px] opacity-50">${code}</span>` : '';
+    const cajaCell = `<td class="text-xs leading-tight">${displayName}${codeLine}</td>`;
     if(!comps.length){
-      return `<tr data-caja-row="${caja.id}" data-caja-id="${caja.id}"><td class="font-mono text-[10px] opacity-50">(sin)</td><td class="hidden md:table-cell text-xs">-</td><td class="hidden lg:table-cell text-xs">${caja.estado}</td><td class="text-xs font-mono">${caja.codigoCaja}</td><td class="w-32">${badge}</td></tr>`;
+      return `<tr data-caja-row="${caja.id}" data-caja-id="${caja.id}">${cajaCell}<td class="hidden md:table-cell text-xs">-</td><td class="hidden lg:table-cell text-xs">${caja.estado}</td><td class="text-xs font-mono">${code}</td><td class="w-32">${badge}</td></tr>`;
     }
     return comps.map(it=> `<tr data-caja-row="${caja.id}" data-caja-id="${caja.id}">
       <td class="font-mono text-[10px]">${it.codigo}</td>
       <td class="hidden md:table-cell text-xs">${it.nombre||''}</td>
       <td class="hidden lg:table-cell text-xs">${caja.estado}</td>
-      <td class="text-xs font-mono">${caja.codigoCaja}</td>
+      ${cajaCell}
       <td class="w-32">${badge}</td>
     </tr>`).join('');
   }
@@ -176,11 +180,12 @@
       timerBadge = `<span class='badge badge-outline badge-xs opacity-60'>Sin cronómetro</span>`;
     }
     const pct = Math.min(100, Math.max(0, progress));
-    const fullCode = caja.codigoCaja||'';
-    let rightId = fullCode.startsWith('CAJA-')? fullCode : (caja.id!=null? '#'+caja.id: fullCode);
-    return `<div class='caja-card rounded-lg border border-base-300/40 bg-base-200/10 p-3 flex flex-col gap-2 hover:border-primary/60 transition' data-caja-card='${caja.id}' data-caja-id='${caja.id}'>
-      <div class='flex items-center justify-between text-[10px] tracking-wide uppercase opacity-60'><span>Caja</span><span class='font-mono'>${rightId}</span></div>
-      <div class='font-semibold text-xs leading-tight break-all pr-2' title='${fullCode}'>${fullCode}</div>
+    const code = caja.codigoCaja||'';
+    const displayName = caja.nombreCaja || code || 'Caja';
+    const titleText = displayName && code && displayName !== code ? `${displayName} · ${code}` : displayName || code || 'Caja';
+    return `<div class='caja-card rounded-lg border border-base-300/40 bg-base-200/10 p-3 flex flex-col gap-2 hover:border-primary/60 transition' data-caja-card='${caja.id}' data-caja-id='${caja.id}' title='${titleText}'>
+      <div class='text-[10px] uppercase opacity-60 tracking-wide'>Caja</div>
+      <div class='font-semibold text-xs leading-tight break-all pr-2'>${displayName}</div>
       <div class='flex flex-wrap gap-1 text-[9px] flex-1'>${compBadges || "<span class='badge badge-ghost badge-xs'>Sin items</span>"}</div>
       <div class='timer-progress h-1.5 w-full bg-base-300/30 rounded-full overflow-hidden'>
         <div class='timer-bar h-full bg-gradient-to-r from-primary via-primary to-primary/70' style='width:${pct.toFixed(1)}%' data-caja-bar='${caja.id}'></div>
@@ -213,7 +218,7 @@
 
     const filAct = focusCajaId != null
       ? activos.filter(c=> String(c.id) === String(focusCajaId))
-      : (f? activos.filter(c=> c.codigoCaja.toLowerCase().includes(f) || (c.componentes||[]).some(it=> it.codigo.toLowerCase().includes(f)) ): activos);
+      : (f? activos.filter(c=> (c.codigoCaja||'').toLowerCase().includes(f) || (c.nombreCaja||'').toLowerCase().includes(f) || (c.componentes||[]).some(it=> it.codigo.toLowerCase().includes(f)) ): activos);
 
     // Tabla
     tbody.innerHTML = filAct.length? filAct.map(c=> rowHTML(c)).join('') : `<tr><td colspan="5" class="text-center py-6 text-xs opacity-50">Sin resultados</td></tr>`;
@@ -279,7 +284,7 @@
     const counts = { vip:0, tic:0, cube:0 };
     comps.forEach(c=>{ if(c.tipo) counts[c.tipo]=(counts[c.tipo]||0)+1; });
     const setText = (sel,val)=>{ const el=document.getElementById(sel); if(el) el.textContent=val; };
-    setText('detalle-caja-titulo', caja.codigoCaja||'Caja');
+    setText('detalle-caja-titulo', caja.nombreCaja || caja.codigoCaja||'Caja');
     setText('detalle-caja-lote', caja.codigoCaja||'');
     setText('detalle-caja-id', '#'+caja.id);
     setText('detalle-caja-comp', `VIP:${counts.vip||0} · TIC:${counts.tic||0} · CUBE:${counts.cube||0}`);

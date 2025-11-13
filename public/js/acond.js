@@ -312,7 +312,7 @@
     // Colectar timer (puede repetirse, tomaremos primero válido)
     if(it.cronometro && it.cronometro.startsAt && it.cronometro.endsAt){ g.timers.push(it.cronometro); }
     const tipo = (it.categoria||'').toLowerCase();
-    g.componentes.push({ tipo, codigo: it.codigo });
+    g.componentes.push({ tipo, codigo: it.codigo, nombreUnidad: it.nombre_unidad || null });
     g.categorias[tipo] = (g.categorias[tipo]||0)+1;
   });
   const groups = Array.from(groupsMap.values()).map(g=>{
@@ -322,9 +322,12 @@
   });
     // Reusar cajaCardHTML adaptando estructura a la esperada (id, codigoCaja, estado, timer, componentes)
     grid.innerHTML = groups.map(g => {
+      const cubeComp = g.componentes.find(comp => comp.tipo === 'cube' && comp.nombreUnidad);
+      const nombreCaja = cubeComp?.nombreUnidad || g.lote || ('CAJA-'+g.cajaId);
       const fakeCaja = {
         id: g.cajaId,
         codigoCaja: g.lote || ('CAJA-'+g.cajaId),
+        nombreCaja,
         estado: 'Lista para Despacho',
         timer: g.timer ? { startsAt: g.timer.startsAt, endsAt: g.timer.endsAt, completedAt: g.timer.completedAt } : null,
         componentes: g.componentes
@@ -354,7 +357,7 @@
   }
   const filtered = focusEnsCajaId != null
     ? cajas.filter(c => String(c.id) === String(focusEnsCajaId))
-    : (filterValue ? cajas.filter(c => (c.codigoCaja||'').toLowerCase().includes(filterValue) || (c.componentes||[]).some(cc => String(cc.codigo||'').toLowerCase().includes(filterValue))) : cajas.slice());
+    : (filterValue ? cajas.filter(c => (c.codigoCaja||'').toLowerCase().includes(filterValue) || (c.nombreCaja||'').toLowerCase().includes(filterValue) || (c.componentes||[]).some(cc => String(cc.codigo||'').toLowerCase().includes(filterValue))) : cajas.slice());
 
   // Contar componentes totales y filtrados
   totalComponentCount = cajas.reduce((acc,c)=> acc + ((c.componentes||[]).length || 0), 0);
@@ -421,21 +424,12 @@
       }
     }
     const pct = Math.min(100, Math.max(0, progress));
-    // Mostrar identificador: usar c.codigoCaja (lote) completo abreviado si muy largo
-    const fullCode = c.codigoCaja || '';
-    let rightId = '';
-    if(fullCode.startsWith('CAJA-')){
-      rightId = fullCode; // nuevo patrón CAJA-ddMMyyyy-XXXXX
-    } else if(/^CAJA\d+/i.test(fullCode)){
-      rightId = fullCode.split('-')[0];
-    } else if(c.id != null){
-      rightId = '#'+c.id;
-    }
-  return `<div class='caja-card rounded-lg border border-base-300/40 bg-base-200/10 p-3 flex flex-col gap-2 hover:border-primary/60 transition' data-caja-id='${safeHTML(c.id)}'>
-        <div class='flex items-center justify-between text-[10px] tracking-wide uppercase opacity-60'>
-          <span>Caja</span><span class='font-mono'>${safeHTML(rightId)}</span>
-        </div>
-  <div class='font-semibold text-xs leading-tight break-all pr-2' title='${safeHTML(fullCode||'Caja')}'>${safeHTML(fullCode||'Caja')}</div>
+    const code = c.codigoCaja || '';
+    const displayName = c.nombreCaja || code || 'Caja';
+    const titleText = displayName && code && displayName !== code ? `${displayName} · ${code}` : displayName || code || 'Caja';
+  return `<div class='caja-card rounded-lg border border-base-300/40 bg-base-200/10 p-3 flex flex-col gap-2 hover:border-primary/60 transition' data-caja-id='${safeHTML(c.id)}' title='${safeHTML(titleText)}'>
+        <div class='text-[10px] uppercase opacity-60 tracking-wide'>Caja</div>
+  <div class='font-semibold text-xs leading-tight break-all pr-2'>${safeHTML(displayName)}</div>
         <div class='flex flex-wrap gap-1 text-[9px] flex-1'>${compBadges || "<span class='badge badge-ghost badge-xs'>Sin items</span>"}</div>
         <div class='timer-progress h-1.5 w-full bg-base-300/30 rounded-full overflow-hidden'>
           <div class='timer-bar h-full bg-gradient-to-r from-primary via-primary to-primary/70' style='width:${pct.toFixed(1)}%' data-caja-bar='${safeHTML(c.id)}'></div>
@@ -470,9 +464,13 @@
     const progress = timerProgressPct(c);
     const timerText = timerDisplay(remaining, c.timer?.completedAt);
     const comps = (c.componentes||[]);
+    const code = c.codigoCaja || '';
+    const displayName = c.nombreCaja || code || '';
+    const codeLine = code && displayName !== code ? `<span class="block font-mono text-[10px] opacity-60">${safeHTML(code)}</span>` : '';
+    const cajaTd = `<td class="text-sm leading-tight">${safeHTML(displayName)}${codeLine}</td>`;
     if(!comps.length){
   // Vista simplificada: sin cronómetro por componente/caja en tabla de Ensamblaje
-  return [ `<tr class="hover" data-caja-id="${safeHTML(c.id)}">\n        <td class="text-sm font-mono">${safeHTML(c.codigoCaja||'')}</td>\n        <td class="text-sm opacity-60">(sin items)</td>\n        <td class="text-sm">${safeHTML(c.estado||'')}</td>\n      </tr>` ];
+  return [ `<tr class="hover" data-caja-id="${safeHTML(c.id)}">\n        ${cajaTd}\n        <td class="text-sm opacity-60">(sin items)</td>\n        <td class="text-sm">${safeHTML(c.estado||'')}</td>\n      </tr>` ];
     }
     return comps.filter(cc => {
       if(set && set.size){ return set.has(String(cc.codigo||'').toUpperCase()); }
@@ -480,7 +478,7 @@
       return true;
     }).map(cc => {
   // Fila sin columna de cronómetro (solo caja, componente y estado)
-  return `<tr class="hover" data-caja-id="${safeHTML(c.id)}">\n        <td class="text-sm font-mono">${safeHTML(c.codigoCaja||'')}</td>\n        <td class="text-sm flex flex-col leading-tight">\n          <span class="uppercase tracking-wide">${safeHTML(cc.tipo||cc.nombre||'')}</span>\n          <span class="font-mono text-xs opacity-40">${safeHTML(cc.codigo)}</span>\n        </td>\n        <td class="text-sm">${safeHTML(c.estado||'')}</td>\n      </tr>`;
+  return `<tr class="hover" data-caja-id="${safeHTML(c.id)}">\n        ${cajaTd}\n        <td class="text-sm flex flex-col leading-tight">\n          <span class="uppercase tracking-wide">${safeHTML(cc.tipo||cc.nombre||'')}</span>\n          <span class="font-mono text-xs opacity-40">${safeHTML(cc.codigo)}</span>\n        </td>\n        <td class="text-sm">${safeHTML(c.estado||'')}</td>\n      </tr>`;
     });
   }
 
@@ -785,7 +783,7 @@
     comps.forEach(x=>{ if(x && x.tipo){ counts[x.tipo] = (counts[x.tipo]||0)+1; } });
 
     const setText = (id, val) => { const el=document.getElementById(id); if(el) el.textContent = val; };
-    setText('detalle-caja-titulo', caja.codigoCaja || 'Caja');
+    setText('detalle-caja-titulo', caja.nombreCaja || caja.codigoCaja || 'Caja');
     setText('detalle-caja-lote', caja.codigoCaja || '');
     setText('detalle-caja-id', `#${caja.id}`);
     setText('detalle-caja-comp', `VIP:${counts.vip||0} · TIC:${counts.tic||0} · CUBE:${counts.cube||0}`);

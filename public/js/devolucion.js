@@ -119,6 +119,9 @@
       timerBadge = `<span class='badge badge-outline badge-xs opacity-60'>Sin cronómetro</span>`;
     }
     const progress = Math.min(100, Math.max(0, pct));
+    const code = caja.codigoCaja||'';
+    const displayName = caja.nombreCaja || code || '';
+    const titleText = displayName && code && displayName !== code ? `${displayName} · ${code}` : displayName || code;
     // Formato de orden: si se conoce expected (>0) mostrar a/b, si no solo a
     const ordenStrBase = (caja.orderNumero ? caja.orderNumero : (caja.orderId ? ('#'+caja.orderId) : '-'));
     let ordenStr = ordenStrBase;
@@ -131,9 +134,9 @@
         ordenStr = `${ordenStrBase} (${caja.orderCajaCount})`;
       }
     }
-  return `<div class='caja-card rounded-lg border border-base-300/40 bg-base-200/10 p-3 flex flex-col gap-2 hover:border-primary/60 transition cursor-pointer' data-caja-id='${caja.id}'>
-      <div class='flex items-center justify-between text-[10px] tracking-wide uppercase opacity-60'><span>Caja</span><span class='font-mono'>${caja.codigoCaja||''}</span></div>
-      <div class='font-semibold text-xs leading-tight break-all pr-2' title='${caja.codigoCaja||''}'>${caja.codigoCaja||''}</div>
+      return `<div class='caja-card rounded-lg border border-base-300/40 bg-base-200/10 p-3 flex flex-col gap-2 hover-border-primary/60 transition cursor-pointer' data-caja-id='${caja.id}' title='${titleText}'>
+        <div class='text-[10px] uppercase opacity-60 tracking-wide'>Caja</div>
+        <div class='font-semibold text-xs leading-tight break-all pr-2'>${displayName}</div>
       <div class='text-[10px] opacity-70'>Orden: <span class='font-mono'>${ordenStr}</span></div>
       <div class='flex flex-wrap gap-1 text-[9px] flex-1'>${compBadges || "<span class='badge badge-ghost badge-xs'>Sin items</span>"}</div>
       <div class='h-1.5 w-full bg-base-300/30 rounded-full overflow-hidden'>
@@ -214,18 +217,21 @@
   function cajaLabelById(rawId){
     const key = String(rawId);
     const scanned = scannedCajas.get(key);
-    if(scanned && scanned.codigoCaja) return scanned.codigoCaja;
+    if(scanned && (scanned.nombreCaja || scanned.codigoCaja)) return scanned.nombreCaja || scanned.codigoCaja;
     const listed = (data.cajas||[]).find(c=> String(c.id) === key);
-    if(listed && (listed.codigoCaja || listed.lote)) return listed.codigoCaja || listed.lote;
+    if(listed && (listed.nombreCaja || listed.codigoCaja || listed.lote)) return listed.nombreCaja || listed.codigoCaja || listed.lote;
     return key;
   }
 
   function inferTipo(nombre){ const n=(nombre||'').toLowerCase(); if(n.includes('vip')) return 'vip'; if(n.includes('tic')) return 'tic'; if(n.includes('cube')||n.includes('cubo')) return 'cube'; return 'otro'; }
   function miniCardHTML(c){
     const ordenStr = (c.orderNumero ? c.orderNumero : (c.orderId ? ('#'+c.orderId) : (c.order_num ? c.order_num : (c.order_id ? ('#'+c.order_id) : '-'))));
+    const code = c.codigoCaja || c.lote || '';
+    const displayName = c.nombreCaja || code;
+    const titleText = displayName && code && displayName !== code ? `${displayName} · ${code}` : displayName || code;
     return `<div class='text-xs'>
-      <div class='flex items-center justify-between text-[10px] uppercase opacity-60 mb-1'><span>Caja</span><span class='font-mono'>${c.codigoCaja||''}</span></div>
-      <div class='font-semibold text-[11px] break-all mb-2'>${c.codigoCaja||''}</div>
+      <div class='flex items-center justify-between text-[10px] uppercase opacity-60 mb-1'><span>Caja</span><span class='font-mono'>${code}</span></div>
+      <div class='font-semibold text-[11px] break-all mb-2' title='${titleText}'>${displayName}</div>
       <div class='text-[10px] opacity-70 mb-1'>Orden: <span class='font-mono'>${ordenStr}</span></div>
       <div class='flex flex-wrap gap-1 mb-2'>${(c.componentes||[]).map(it=>{ let cls='badge-ghost'; if(it.tipo==='vip') cls='badge-info'; else if(it.tipo==='tic') cls='badge-warning'; else if(it.tipo==='cube') cls='badge-accent'; return `<span class='badge ${cls} badge-xs'>${(it.tipo||'').toUpperCase()}</span>`; }).join('') || "<span class='badge badge-ghost badge-xs'>Sin items</span>"}</div>
       <div class='text-[10px] font-mono opacity-70'>${c.timer? (c.timer.completedAt? 'Listo' : 'Cronómetro activo') : 'Sin cronómetro'}</div>
@@ -257,6 +263,7 @@
       scannedCajas.set(key, {
         ...entry,
         codigoCaja: next.codigoCaja || next.caja || entry.codigoCaja,
+        nombreCaja: next.nombreCaja || entry.nombreCaja || null,
         orderId: next.orderId ?? next.order_id ?? entry.orderId ?? null,
         orderNumero: next.orderNumero ?? next.order_num ?? entry.orderNumero ?? null,
         timer: next.timer || null,
@@ -282,13 +289,17 @@
     }
     multiWrap?.classList.remove('hidden');
     if(multiCount) multiCount.textContent = String(entries.length);
-    multiList.innerHTML = entries.map(entry=>{
+      multiList.innerHTML = entries.map(entry=>{
       const ordenStr = entry.orderNumero ? entry.orderNumero : (entry.orderId ? ('#'+entry.orderId) : '-');
+      const code = entry.codigoCaja || '';
+      const displayName = entry.nombreCaja || code;
+      const titleText = displayName && code && displayName !== code ? `${displayName} · ${code}` : displayName || code;
       return `<div class='border border-base-300/40 rounded-lg p-3 space-y-2' data-scan-entry='${entry.id}'>
         <div class='flex items-center justify-between gap-2'>
-          <span class='font-mono text-xs break-all'>${entry.codigoCaja||''}</span>
+          <span class='font-mono text-xs break-all'>${code}</span>
           <button class='btn btn-ghost btn-xs' data-scan-remove='${entry.id}' title='Quitar'>✕</button>
         </div>
+        <div class='text-xs font-semibold leading-tight break-all' title='${titleText}'>${displayName}</div>
         <div class='text-[10px] opacity-70'>Orden: <span class='font-mono'>${ordenStr}</span></div>
         <div class='flex flex-wrap gap-1 text-[9px]'>${componentesBadges(entry.componentes)}</div>
         <button class='btn btn-xs btn-primary w-full' data-scan-process='${entry.id}'>Procesar</button>
@@ -315,6 +326,7 @@
     scannedCajas.set(key, {
       id: caja.id,
       codigoCaja: caja.codigoCaja || caja.lote || '',
+      nombreCaja: caja.nombreCaja || null,
       orderId: caja.orderId ?? caja.order_id ?? null,
       orderNumero: caja.orderNumero ?? caja.order_num ?? null,
       timer: caja.timer || null,
@@ -372,7 +384,17 @@
       const cajaId = j.caja.id;
       let caja = (data.cajas||[]).find(c=> String(c.id)===String(cajaId));
       if(!caja){
-        caja = { id: cajaId, codigoCaja: j.caja.lote, orderId: j.caja.order_id || null, orderNumero: j.caja.order_num || null, timer: j.caja.timer? { startsAt: j.caja.timer.startsAt, endsAt: j.caja.timer.endsAt, completedAt: j.caja.timer.active===false? j.caja.timer.endsAt:null }: null, componentes: (j.caja.items||[]).map(it=> ({ codigo: it.rfid, tipo: inferTipo(it.nombre_modelo||it.nombre||'') })) };
+        const cubeItem = (j.caja.items||[]).find(it=> inferTipo(it.nombre_modelo||it.nombre||'') === 'cube');
+        const nombreCaja = j.caja.nombre_caja || j.caja.nombreCaja || cubeItem?.nombre_modelo || null;
+        caja = {
+          id: cajaId,
+          codigoCaja: j.caja.lote,
+          nombreCaja: nombreCaja || null,
+          orderId: j.caja.order_id || null,
+          orderNumero: j.caja.order_num || null,
+          timer: j.caja.timer ? { startsAt: j.caja.timer.startsAt, endsAt: j.caja.timer.endsAt, completedAt: j.caja.timer.active===false? j.caja.timer.endsAt:null } : null,
+          componentes: (j.caja.items||[]).map(it=> ({ codigo: it.rfid, tipo: inferTipo(it.nombre_modelo||it.nombre||'') }))
+        };
       }
       const items = (j.caja.items||[]);
       const eligible = items.length>0 && items.every(it=> it.estado==='Operación' && it.sub_estado==='Transito');
