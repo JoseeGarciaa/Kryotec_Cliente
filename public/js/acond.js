@@ -221,10 +221,17 @@
         if(!info) return null;
         const sub = String(info.sub_estado || info.subEstado || '').toLowerCase();
         if(!sub.includes('atemperado')) return null;
-        const completedAtRaw = info.item_completed_at || info.completed_at || info.completedAt || info.item_updated_at || info.updated_at || info.updatedAt;
-        const completedMs = completedAtRaw ? new Date(completedAtRaw).getTime() : NaN;
-        if(!Number.isFinite(completedMs)) return null;
-        const elapsed = Math.max(0, Math.floor((nowMs - completedMs)/1000));
+        const completedRaw = info.item_completed_at || info.completed_at || info.completedAt;
+        const updatedRaw = info.item_updated_at || info.updated_at || info.updatedAt;
+        const completedMs = completedRaw ? new Date(completedRaw).getTime() : NaN;
+        const updatedMs = updatedRaw ? new Date(updatedRaw).getTime() : NaN;
+        const finishMs = Number.isFinite(completedMs) && Number.isFinite(updatedMs)
+          ? Math.max(completedMs, updatedMs)
+          : Number.isFinite(completedMs) ? completedMs
+          : Number.isFinite(updatedMs) ? updatedMs
+          : NaN;
+        if(!Number.isFinite(finishMs)) return null;
+        const elapsed = Math.max(0, Math.floor((nowMs - finishMs)/1000));
         if(elapsed <= 0) return null;
         return { rfid: it.rfid, elapsed };
       }).filter(Boolean);
@@ -1097,9 +1104,16 @@
     }finally{ disableBtn(sel.validarBtn, false); }
   }
 
-  async function confirmNegativeTimersBeforeCreate(){
+  async function confirmNegativeTimersBeforeCreate(rfidsOverride){
     try{
-      const res = await fetch('/operacion/acond/ensamblaje/validate',{ method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ rfids: scanBuffer.map(s=> s.codigo) })});
+      const rfids = Array.isArray(rfidsOverride) && rfidsOverride.length
+        ? rfidsOverride.map((code)=> String(code || '').toUpperCase())
+        : scanBuffer.map((s)=> String(s.codigo || '').toUpperCase());
+      if(!rfids.length){
+        alert('No hay componentes para validar.');
+        return false;
+      }
+      const res = await fetch('/operacion/acond/ensamblaje/validate',{ method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ rfids })});
       const json = await res.json();
       if(!res.ok || json?.ok === false){
         throw new Error(json?.message || json?.error || 'Error verificando la composición');
@@ -1111,10 +1125,10 @@
         return false;
       }
       const valid = Array.isArray(json?.valid) ? json.valid : [];
-      let finalNegatives = await collectNegativeElapsed(valid, { forceMap: true });
+      let finalNegatives = await collectNegativeElapsed(valid, { forceMap: false });
       if(!finalNegatives.length) return true;
       const lines = finalNegatives.map((it)=> `${it.rfid} · ${formatNegativeElapsed(it.elapsed)}`);
-      const message = `Estas TICs tienen tiempo en negativo desde que finalizaron el atemperamiento:\n\n${lines.join('\n')}\n\n¿Deseas armar la caja de todos modos?`;
+      const message = `Los TICs atemperados tienen tiempo negativo desde que finalizaron el atemperamiento:\n\n${lines.join('\n')}\n\n¿Seguro que deseas crear la caja?`;
       return window.confirm(message);
     }catch(err){
       console.error('[Acond] confirmNegativeTimersBeforeCreate error:', err);
@@ -1418,6 +1432,13 @@
   const selectSeccion = document.getElementById('ensam-seccion');
   const locationHint = document.getElementById('ensam-location-hint');
 
+    const ticNegatives = new Map();
+    let negativeConsentRequired = false;
+    let negativeConsentChecked = false;
+    let negativeConsentContainer = null;
+    let negativeConsentList = null;
+    let negativeConsentCheckbox = null;
+
   // Conjuntos de válidos por rol
   const ticSet = new Set();
   const vipSet = new Set();
@@ -1550,8 +1571,82 @@
     }
 
 
+    function ensureNegativeConsentElements(){
+      if(negativeConsentContainer || !crearBtn) return;
+      const host = crearBtn.parentElement;
+      if(!host) return;
+      const wrapper = document.createElement('div');
+      wrapper.className = 'basis-full rounded-lg border border-warning/40 bg-warning/10 p-3 text-xs text-warning-content hidden flex flex-col gap-2';
+      const title = document.createElement('div');
+      title.className = 'font-semibold text-warning';
+      title.textContent = 'TICs atemperados con tiempo negativo';
+      const list = document.createElement('ul');
+      list.className = 'space-y-1 font-mono text-[11px]';
+      const label = document.createElement('label');
+      label.className = 'mt-1 flex items-start gap-2 text-[11px]';
+      const checkbox = document.createElement('input');
+      checkbox.type = 'checkbox';
+      checkbox.className = 'checkbox checkbox-warning checkbox-xs mt-[2px]';
+      const span = document.createElement('span');
+      span.className = 'leading-snug';
+      span.textContent = 'Comprendo que estas TICs vencieron su atemperamiento y deseo crear la caja igualmente.';
+      label.appendChild(checkbox);
+      label.appendChild(span);
+      wrapper.appendChild(title);
+      wrapper.appendChild(list);
+      wrapper.appendChild(label);
+      host.classList.add('flex', 'flex-wrap', 'gap-3');
+      host.appendChild(wrapper);
+      negativeConsentContainer = wrapper;
+      negativeConsentList = list;
+      negativeConsentCheckbox = checkbox;
+      negativeConsentCheckbox.addEventListener('change', ()=>{
+        negativeConsentChecked = !!negativeConsentCheckbox?.checked;
+        updateStatus();
+      });
+    }
+
+    function renderNegativeConsent(){
+      if(!crearBtn) return;
+      ensureNegativeConsentElements();
+      if(!negativeConsentContainer || !negativeConsentList || !negativeConsentCheckbox){
+        negativeConsentRequired = false;
+        negativeConsentChecked = false;
+        return;
+      }
+      if(!ticNegatives.size){
+        negativeConsentContainer.classList.add('hidden');
+        negativeConsentList.innerHTML = '';
+        negativeConsentCheckbox.checked = false;
+        negativeConsentRequired = false;
+        negativeConsentChecked = false;
+        return;
+      }
+      const items = Array.from(ticNegatives.entries()).map(([code, seconds])=>{
+        return `<li class="flex items-center justify-between gap-2"><span>${safeHTML(code)}</span><span class="text-error">${formatNegativeElapsed(seconds)}</span></li>`;
+      }).join('');
+      negativeConsentList.innerHTML = items;
+      negativeConsentContainer.classList.remove('hidden');
+      negativeConsentRequired = true;
+      if(!negativeConsentChecked){
+        negativeConsentCheckbox.checked = false;
+      }
+      negativeConsentChecked = !!negativeConsentCheckbox.checked;
+    }
+
+
     function renderLists(){
-      if(listTic) listTic.innerHTML = [...ticSet].map(r=>`<li class="px-2 py-1 bg-base-200 rounded text-xs font-mono truncate">${r}</li>`).join('');
+      if(listTic){
+        listTic.innerHTML = [...ticSet].map(r=>{
+          const code = String(r || '').toUpperCase();
+          const elapsed = ticNegatives.get(code);
+          const badge = Number.isFinite(elapsed) && elapsed>0
+            ? `<span class="badge badge-error badge-xs font-mono tabular-nums ml-2">${formatNegativeElapsed(elapsed)}</span>`
+            : '';
+          const textCls = badge ? 'text-error' : '';
+          return `<li class="px-2 py-1 bg-base-200 rounded text-xs font-mono truncate flex items-center justify-between gap-2 ${textCls}"><span>${safeHTML(code)}</span>${badge}</li>`;
+        }).join('');
+      }
       if(listVip) listVip.innerHTML = [...vipSet].map(r=>`<li class="px-2 py-1 bg-base-200 rounded text-xs font-mono truncate">${r}</li>`).join('');
       if(listCube) listCube.innerHTML = [...cubeSet].map(r=>`<li class="px-2 py-1 bg-base-200 rounded text-xs font-mono truncate">${r}</li>`).join('');
     }
@@ -1569,7 +1664,11 @@
       const faltVip = Math.max(0, 1 - vipSet.size);
       const faltCube = Math.max(0, 1 - cubeSet.size);
       if(hint) hint.textContent = compComplete() ? 'Composición completa. Indica duración y crea la caja.' : `Faltan: ${faltTic} TIC · ${faltVip} VIP · ${faltCube} CUBE`;
-      if(crearBtn) crearBtn.disabled = !(compComplete() && durationMinutes()>0);
+      if(crearBtn){
+        const ready = compComplete() && durationMinutes()>0;
+        const consentOk = !negativeConsentRequired || negativeConsentChecked;
+        crearBtn.disabled = !(ready && consentOk);
+      }
       // Orden select state
       if(linkOrderChk && orderSelect){ orderSelect.disabled = !linkOrderChk.checked; }
     }
@@ -1579,7 +1678,11 @@
       cubeSet.clear();
       scannedSet.clear();
       scanProcessQueue = Promise.resolve();
+      ticNegatives.clear();
+      negativeConsentRequired = false;
+      negativeConsentChecked = false;
       renderLists();
+      renderNegativeConsent();
       updateStatus();
       if(msg) msg.textContent='';
       if(orderSelect){ orderSelect.innerHTML = `<option value="">Selecciona una orden…</option>`; }
@@ -1623,7 +1726,13 @@
         const invalid = Array.isArray(json.invalid) ? json.invalid : [];
         // Reconstruir válidos por rol
         ticSet.clear(); vipSet.clear(); cubeSet.clear();
-        roles.forEach(v=>{ const code=String(v.rfid||'').toUpperCase(); if(v.rol==='tic') ticSet.add(code); else if(v.rol==='vip') vipSet.add(code); else if(v.rol==='cube') cubeSet.add(code); });
+        roles.forEach(v=>{
+          const code=String(v.rfid||'').toUpperCase();
+          if(!code) return;
+          if(v.rol==='tic') ticSet.add(code);
+          else if(v.rol==='vip') vipSet.add(code);
+          else if(v.rol==='cube') cubeSet.add(code);
+        });
         // Auto-filtrar: remover inválidos del buffer (no mostrar en UI ni revalidarlos)
         if(invalid.length){ invalid.forEach(it=> scannedSet.delete(String(it.rfid||'').toUpperCase())); }
         // Cap local: máximo 6 TICs visibles/seleccionables
@@ -1632,7 +1741,38 @@
           ticSet.clear(); keep.forEach(r=> ticSet.add(r));
           if(msg) msg.textContent = 'Máximo 6 TICs';
         }
-        renderLists(); updateStatus();
+        const prevNegatives = new Map(ticNegatives);
+        ticNegatives.clear();
+        roles.forEach(v=>{
+          if(v.rol!=='tic') return;
+          const code = String(v.rfid||'').toUpperCase();
+          const elapsed = Number(v.atemperadoElapsedSec);
+          if(code && Number.isFinite(elapsed) && elapsed > 0 && ticSet.has(code)){
+            ticNegatives.set(code, Math.max(0, Math.floor(elapsed)));
+          }
+        });
+        if(!ticNegatives.size){
+          try{
+            const fallback = await collectNegativeElapsed(roles, { forceMap:false });
+            fallback.forEach(({ rfid, elapsed })=>{
+              const code = String(rfid||'').toUpperCase();
+              const sec = Math.max(0, Math.floor(Number(elapsed)||0));
+              if(code && sec>0 && ticSet.has(code)){
+                ticNegatives.set(code, sec);
+              }
+            });
+          }catch(err){
+            console.warn('[Ensamblaje] No se pudo obtener tiempos negativos', err);
+          }
+        }
+        const negativesChanged = !mapsEqual(ticNegatives, prevNegatives);
+        if(negativesChanged){
+          negativeConsentChecked = false;
+          negativeConsentCheckbox && (negativeConsentCheckbox.checked = false);
+        }
+        renderLists();
+        renderNegativeConsent();
+        updateStatus();
         if(msg && !invalid.length) msg.textContent='';
         console.debug('[Ensamblaje] Validación OK', json);
       } catch(e){ if(msg) msg.textContent = e.message||'Error'; }
@@ -1725,6 +1865,11 @@
       if(rfids.length!==8){ if(msg) msg.textContent='Composición incompleta'; return; }
       const durMin = durationMinutes();
       if(durMin<=0){ if(msg) msg.textContent='Duración inválida'; return; }
+      if(negativeConsentRequired && !negativeConsentChecked){
+        if(msg) msg.textContent = 'Debes confirmar que aceptas crear la caja con TICs vencidos.';
+        negativeConsentCheckbox?.focus();
+        return;
+      }
       // Optional order id
       let orderId = null;
       if(linkOrderChk && linkOrderChk.checked && orderSelect && orderSelect.value){ orderId = Number(orderSelect.value); if(!Number.isFinite(orderId)) orderId = null; }
@@ -1732,8 +1877,11 @@
       const seccionId = selectSeccion ? String(selectSeccion.value || '').trim() : '';
       ensamZonaId = zonaId;
       ensamSeccionId = seccionId;
-      crearBtn.disabled = true; if(msg) msg.textContent='Creando caja...';
+      crearBtn.disabled = true; if(msg) msg.textContent='Validando cronómetro...';
       try {
+        const confirmed = await confirmNegativeTimersBeforeCreate(rfids);
+        if(!confirmed){ crearBtn.disabled=false; if(!msg.textContent) msg.textContent = 'Operación cancelada.'; return; }
+        if(msg) msg.textContent='Creando caja...';
         const attempt = await postJSONWithSedeTransfer('/operacion/acond/ensamblaje/create', { rfids, order_id: orderId, zona_id: zonaId, seccion_id: seccionId }, {
           promptMessage: (data) => data?.confirm || data?.error || 'Las piezas seleccionadas pertenecen a otra sede. ¿Deseas trasladarlas a tu sede actual?'
         });
@@ -1744,6 +1892,7 @@
         try { await fetch('/operacion/acond/caja/timer/start',{ method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ caja_id: json.caja_id, durationSec: durMin*60 })}); } catch(e){ console.warn('No se pudo iniciar timer', e); }
         if(msg) msg.textContent = `Caja ${json.lote} creada`;
         await loadData();
+        resetAll();
   setTimeout(()=>{ try { dialog.close(); } catch { } }, 700);
       } catch(e){ if(msg) msg.textContent = e.message || 'Error creando'; }
       finally { crearBtn.disabled=false; }

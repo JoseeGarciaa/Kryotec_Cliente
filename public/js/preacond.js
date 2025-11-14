@@ -1,3 +1,19 @@
+  function getCompletedAtMs(entry){
+    if(!entry) return null;
+    const completedRaw = entry.item_completed_at || entry.completed_at || entry.itemCompletedAt || entry.completedAt;
+    const updatedRaw = entry.item_updated_at || entry.updated_at || entry.updatedAt;
+    const completedMs = completedRaw ? new Date(completedRaw).getTime() : NaN;
+    const updatedMs = updatedRaw ? new Date(updatedRaw).getTime() : NaN;
+    const completedValid = Number.isFinite(completedMs);
+    const updatedValid = Number.isFinite(updatedMs);
+    if(completedValid && updatedValid){
+      return Math.max(completedMs, updatedMs);
+    }
+    if(completedValid) return completedMs;
+    if(updatedValid) return updatedMs;
+    return null;
+  }
+
 // Pre Acondicionamiento UX (tipo "registro masivo")
 (function(){
   const qs = (sel)=>document.querySelector(sel);
@@ -214,7 +230,6 @@
   }
 
   let serverNowOffsetMs = 0; // client_now - server_now to keep sync
-  const completedBaselines = { congelamiento: null, atemperamiento: null };
   function fmt(ms){
     const s = Math.floor(ms/1000);
     const negative = s < 0;
@@ -223,6 +238,31 @@
     const mm = String(Math.floor((abs%3600)/60)).padStart(2,'0');
     const ss = String(abs%60).padStart(2,'0');
     return `${negative?'-':''}${hh}:${mm}:${ss}`;
+  }
+
+  const NEGATIVE_SYNC_THRESHOLD_MS = 2 * 60 * 1000; // 2 minutos: evita saltos grandes pero sincroniza variaciones pequeñas
+
+  function computeBaselinesByLote(rows){
+    const perLote = new Map();
+    rows.forEach((row)=>{
+      const loteRaw = typeof row.lote === 'string' ? row.lote.trim() : row.lote ? String(row.lote) : '';
+      const key = loteRaw || '__sin_lote__';
+      const completedAt = getCompletedAtMs(row);
+      if(!Number.isFinite(completedAt)) return;
+      if(!perLote.has(key)) perLote.set(key, []);
+      perLote.get(key).push(completedAt);
+    });
+    const baselines = new Map();
+    perLote.forEach((list, key)=>{
+      if(!Array.isArray(list) || !list.length) return;
+      if(list.length === 1){ baselines.set(key, list[0]); return; }
+      const min = Math.min(...list);
+      const max = Math.max(...list);
+      if((max - min) <= NEGATIVE_SYNC_THRESHOLD_MS){
+        baselines.set(key, max);
+      }
+    });
+    return baselines;
   }
 
   let firstLoad = true;
@@ -279,14 +319,17 @@
     if(!container) return;
     const groups = new Map();
     for(const r of rows||[]){
-  // Normalize lote to string so numeric DB values (e.g., 6) don't break .trim()
-  const lote = String(r.lote ?? '').trim();
-      const key = lote || '(sin lote)';
-      if(!groups.has(key)) groups.set(key, []);
-      groups.get(key).push(r);
+      const loteRaw = typeof r.lote === 'string' ? r.lote.trim() : r.lote ? String(r.lote) : '';
+      const key = loteRaw || '(sin lote)';
+      if(!groups.has(key)) groups.set(key, { items: [], loteKey: loteRaw });
+      groups.get(key).items.push(r);
     }
     const cards = [];
-    groups.forEach((items, key)=>{
+    groups.forEach((group, key)=>{
+      const items = group.items;
+      const loteKey = group.loteKey || '__sin_lote__';
+      const baselines = computeBaselinesByLote(items);
+      const baselineTs = baselines.get(loteKey);
       const count = items.length;
       const header = `
         <div class="rounded-xl p-3 bg-gradient-to-r ${section==='congelamiento'?'from-sky-500 to-indigo-500':'from-amber-500 to-rose-500'} text-white flex items-center justify-between">
@@ -300,8 +343,6 @@
               : '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" class="w-6 h-6" fill="currentColor"><path d="M13 5.08V4a1 1 0 10-2 0v1.08A7.002 7.002 0 005 12a7 7 0 1014 0 7.002 7.002 0 00-6-6.92zM12 20a5 5 0 01-5-5c0-2.5 1.824-4.582 4.2-4.93V4h1.6v6.07C15.176 10.418 17 12.5 17 15a5 5 0 01-5 5z"/></svg>'}
           </div>
         </div>`;
-      const baseline = completedBaselines[section];
-      const hasBaseline = typeof baseline === 'number' && Number.isFinite(baseline);
       const list = items.map(it=>{
         const isCompleted = /Congelado|Atemperado/i.test(it.sub_estado||'');
         const started = it.started_at ? new Date(it.started_at).getTime() : null;
@@ -309,15 +350,14 @@
         const active = !!it.item_active && !!started && duration>0;
         const tableId = section==='congelamiento'?'tabla-cong':'tabla-atem';
         const timerId = `tm-card-${tableId}-${it.rfid}`;
-        const completedAtRaw = it.item_completed_at || it.item_updated_at || it.completed_at || it.updated_at || it.updatedAt;
-        const completedAt = completedAtRaw ? new Date(completedAtRaw).getTime() : null;
+        const completedAt = getCompletedAtMs(it);
         const showElapsed = !active && section==='atemperamiento' && /Atemperado/i.test(it.sub_estado||'') && Number.isFinite(completedAt);
-        const effectiveCompletedAt = showElapsed && hasBaseline ? baseline : completedAt;
+        const effectiveCompletedAt = Number.isFinite(baselineTs) ? baselineTs : completedAt;
         const nowServerMs = Date.now() + serverNowOffsetMs;
         let initialTimerText = '';
         if(active){
           initialTimerText = '00:00:00';
-        } else if(showElapsed && typeof effectiveCompletedAt === 'number' && Number.isFinite(effectiveCompletedAt)){
+        } else if(showElapsed && Number.isFinite(effectiveCompletedAt)){
           const elapsedInitialSec = Math.max(0, Math.floor((nowServerMs - effectiveCompletedAt)/1000));
           initialTimerText = fmt(-elapsedInitialSec * 1000);
         }
@@ -361,29 +401,12 @@
 
   function render(tbody, rows, emptyText, section){
     tbody.innerHTML = '';
-    completedBaselines[section] = null;
     if(!rows || !rows.length){
       const tr = document.createElement('tr'); const td = document.createElement('td');
       td.colSpan = 5; td.className = 'text-center py-10 opacity-70'; td.textContent = emptyText;
       tr.appendChild(td); tbody.appendChild(tr); return;
     }
-    let baselineCompletedAt = null;
-    if(section === 'atemperamiento'){
-      for(const row of rows){
-        const completedAtRaw = row.item_completed_at || row.item_updated_at || row.completed_at || row.updated_at || row.updatedAt;
-        const completedAtMs = completedAtRaw ? new Date(completedAtRaw).getTime() : null;
-        const startedMs = row.started_at ? new Date(row.started_at).getTime() : null;
-        const durationVal = Number(row.duration_sec||0);
-        const active = !!row.item_active && !!startedMs && durationVal > 0;
-        const subNorm = (row.sub_estado || '').toLowerCase();
-        const completed = /atemperado/.test(subNorm);
-        if(!active && completed && Number.isFinite(completedAtMs)){
-          baselineCompletedAt = baselineCompletedAt === null ? completedAtMs : Math.max(baselineCompletedAt, completedAtMs);
-        }
-      }
-    }
-    completedBaselines[section] = baselineCompletedAt;
-    const hasBaseline = typeof baselineCompletedAt === 'number' && Number.isFinite(baselineCompletedAt);
+    const baselineMap = computeBaselinesByLote(rows);
     const serverNowMs = Date.now() + serverNowOffsetMs;
     for(const r of rows){
       const tr = document.createElement('tr');
@@ -395,10 +418,11 @@
       const subRaw = r.sub_estado || '';
       const sub = subRaw.toLowerCase();
       const isCompleted = /congelado|atemperado/.test(sub);
-      const completedAtRaw = r.item_completed_at || r.item_updated_at || r.completed_at || r.updated_at || r.updatedAt;
-      const completedAt = completedAtRaw ? new Date(completedAtRaw).getTime() : null;
+      const completedAt = getCompletedAtMs(r);
       const showElapsed = !active && section === 'atemperamiento' && /atemperado/.test(sub) && Number.isFinite(completedAt);
-      const effectiveCompletedAt = showElapsed && hasBaseline ? baselineCompletedAt : completedAt;
+      const loteKey = typeof r.lote === 'string' ? r.lote.trim() : r.lote ? String(r.lote) : '';
+      const syncBase = baselineMap.get(loteKey || '__sin_lote__');
+      const effectiveCompletedAt = Number.isFinite(syncBase) ? syncBase : completedAt;
       if(isCompleted){
         tr.classList.add(section==='atemperamiento' ? 'bg-warning/10' : 'bg-info/10');
         tr.setAttribute('data-completed','1');
@@ -428,7 +452,7 @@
       let initialTimerText = '';
       if(active){
         initialTimerText = '00:00:00';
-      } else if(showElapsed && typeof effectiveCompletedAt === 'number' && Number.isFinite(effectiveCompletedAt)){
+      } else if(showElapsed && Number.isFinite(effectiveCompletedAt)){
         const elapsedInitialSec = Math.max(0, Math.floor((serverNowMs - effectiveCompletedAt)/1000));
         initialTimerText = fmt(-elapsedInitialSec * 1000);
       }
@@ -447,7 +471,7 @@
       } else {
         tr.removeAttribute('data-item-duration');
         tr.removeAttribute('data-timer-started');
-        if(showElapsed && typeof effectiveCompletedAt === 'number' && Number.isFinite(effectiveCompletedAt)){
+        if(showElapsed && Number.isFinite(effectiveCompletedAt)){
           tr.setAttribute('data-completed-at', String(effectiveCompletedAt));
         } else {
           tr.removeAttribute('data-completed-at');
