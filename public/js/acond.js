@@ -36,6 +36,11 @@
   let cajas = [];          // cajas en ensamblaje (con timers)
   let listoDespacho = [];  // items listos para despacho
   let scanBuffer = [];     // objetos escaneados (parcial)
+  const NEGATIVE_REFRESH_DELAY_MS = 160;
+  let scanNegatives = new Map(); // RFIDs -> elapsed seconds
+  let scanValidationTimerId = 0;
+  let scanValidationController = null;
+  let scanNegativeWarningEl = null;
   let viewMode = localStorage.getItem('acondViewMode') || 'cards';  // persist across reloads
   let pollingTimer = null;
   let tickingTimer = null;
@@ -73,6 +78,129 @@
     return `-${hh}:${mm}:${ss}`;
   }
 
+  function mapsEqual(a, b){
+    if(a.size !== b.size) return false;
+    for(const [k,v] of a.entries()){
+      if(!b.has(k) || b.get(k)!==v) return false;
+    }
+    return true;
+  }
+
+  function ensureNegativeWarningElement(){
+    if(scanNegativeWarningEl && scanNegativeWarningEl.isConnected){
+      return scanNegativeWarningEl;
+    }
+    scanNegativeWarningEl = document.getElementById('scan-negative-warning');
+    if(scanNegativeWarningEl && scanNegativeWarningEl.isConnected){
+      return scanNegativeWarningEl;
+    }
+    const el = document.createElement('div');
+    el.id = 'scan-negative-warning';
+    el.className = 'mt-3 hidden rounded-lg border border-warning/40 bg-warning/10 px-3 py-2 text-xs text-warning-content flex flex-col gap-1';
+    const anchor = document.getElementById('scan-negative-anchor')
+      || (listaParcial ? listaParcial.parentElement : null)
+      || document.querySelector('#scan-form-wrapper')
+      || document.querySelector('#scan-modal-body');
+    if(anchor){ anchor.appendChild(el); }
+    else { document.body.appendChild(el); }
+    scanNegativeWarningEl = el;
+    return el;
+  }
+
+  function renderNegativeWarning(){
+    const btnCrear = qs(sel.crearBtn);
+    if(!scanNegatives.size){
+      if(scanNegativeWarningEl && scanNegativeWarningEl.isConnected){
+        scanNegativeWarningEl.classList.add('hidden');
+        scanNegativeWarningEl.innerHTML = '';
+      }
+      if(btnCrear){
+        btnCrear.classList.remove('btn-warning');
+        btnCrear.classList.remove('btn-error');
+      }
+      return;
+    }
+    const el = ensureNegativeWarningElement();
+    const lines = Array.from(scanNegatives.entries()).map(([code, seconds])=>{
+      const pretty = formatNegativeElapsed(seconds);
+      return `<li class="flex items-center justify-between gap-2"><span class="font-mono">${safeHTML(code)}</span><span class="font-mono text-error">${pretty}</span></li>`;
+    }).join('');
+    el.innerHTML = `<div class="font-semibold text-warning">TICs con cronómetro negativo</div><ul class="space-y-1">${lines}</ul><div class="text-[11px] opacity-80">Debes confirmar la creación para continuar con estas TICs.</div>`;
+    el.classList.remove('hidden');
+    if(btnCrear){ btnCrear.classList.add('btn-warning'); }
+  }
+
+  function scheduleValidationRefresh(){
+    if(scanValidationTimerId){ clearTimeout(scanValidationTimerId); }
+    scanValidationTimerId = setTimeout(()=>{
+      scanValidationTimerId = 0;
+      refreshScanValidation();
+    }, NEGATIVE_REFRESH_DELAY_MS);
+  }
+
+  async function refreshScanValidation(){
+    if(!scanBuffer.length){
+        if(scanValidationController) scanValidationController.abort();
+        if(scanNegatives.size) {
+          scanNegatives = new Map();
+          renderNegativeWarning();
+        }
+        return;
+    }
+    if(scanValidationController){
+      scanValidationController.abort();
+    }
+    const controller = new AbortController();
+    scanValidationController = controller;
+    try{
+      const codes = scanBuffer.map((s)=> s.codigo);
+      const res = await fetch('/operacion/acond/ensamblaje/validate', {
+        method:'POST',
+        headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({ rfids: codes }),
+        signal: controller.signal
+      });
+      let json = null;
+      try{ json = await res.json(); }catch{ json = null; }
+      if(scanValidationController !== controller){ return; }
+      scanValidationController = null;
+      if(!res.ok || json?.ok === false){
+        console.warn('[Acond] refreshScanValidation: respuesta no válida', json);
+        if(scanNegatives.size){
+          scanNegatives = new Map();
+          renderNegativeWarning();
+        }
+        return;
+      }
+      const valid = Array.isArray(json?.valid) ? json.valid : [];
+      let negatives = [];
+      try{
+        negatives = await collectNegativeElapsed(valid, { forceMap: false });
+      }catch(err){
+        console.warn('[Acond] collectNegativeElapsed falló', err);
+        negatives = [];
+      }
+      const nextMap = new Map();
+      negatives.forEach((entry)=>{
+        const key = String(entry.rfid || '').toUpperCase();
+        const secNum = Math.max(0, Math.floor(Number(entry.elapsed)||0));
+        if(key && secNum > 0){
+          nextMap.set(key, secNum);
+        }
+      });
+      const changed = !mapsEqual(nextMap, scanNegatives);
+      scanNegatives = nextMap;
+      renderNegativeWarning();
+      if(changed){
+        refreshScanList();
+      }
+    }catch(err){
+      if(err?.name === 'AbortError') return;
+      scanValidationController = null;
+      console.warn('[Acond] refreshScanValidation error:', err);
+    }
+  }
+
   async function collectNegativeElapsed(validList, options){
     const opts = options || {};
     const ticValid = Array.isArray(validList)
@@ -82,7 +210,7 @@
     const direct = ticValid
       .map((it)=> ({ rfid: it.rfid, elapsed: Number(it.atemperadoElapsedSec) }))
       .filter((it)=> Number.isFinite(it.elapsed) && it.elapsed > 0);
-    if(direct.length && !opts.forceMap) return direct;
+    if(direct.length) return direct;
     try {
       const map = await loadAtemperamientoMap(!!opts.forceMap);
       const nowMs = Date.now() + serverNowOffsetMs;
@@ -93,7 +221,7 @@
         if(!info) return null;
         const sub = String(info.sub_estado || info.subEstado || '').toLowerCase();
         if(!sub.includes('atemperado')) return null;
-        const completedAtRaw = info.item_updated_at || info.updated_at || info.updatedAt || info.completed_at || info.completedAt;
+        const completedAtRaw = info.item_completed_at || info.completed_at || info.completedAt || info.item_updated_at || info.updated_at || info.updatedAt;
         const completedMs = completedAtRaw ? new Date(completedAtRaw).getTime() : NaN;
         if(!Number.isFinite(completedMs)) return null;
         const elapsed = Math.max(0, Math.floor((nowMs - completedMs)/1000));
@@ -304,77 +432,93 @@
       if(!listoDespacho || listoDespacho.length===0){
         renderListoEmpty();
       } else {
-  const raw = (qs(sel.filtroListoInput)?.value || '');
-  const firstRfid = parseRfids(raw)[0] || '';
-  const filterValue = raw.trim().toLowerCase();
-  // If a single RFID is scanned, derive caja_id and show the whole caja group
-  if(firstRfid){
-    const hit = listoDespacho.find(i => String(i.codigo||'').toUpperCase() === firstRfid);
-    focusListoCajaId = hit ? (hit.caja_id || hit.cajaId || hit.cajaID) : null;
-  } else {
-    focusListoCajaId = null;
-  }
-  const filtered = focusListoCajaId != null
-    ? listoDespacho.filter(i => String(i.caja_id||i.cajaId||i.cajaID) === String(focusListoCajaId))
-    : (filterValue ? listoDespacho.filter(i => (i.codigo||'').toLowerCase().includes(filterValue) || (i.nombre||'').toLowerCase().includes(filterValue) || (i.lote||'').toLowerCase().includes(filterValue)) : listoDespacho);
-  listoTotalCount = listoDespacho.length;
-  listoFilteredCount = filtered.length;
-  const rows = filtered.map(item => {
-    const cajaIdRef = item.caja_id || item.cajaId || item.cajaID;
-    const t = item.cronometro;
-    // Derivar estado sin mostrar controles de timer por fila
-    let estadoTxt = 'Lista para Despacho';
-    if(t && t.startsAt && t.endsAt){
-      const now = Date.now() + serverNowOffsetMs; const end = new Date(t.endsAt).getTime();
-  if(now < end) estadoTxt = 'Despachando';
-    }
-    return `<tr class="hover" data-caja-id="${safeHTML(cajaIdRef || '')}">\n      <td class="text-sm font-mono">${safeHTML(item.lote || '')}</td>\n      <td class="text-sm flex flex-col leading-tight">\n        <span class="uppercase tracking-wide">${safeHTML(item.nombre || '')}</span>\n        <span class="font-mono text-xs opacity-40">${safeHTML(item.codigo || '')}</span>\n      </td>\n      <td class="text-sm">${safeHTML(estadoTxt)}</td>\n    </tr>`;
-  }).join('');
+        const raw = (qs(sel.filtroListoInput)?.value || '');
+        const firstRfid = parseRfids(raw)[0] || '';
+        const filterValue = raw.trim().toLowerCase();
+        if(firstRfid){
+          const hit = listoDespacho.find(i => String(i.codigo||'').toUpperCase() === firstRfid);
+          focusListoCajaId = hit ? (hit.caja_id || hit.cajaId || hit.cajaID) : null;
+        } else {
+          focusListoCajaId = null;
+        }
+        const filtered = focusListoCajaId != null
+          ? listoDespacho.filter(i => String(i.caja_id||i.cajaId||i.cajaID) === String(focusListoCajaId))
+          : (filterValue
+              ? listoDespacho.filter(i =>
+                  (i.codigo||'').toLowerCase().includes(filterValue) ||
+                  (i.nombre||'').toLowerCase().includes(filterValue) ||
+                  (i.lote||'').toLowerCase().includes(filterValue))
+              : listoDespacho);
+        listoTotalCount = listoDespacho.length;
+        listoFilteredCount = filtered.length;
+        const rows = filtered.map(item => {
+          const cajaIdRef = item.caja_id || item.cajaId || item.cajaID;
+          const t = item.cronometro;
+          let estadoTxt = 'Lista para Despacho';
+          if(t && t.startsAt && t.endsAt){
+            const now = Date.now() + serverNowOffsetMs;
+            const end = new Date(t.endsAt).getTime();
+            if(now < end) estadoTxt = 'Despachando';
+          }
+          return `<tr class="hover" data-caja-id="${safeHTML(cajaIdRef || '')}">
+      <td class="text-sm font-mono">${safeHTML(item.lote || '')}</td>
+      <td class="text-sm flex flex-col leading-tight">
+        <span class="uppercase tracking-wide">${safeHTML(item.nombre || '')}</span>
+        <span class="font-mono text-xs opacity-40">${safeHTML(item.codigo || '')}</span>
+      </td>
+      <td class="text-sm">${safeHTML(estadoTxt)}</td>
+    </tr>`;
+        }).join('');
         body.innerHTML = rows;
       }
     }
     if(grid){
       if(!listoDespacho || listoDespacho.length===0){
-  grid.innerHTML = '<div class="col-span-full py-10 text-center text-sm opacity-60">No hay cajas</div>';
+        grid.innerHTML = '<div class="col-span-full py-10 text-center text-sm opacity-60">No hay cajas</div>';
       } else {
-  const raw = (qs(sel.filtroListoInput)?.value || '');
-  const firstRfid = parseRfids(raw)[0] || '';
-  const filterValue = raw.trim().toLowerCase();
-  const filtered = focusListoCajaId != null
-    ? listoDespacho.filter(i => String(i.caja_id||i.cajaId||i.cajaID) === String(focusListoCajaId))
-    : (filterValue ? listoDespacho.filter(i => (i.codigo||'').toLowerCase().includes(filterValue) || (i.nombre||'').toLowerCase().includes(filterValue) || (i.lote||'').toLowerCase().includes(filterValue)) : listoDespacho);
-  // Agrupar por caja_id para evitar colisión cuando dos cajas comparten mismo lote
-  const groupsMap = new Map();
-  filtered.forEach(it=>{
-    const cajaId = it.caja_id || it.cajaId || it.cajaID || it.caja; // caja_id numérico real
-    const key = cajaId ? `id:${cajaId}` : `lote:${it.lote}`; // fallback a lote sólo si no hay id
-    if(!groupsMap.has(key)) groupsMap.set(key, { lote: it.lote, cajaId: cajaId || it.lote, timers: [], componentes: [], categorias: {} });
-    const g = groupsMap.get(key);
-    // Colectar timer (puede repetirse, tomaremos primero válido)
-    if(it.cronometro && it.cronometro.startsAt && it.cronometro.endsAt){ g.timers.push(it.cronometro); }
-    const tipo = (it.categoria||'').toLowerCase();
-    g.componentes.push({ tipo, codigo: it.codigo, nombreUnidad: it.nombre_unidad || null });
-    g.categorias[tipo] = (g.categorias[tipo]||0)+1;
-  });
-  const groups = Array.from(groupsMap.values()).map(g=>{
-    // Consolidar timer único
-    const t = g.timers.find(ti=> ti && ti.startsAt && ti.endsAt) || null;
-    return { ...g, timers: t? [t]: [], timer: t };
-  });
-    // Reusar cajaCardHTML adaptando estructura a la esperada (id, codigoCaja, estado, timer, componentes)
-    grid.innerHTML = groups.map(g => {
-      const cubeComp = g.componentes.find(comp => comp.tipo === 'cube' && comp.nombreUnidad);
-      const nombreCaja = cubeComp?.nombreUnidad || g.lote || ('CAJA-'+g.cajaId);
-      const fakeCaja = {
-        id: g.cajaId,
-        codigoCaja: g.lote || ('CAJA-'+g.cajaId),
-        nombreCaja,
-        estado: 'Lista para Despacho',
-        timer: g.timer ? { startsAt: g.timer.startsAt, endsAt: g.timer.endsAt, completedAt: g.timer.completedAt } : null,
-        componentes: g.componentes
-      };
-      return cajaCardHTML(fakeCaja);
-    }).join('');
+        const raw = (qs(sel.filtroListoInput)?.value || '');
+        const firstRfid = parseRfids(raw)[0] || '';
+        const filterValue = raw.trim().toLowerCase();
+        const filtered = focusListoCajaId != null
+          ? listoDespacho.filter(i => String(i.caja_id||i.cajaId||i.cajaID) === String(focusListoCajaId))
+          : (filterValue
+              ? listoDespacho.filter(i =>
+                  (i.codigo||'').toLowerCase().includes(filterValue) ||
+                  (i.nombre||'').toLowerCase().includes(filterValue) ||
+                  (i.lote||'').toLowerCase().includes(filterValue))
+              : listoDespacho);
+        const groupsMap = new Map();
+        filtered.forEach(it=>{
+          const cajaId = it.caja_id || it.cajaId || it.cajaID || it.caja;
+          const key = cajaId ? `id:${cajaId}` : `lote:${it.lote}`;
+          if(!groupsMap.has(key)){
+            groupsMap.set(key, { lote: it.lote, cajaId: cajaId || it.lote, timers: [], componentes: [], categorias: {} });
+          }
+          const g = groupsMap.get(key);
+          if(it.cronometro && it.cronometro.startsAt && it.cronometro.endsAt){
+            g.timers.push(it.cronometro);
+          }
+          const tipo = (it.categoria||'').toLowerCase();
+          g.componentes.push({ tipo, codigo: it.codigo, nombreUnidad: it.nombre_unidad || null });
+          g.categorias[tipo] = (g.categorias[tipo]||0)+1;
+        });
+        const groups = Array.from(groupsMap.values()).map(g=>{
+          const t = g.timers.find(ti=> ti && ti.startsAt && ti.endsAt) || null;
+          return { ...g, timers: t ? [t] : [], timer: t };
+        });
+        grid.innerHTML = groups.map(g => {
+          const cubeComp = g.componentes.find(comp => comp.tipo === 'cube' && comp.nombreUnidad);
+          const nombreCaja = cubeComp?.nombreUnidad || g.lote || (`CAJA-${g.cajaId}`);
+          const fakeCaja = {
+            id: g.cajaId,
+            codigoCaja: g.lote || (`CAJA-${g.cajaId}`),
+            nombreCaja,
+            estado: 'Lista para Despacho',
+            timer: g.timer ? { startsAt: g.timer.startsAt, endsAt: g.timer.endsAt, completedAt: g.timer.completedAt } : null,
+            componentes: g.componentes
+          };
+          return cajaCardHTML(fakeCaja);
+        }).join('');
       }
     }
   }
@@ -900,9 +1044,26 @@
     if(!ul) return;
     if(scanBuffer.length===0){
       ul.innerHTML = '<li class="text-xs text-gray-400">Sin componentes escaneados</li>';
+      if(scanNegatives.size){
+        scanNegatives = new Map();
+      }
+      renderNegativeWarning();
       return;
     }
-    ul.innerHTML = scanBuffer.map(s=> `<li class=\"text-xs font-mono flex justify-between items-center\">${safeHTML(s.codigo)} <button class=\"btn btn-ghost btn-xs\" data-action=\"scan-remove\" data-codigo=\"${safeHTML(s.codigo)}\">✕</button></li>`).join('');
+    ul.innerHTML = scanBuffer.map((s)=>{
+      const code = String(s.codigo || '').toUpperCase();
+      const negativeSec = scanNegatives.get(code);
+      const hasNegative = Number.isFinite(negativeSec) && negativeSec > 0;
+      const badge = hasNegative
+        ? `<span class='badge badge-error badge-xs font-mono tabular-nums ml-2'>${formatNegativeElapsed(negativeSec)}</span>`
+        : '';
+      const textCls = hasNegative ? 'text-error' : '';
+      return `<li class='text-xs font-mono flex justify-between items-center ${textCls}'>
+                <span class='flex items-center gap-2'>${safeHTML(code)}${badge}</span>
+                <button class='btn btn-ghost btn-xs' data-action='scan-remove' data-codigo='${safeHTML(code)}'>✕</button>
+              </li>`;
+    }).join('');
+    renderNegativeWarning();
   }
 
   async function processScan(code){
@@ -914,6 +1075,7 @@
     if(!proceed) return;
     scanBuffer.push({ codigo: clean });
     refreshScanList();
+    scheduleValidationRefresh();
   }
 
   async function validarParcial(){
@@ -997,18 +1159,33 @@
         const h = Math.floor(sec/3600); const m = Math.floor((sec%3600)/60); const s = sec%60;
         const hh = String(h).padStart(2,'0'); const mm = String(m).padStart(2,'0'); const ss = String(s).padStart(2,'0');
         const colorClass = sec<=60 ? 'badge-error' : (sec<=300 ? 'badge-warning' : 'badge-info');
-  badgeHTML = `<span class=\"badge ${colorClass} badge-xs font-mono whitespace-nowrap tabular-nums\" data-timer-chrono data-label=\"Despachando\" data-caja-id=\"${safeHTML(group.cajaId)}\">${hh}:${mm}:${ss}</span>`;
-        actionsHTML = `<div class=\"flex gap-1\" data-timer-actions data-caja-id=\"${safeHTML(group.cajaId)}\">\n            <button class=\"btn btn-ghost btn-xs\" data-action=\"timer-clear\" data-caja-id=\"${safeHTML(group.cajaId)}\" title=\"Reiniciar\"><span class=\"material-icons text-[14px]\">restart_alt</span></button>\n          </div>`;
+        badgeHTML = `<span class="badge ${colorClass} badge-xs font-mono whitespace-nowrap tabular-nums" data-timer-chrono data-label="Despachando" data-caja-id="${safeHTML(group.cajaId)}">${hh}:${mm}:${ss}</span>`;
+        actionsHTML = `<div class="flex gap-1" data-timer-actions data-caja-id="${safeHTML(group.cajaId)}">
+            <button class="btn btn-ghost btn-xs" data-action="timer-clear" data-caja-id="${safeHTML(group.cajaId)}" title="Reiniciar"><span class="material-icons text-[14px]">restart_alt</span></button>
+          </div>`;
       } else {
-        badgeHTML = `<span class=\"badge badge-success badge-xs font-mono\">Lista para Despacho</span>`;
-        actionsHTML = `<div class=\"flex gap-1\" data-timer-actions data-caja-id=\"${safeHTML(group.cajaId)}\">\n            <button class=\"btn btn-ghost btn-xs\" data-action=\"timer-start\" data-caja-id=\"${safeHTML(group.cajaId)}\" title=\"Iniciar\"><span class=\"material-icons text-[14px]\">play_arrow</span></button>\n          </div>`;
+        badgeHTML = `<span class="badge badge-success badge-xs font-mono">Lista para Despacho</span>`;
+        actionsHTML = `<div class="flex gap-1" data-timer-actions data-caja-id="${safeHTML(group.cajaId)}">
+            <button class="btn btn-ghost btn-xs" data-action="timer-start" data-caja-id="${safeHTML(group.cajaId)}" title="Iniciar"><span class="material-icons text-[14px]">play_arrow</span></button>
+          </div>`;
       }
     } else {
-      actionsHTML = `<button class=\"btn btn-ghost btn-xs\" data-action=\"timer-start\" data-caja-id=\"${safeHTML(group.cajaId)}\" title=\"Iniciar\"><span class=\"material-icons text-[14px]\">play_arrow</span></button>`;
+      actionsHTML = `<button class="btn btn-ghost btn-xs" data-action="timer-start" data-caja-id="${safeHTML(group.cajaId)}" title="Iniciar"><span class="material-icons text-[14px]">play_arrow</span></button>`;
     }
-    const categoriaBadges = Object.entries(group.categorias).sort().map(([k,v])=>`<span class=\"badge badge-ghost badge-xs\">${k} x${v}</span>`).join(' ');
-    const codes = group.items.slice(0,8).map(it=>`<span class=\"badge badge-neutral badge-xs font-mono\" title=\"${safeHTML(it.codigo)}\">${safeHTML(it.codigo.slice(-6))}</span>`).join(' ');
-  return `<div class=\"card bg-base-100 shadow-sm border border-base-200 p-2 cursor-pointer hover:border-primary/60 transition\" data-listo-caja=\"${safeHTML(group.lote)}\" data-caja-id=\"${safeHTML(group.cajaId)}\">\n      <div class=\"flex items-start justify-between mb-1 pointer-events-none\">\n        <span class=\"font-mono text-[10px]\">${safeHTML(group.lote)}</span>\n        <span class=\"badge badge-info badge-xs\">${group.items.length} items</span>\n      </div>\n      <div class=\"text-[10px] flex flex-wrap gap-1 mb-1 pointer-events-none\">${categoriaBadges||''}</div>\n      <div class=\"text-[10px] grid grid-cols-3 gap-1 mb-1 pointer-events-none\">${codes}</div>\n      <div class=\"flex items-center justify-between\">\n        <div class=\"text-[10px] opacity-80\">${badgeHTML}</div>\n        ${actionsHTML}\n      </div>\n    </div>`;
+    const categoriaBadges = Object.entries(group.categorias).sort().map(([k,v])=>`<span class="badge badge-ghost badge-xs">${k} x${v}</span>`).join(' ');
+    const codes = group.items.slice(0,8).map(it=>`<span class="badge badge-neutral badge-xs font-mono" title="${safeHTML(it.codigo)}">${safeHTML(it.codigo.slice(-6))}</span>`).join(' ');
+    return `<div class="card bg-base-100 shadow-sm border border-base-200 p-2 cursor-pointer hover:border-primary/60 transition" data-listo-caja="${safeHTML(group.lote)}" data-caja-id="${safeHTML(group.cajaId)}">
+      <div class="flex items-start justify-between mb-1 pointer-events-none">
+        <span class="font-mono text-[10px]">${safeHTML(group.lote)}</span>
+        <span class="badge badge-info badge-xs">${group.items.length} items</span>
+      </div>
+      <div class="text-[10px] flex flex-wrap gap-1 mb-1 pointer-events-none">${categoriaBadges||''}</div>
+      <div class="text-[10px] grid grid-cols-3 gap-1 mb-1 pointer-events-none">${codes}</div>
+      <div class="flex items-center justify-between">
+        <div class="text-[10px] opacity-80">${badgeHTML}</div>
+        ${actionsHTML}
+      </div>
+    </div>`;
   }
   
 
@@ -1024,7 +1201,13 @@
       if(!res.ok) throw new Error(json.message || 'Error creando caja');
       // Reset buffer
       scanBuffer = [];
+      if(scanValidationController){
+        scanValidationController.abort();
+        scanValidationController = null;
+      }
+      scanNegatives = new Map();
       refreshScanList();
+      renderNegativeWarning();
       // Reload data to include the new caja
       await loadData();
     }catch(err){
@@ -1126,7 +1309,6 @@
     if(validar){ validar.addEventListener('click', e => { e.preventDefault(); validarParcial(); }); }
     const crear = qs(sel.crearBtn);
     if(crear){ crear.addEventListener('click', e => { e.preventDefault(); crearCaja(); }); }
-
     // Delegation (remove scanned, timer actions, detalle)
     document.addEventListener('click', e => {
       const t = e.target;
@@ -1136,18 +1318,21 @@
       if(t.matches('[data-action="scan-remove"]')){
         const codigo = t.getAttribute('data-codigo');
         scanBuffer = scanBuffer.filter(s=> s.codigo !== codigo);
+        const normalized = codigo ? String(codigo).toUpperCase() : '';
+        if(normalized){ scanNegatives.delete(normalized); }
         refreshScanList();
+        scheduleValidationRefresh();
       }
 
       // timer actions
       if(t.matches('[data-action="timer-start"]')){ const id=t.getAttribute('data-caja-id'); if(id) timerAction(id,'start'); }
       if(t.matches('[data-action="timer-complete"]')){ const id=t.getAttribute('data-caja-id'); if(id) timerAction(id,'complete'); }
       if(t.matches('[data-action="timer-clear"]')){ const id=t.getAttribute('data-caja-id'); if(id) timerAction(id,'clear'); }
-  // botón X dentro del badge (stop-caja-timer)
-  if(t.classList.contains('stop-caja-timer')){ const id=t.getAttribute('data-caja'); if(id) timerAction(id,'clear'); }
+      // botón X dentro del badge (stop-caja-timer)
+      if(t.classList.contains('stop-caja-timer')){ const id=t.getAttribute('data-caja'); if(id) timerAction(id,'clear'); }
 
       // mover a Lista para Despacho (solo Ensamblado)
-  // (Botón mover-despacho retirado a solicitud del usuario)
+      // (Botón mover-despacho retirado a solicitud del usuario)
 
       // detalle
       if(t.matches('[data-action="detalle"]')){ openCajaDetalle(t.getAttribute('data-caja-id')); }

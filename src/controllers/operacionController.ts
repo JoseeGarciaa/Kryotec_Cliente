@@ -2455,6 +2455,83 @@ export const OperacionController = {
 
     // Try to add missing columns if table existed before
     await withTenant(tenant, (c) => c.query(`ALTER TABLE preacond_timers ADD COLUMN IF NOT EXISTS lote text`));
+    await withTenant(tenant, (c) => c.query(`ALTER TABLE preacond_item_timers ADD COLUMN IF NOT EXISTS completed_at timestamptz`));
+
+    // Auto-complete item timers whose duration already finished (even if UI not open)
+    const expiredTimers = await withTenant(tenant, (c) => c.query<{
+      rfid: string;
+      section: 'congelamiento' | 'atemperamiento';
+      completed_at: Date;
+    }>(
+      `SELECT pit.rfid,
+              pit.section,
+              (pit.started_at + pit.duration_sec * INTERVAL '1 second') AS completed_at
+         FROM preacond_item_timers pit
+        WHERE pit.active = true
+          AND pit.started_at IS NOT NULL
+          AND pit.duration_sec IS NOT NULL
+          AND (pit.started_at + pit.duration_sec * INTERVAL '1 second') <= NOW()`
+    ));
+    if (expiredTimers.rowCount) {
+      const rows = expiredTimers.rows;
+      const rfids = rows.map((r) => r.rfid);
+      const sections = rows.map((r) => r.section);
+      const completedList = rows.map((r) => r.completed_at);
+      await withTenant(tenant, async (c) => {
+        await c.query('BEGIN');
+        try {
+          await c.query(
+            `UPDATE inventario_credocubes ic
+                SET sub_estado = CASE WHEN exp.section = 'congelamiento' THEN 'Congelado' ELSE 'Atemperado' END
+               FROM UNNEST($1::text[], $2::text[]) AS exp(rfid, section)
+              WHERE ic.rfid = exp.rfid`,
+            [rfids, sections]
+          );
+          await c.query(
+            `UPDATE preacond_item_timers pit
+                SET completed_at = CASE
+                                     WHEN pit.completed_at IS NOT NULL THEN pit.completed_at
+                                     ELSE exp.completed_at
+                                   END,
+                    started_at = NULL,
+                    duration_sec = NULL,
+                    active = false,
+                    updated_at = NOW()
+               FROM UNNEST($1::text[], $2::text[], $3::timestamptz[]) AS exp(rfid, section, completed_at)
+              WHERE pit.rfid = exp.rfid AND pit.section = exp.section`,
+            [rfids, sections, completedList]
+          );
+          const lotesQ = await c.query<{ rfid: string; lote: string | null }>(
+            `SELECT ic.rfid, ic.lote FROM inventario_credocubes ic WHERE ic.rfid = ANY($1::text[])`,
+            [rfids]
+          );
+          const loteMap = new Map<string, string | null>();
+          for (const row of lotesQ.rows) {
+            loteMap.set(row.rfid, row.lote);
+          }
+          for (const row of rows) {
+            const nextState = row.section === 'congelamiento' ? 'Congelado' : 'Atemperado';
+            const lote = (loteMap.get(row.rfid) || '').trim() || null;
+            try {
+              await AlertsModel.createOrIncrementPreacondGroup(c, {
+                tipo_alerta: `inventario:preacond:${nextState.toLowerCase()}`,
+                lote,
+                nextState,
+                delta: 1,
+              });
+            } catch (alertErr) {
+              if (process.env.NODE_ENV === 'development') {
+                console.warn('[preacondData] alerta expirado falló', alertErr);
+              }
+            }
+          }
+          await c.query('COMMIT');
+        } catch (err) {
+          await c.query('ROLLBACK');
+          throw err;
+        }
+      });
+    }
 
     // Cleanup: drop rows for RFIDs that are no longer in Pre Acondicionamiento
     await withTenant(tenant, (c) => c.query(
@@ -2489,9 +2566,9 @@ export const OperacionController = {
    const rowsCongParams: any[] = [];
    const rowsCongSede = pushSedeFilter(rowsCongParams, sedeId);
    const rowsCong = await withTenant(tenant, (c) => c.query(
-            `SELECT ic.rfid, ic.nombre_unidad, ic.lote, ic.estado, ic.sub_estado,
-              pit.started_at AS started_at, pit.duration_sec AS duration_sec, pit.active AS item_active, pit.lote AS item_lote,
-              pit.updated_at AS item_updated_at
+                  `SELECT ic.rfid, ic.nombre_unidad, ic.lote, ic.estado, ic.sub_estado,
+                    pit.started_at AS started_at, pit.duration_sec AS duration_sec, pit.active AS item_active, pit.lote AS item_lote,
+                    pit.updated_at AS item_updated_at, pit.completed_at AS item_completed_at
        FROM inventario_credocubes ic
        JOIN modelos m ON m.modelo_id = ic.modelo_id
        LEFT JOIN preacond_item_timers pit
@@ -2504,9 +2581,9 @@ export const OperacionController = {
    const rowsAtemParams: any[] = [];
    const rowsAtemSede = pushSedeFilter(rowsAtemParams, sedeId);
    const rowsAtem = await withTenant(tenant, (c) => c.query(
-            `SELECT ic.rfid, ic.nombre_unidad, ic.lote, ic.estado, ic.sub_estado,
-              pit.started_at AS started_at, pit.duration_sec AS duration_sec, pit.active AS item_active, pit.lote AS item_lote,
-              pit.updated_at AS item_updated_at
+                  `SELECT ic.rfid, ic.nombre_unidad, ic.lote, ic.estado, ic.sub_estado,
+                    pit.started_at AS started_at, pit.duration_sec AS duration_sec, pit.active AS item_active, pit.lote AS item_lote,
+                    pit.updated_at AS item_updated_at, pit.completed_at AS item_completed_at
        FROM inventario_credocubes ic
        JOIN modelos m ON m.modelo_id = ic.modelo_id
        LEFT JOIN preacond_item_timers pit
@@ -3078,7 +3155,8 @@ export const OperacionController = {
            SET started_at = EXCLUDED.started_at,
                duration_sec = EXCLUDED.duration_sec,
                lote = COALESCE(preacond_item_timers.lote, EXCLUDED.lote),
-               active = true,
+              completed_at = NULL,
+              active = true,
                updated_at = NOW()`,
         [r, s, dur, loteVal]
       );
@@ -3115,6 +3193,7 @@ export const OperacionController = {
          ON CONFLICT (rfid, section) DO UPDATE
            SET started_at = NULL,
                duration_sec = NULL,
+              completed_at = NULL,
                active = false,
                updated_at = NOW()`,
         [r, s]
@@ -3148,7 +3227,16 @@ export const OperacionController = {
         // Deactivate item timers
         await c.query(
           `UPDATE preacond_item_timers
-              SET started_at = NULL, duration_sec = NULL, lote = lote, active = false, updated_at = NOW()
+              SET completed_at = CASE
+                                    WHEN started_at IS NOT NULL AND duration_sec IS NOT NULL
+                                      THEN COALESCE(completed_at, started_at + duration_sec * INTERVAL '1 second')
+                                    ELSE COALESCE(completed_at, NOW())
+                                  END,
+                  started_at = NULL,
+                  duration_sec = NULL,
+                  lote = lote,
+                  active = false,
+                  updated_at = NOW()
             WHERE section = $1 AND active = true`, [s]
         );
         // Deactivate group timer
@@ -3205,7 +3293,17 @@ export const OperacionController = {
           [s, r]
         );
         await c.query(
-          `UPDATE preacond_item_timers SET started_at = NULL, duration_sec = NULL, active = false, updated_at = NOW() WHERE section = $1 AND rfid = $2`,
+          `UPDATE preacond_item_timers
+              SET completed_at = CASE
+                                    WHEN started_at IS NOT NULL AND duration_sec IS NOT NULL
+                                      THEN COALESCE(completed_at, started_at + duration_sec * INTERVAL '1 second')
+                                    ELSE COALESCE(completed_at, NOW())
+                                  END,
+                  started_at = NULL,
+                  duration_sec = NULL,
+                  active = false,
+                  updated_at = NOW()
+            WHERE section = $1 AND rfid = $2`,
           [s, r]
         );
         await c.query('COMMIT');
@@ -3640,8 +3738,8 @@ export const OperacionController = {
               CASE
                 WHEN LOWER(ic.estado) = LOWER('Pre Acondicionamiento')
                   AND LOWER(COALESCE(ic.sub_estado, '')) LIKE 'atemperad%'
-                  AND pit.updated_at IS NOT NULL
-                THEN GREATEST(0, EXTRACT(EPOCH FROM (NOW() - pit.updated_at))::int)
+                  AND COALESCE(pit.completed_at, pit.updated_at) IS NOT NULL
+                THEN GREATEST(0, EXTRACT(EPOCH FROM (NOW() - COALESCE(pit.completed_at, pit.updated_at)))::int)
                 ELSE NULL
               END AS atemperado_elapsed_sec
          FROM inventario_credocubes ic

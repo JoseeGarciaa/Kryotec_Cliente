@@ -309,9 +309,10 @@
         const active = !!it.item_active && !!started && duration>0;
         const tableId = section==='congelamiento'?'tabla-cong':'tabla-atem';
         const timerId = `tm-card-${tableId}-${it.rfid}`;
-        const updatedAt = it.item_updated_at ? new Date(it.item_updated_at).getTime() : null;
-        const showElapsed = !active && section==='atemperamiento' && /Atemperado/i.test(it.sub_estado||'') && Number.isFinite(updatedAt);
-        const effectiveCompletedAt = showElapsed && hasBaseline ? baseline : updatedAt;
+        const completedAtRaw = it.item_completed_at || it.item_updated_at || it.completed_at || it.updated_at || it.updatedAt;
+        const completedAt = completedAtRaw ? new Date(completedAtRaw).getTime() : null;
+        const showElapsed = !active && section==='atemperamiento' && /Atemperado/i.test(it.sub_estado||'') && Number.isFinite(completedAt);
+        const effectiveCompletedAt = showElapsed && hasBaseline ? baseline : completedAt;
         const nowServerMs = Date.now() + serverNowOffsetMs;
         let initialTimerText = '';
         if(active){
@@ -369,12 +370,15 @@
     let baselineCompletedAt = null;
     if(section === 'atemperamiento'){
       for(const row of rows){
-        const updatedAtMs = row.item_updated_at ? new Date(row.item_updated_at).getTime() : null;
-        const active = !!row.item_active && !!row.started_at && Number(row.duration_sec||0) > 0;
+        const completedAtRaw = row.item_completed_at || row.item_updated_at || row.completed_at || row.updated_at || row.updatedAt;
+        const completedAtMs = completedAtRaw ? new Date(completedAtRaw).getTime() : null;
+        const startedMs = row.started_at ? new Date(row.started_at).getTime() : null;
+        const durationVal = Number(row.duration_sec||0);
+        const active = !!row.item_active && !!startedMs && durationVal > 0;
         const subNorm = (row.sub_estado || '').toLowerCase();
         const completed = /atemperado/.test(subNorm);
-        if(!active && completed && Number.isFinite(updatedAtMs)){
-          baselineCompletedAt = baselineCompletedAt === null ? updatedAtMs : Math.max(baselineCompletedAt, updatedAtMs);
+        if(!active && completed && Number.isFinite(completedAtMs)){
+          baselineCompletedAt = baselineCompletedAt === null ? completedAtMs : Math.max(baselineCompletedAt, completedAtMs);
         }
       }
     }
@@ -391,9 +395,10 @@
       const subRaw = r.sub_estado || '';
       const sub = subRaw.toLowerCase();
       const isCompleted = /congelado|atemperado/.test(sub);
-      const updatedAt = r.item_updated_at ? new Date(r.item_updated_at).getTime() : null;
-      const showElapsed = !active && section === 'atemperamiento' && /atemperado/.test(sub) && Number.isFinite(updatedAt);
-      const effectiveCompletedAt = showElapsed && hasBaseline ? baselineCompletedAt : updatedAt;
+      const completedAtRaw = r.item_completed_at || r.item_updated_at || r.completed_at || r.updated_at || r.updatedAt;
+      const completedAt = completedAtRaw ? new Date(completedAtRaw).getTime() : null;
+      const showElapsed = !active && section === 'atemperamiento' && /atemperado/.test(sub) && Number.isFinite(completedAt);
+      const effectiveCompletedAt = showElapsed && hasBaseline ? baselineCompletedAt : completedAt;
       if(isCompleted){
         tr.classList.add(section==='atemperamiento' ? 'bg-warning/10' : 'bg-info/10');
         tr.setAttribute('data-completed','1');
