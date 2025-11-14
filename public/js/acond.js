@@ -65,6 +65,47 @@
     const serverNow = Date.now() + serverNowOffsetMs;
     return end - serverNow;
   }
+  function formatNegativeElapsed(sec){
+    const total = Math.max(0, Math.floor(Number(sec)||0));
+    const hh = String(Math.floor(total/3600)).padStart(2,'0');
+    const mm = String(Math.floor((total%3600)/60)).padStart(2,'0');
+    const ss = String(total%60).padStart(2,'0');
+    return `-${hh}:${mm}:${ss}`;
+  }
+
+  async function collectNegativeElapsed(validList, options){
+    const opts = options || {};
+    const ticValid = Array.isArray(validList)
+      ? validList.filter((it)=> it && it.rol === 'tic')
+      : [];
+    if(!ticValid.length) return [];
+    const direct = ticValid
+      .map((it)=> ({ rfid: it.rfid, elapsed: Number(it.atemperadoElapsedSec) }))
+      .filter((it)=> Number.isFinite(it.elapsed) && it.elapsed > 0);
+    if(direct.length && !opts.forceMap) return direct;
+    try {
+      const map = await loadAtemperamientoMap(!!opts.forceMap);
+      const nowMs = Date.now() + serverNowOffsetMs;
+      const fallback = ticValid.map((it)=>{
+        const code = String(it.rfid || '').toUpperCase();
+        if(!code) return null;
+        const info = map.get(code);
+        if(!info) return null;
+        const sub = String(info.sub_estado || info.subEstado || '').toLowerCase();
+        if(!sub.includes('atemperado')) return null;
+        const completedAtRaw = info.item_updated_at || info.updated_at || info.updatedAt || info.completed_at || info.completedAt;
+        const completedMs = completedAtRaw ? new Date(completedAtRaw).getTime() : NaN;
+        if(!Number.isFinite(completedMs)) return null;
+        const elapsed = Math.max(0, Math.floor((nowMs - completedMs)/1000));
+        if(elapsed <= 0) return null;
+        return { rfid: it.rfid, elapsed };
+      }).filter(Boolean);
+      return fallback.length ? fallback : direct;
+    } catch(err){
+      console.warn('[Acond] No se pudo calcular tiempo negativo usando mapa de preacondicionamiento', err);
+      return direct;
+    }
+  }
   // Parse 24-char RFID chunks (supports raw gun bursts and mixed separators)
   function parseRfids(raw){
     const s = String(raw||'').toUpperCase().replace(/\s+/g,'');
@@ -883,10 +924,41 @@
       const json = await res.json();
       if(!res.ok){ throw new Error(json.message || 'Error de validación'); }
       console.log('[Acond] Validación parcial OK', json);
+      const negatives = await collectNegativeElapsed(json?.valid, { forceMap: false });
+      if(Array.isArray(negatives) && negatives.length){
+        const detail = negatives.map((it)=> `${it.rfid} · ${formatNegativeElapsed(it.elapsed)}`).join('\n');
+        alert(`Advertencia: las siguientes TICs ya superaron su atemperamiento:\n\n${detail}`);
+      }
     }catch(err){
       console.error('[Acond] validarParcial error:', err);
       alert(err.message || 'Error validando');
     }finally{ disableBtn(sel.validarBtn, false); }
+  }
+
+  async function confirmNegativeTimersBeforeCreate(){
+    try{
+      const res = await fetch('/operacion/acond/ensamblaje/validate',{ method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ rfids: scanBuffer.map(s=> s.codigo) })});
+      const json = await res.json();
+      if(!res.ok || json?.ok === false){
+        throw new Error(json?.message || json?.error || 'Error verificando la composición');
+      }
+      const invalid = Array.isArray(json?.invalid) ? json.invalid : [];
+      if(invalid.length){
+        const details = invalid.map((it)=> `${it.rfid || 'RFID'}: ${it.reason || 'Motivo desconocido'}`).join('\n');
+        alert(`Revisa los componentes antes de crear la caja:\n\n${details}`);
+        return false;
+      }
+      const valid = Array.isArray(json?.valid) ? json.valid : [];
+      let finalNegatives = await collectNegativeElapsed(valid, { forceMap: true });
+      if(!finalNegatives.length) return true;
+      const lines = finalNegatives.map((it)=> `${it.rfid} · ${formatNegativeElapsed(it.elapsed)}`);
+      const message = `Estas TICs tienen tiempo en negativo desde que finalizaron el atemperamiento:\n\n${lines.join('\n')}\n\n¿Deseas armar la caja de todos modos?`;
+      return window.confirm(message);
+    }catch(err){
+      console.error('[Acond] confirmNegativeTimersBeforeCreate error:', err);
+      alert(err?.message || 'Error verificando el estado de las TICs');
+      return false;
+    }
   }
 
   function listoCardHTML(item){
@@ -942,6 +1014,8 @@
 
   async function crearCaja(){
     if(scanBuffer.length===0){ alert('Agregue componentes primero.'); return; }
+    const proceed = await confirmNegativeTimersBeforeCreate();
+    if(!proceed) return;
     disableBtn(sel.crearBtn, true);
     try{
   // Backend espera { rfids: [] }

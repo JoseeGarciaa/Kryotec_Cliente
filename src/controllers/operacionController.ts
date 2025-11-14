@@ -2489,8 +2489,9 @@ export const OperacionController = {
    const rowsCongParams: any[] = [];
    const rowsCongSede = pushSedeFilter(rowsCongParams, sedeId);
    const rowsCong = await withTenant(tenant, (c) => c.query(
-      `SELECT ic.rfid, ic.nombre_unidad, ic.lote, ic.estado, ic.sub_estado,
-              pit.started_at AS started_at, pit.duration_sec AS duration_sec, pit.active AS item_active, pit.lote AS item_lote
+            `SELECT ic.rfid, ic.nombre_unidad, ic.lote, ic.estado, ic.sub_estado,
+              pit.started_at AS started_at, pit.duration_sec AS duration_sec, pit.active AS item_active, pit.lote AS item_lote,
+              pit.updated_at AS item_updated_at
        FROM inventario_credocubes ic
        JOIN modelos m ON m.modelo_id = ic.modelo_id
        LEFT JOIN preacond_item_timers pit
@@ -2503,8 +2504,9 @@ export const OperacionController = {
    const rowsAtemParams: any[] = [];
    const rowsAtemSede = pushSedeFilter(rowsAtemParams, sedeId);
    const rowsAtem = await withTenant(tenant, (c) => c.query(
-      `SELECT ic.rfid, ic.nombre_unidad, ic.lote, ic.estado, ic.sub_estado,
-              pit.started_at AS started_at, pit.duration_sec AS duration_sec, pit.active AS item_active, pit.lote AS item_lote
+            `SELECT ic.rfid, ic.nombre_unidad, ic.lote, ic.estado, ic.sub_estado,
+              pit.started_at AS started_at, pit.duration_sec AS duration_sec, pit.active AS item_active, pit.lote AS item_lote,
+              pit.updated_at AS item_updated_at
        FROM inventario_credocubes ic
        JOIN modelos m ON m.modelo_id = ic.modelo_id
        LEFT JOIN preacond_item_timers pit
@@ -3634,15 +3636,24 @@ export const OperacionController = {
     });
     const rows = await withTenant(tenant, (c)=> c.query(
       `SELECT ic.rfid, ic.estado, ic.sub_estado, ic.activo, m.nombre_modelo,
-              EXISTS(SELECT 1 FROM acond_caja_items aci WHERE aci.rfid=ic.rfid) AS ya_en_caja
+              EXISTS(SELECT 1 FROM acond_caja_items aci WHERE aci.rfid=ic.rfid) AS ya_en_caja,
+              CASE
+                WHEN LOWER(ic.estado) = LOWER('Pre Acondicionamiento')
+                  AND LOWER(COALESCE(ic.sub_estado, '')) LIKE 'atemperad%'
+                  AND pit.updated_at IS NOT NULL
+                THEN GREATEST(0, EXTRACT(EPOCH FROM (NOW() - pit.updated_at))::int)
+                ELSE NULL
+              END AS atemperado_elapsed_sec
          FROM inventario_credocubes ic
          JOIN modelos m ON m.modelo_id = ic.modelo_id
+    LEFT JOIN preacond_item_timers pit
+           ON pit.rfid = ic.rfid AND pit.section = 'atemperamiento'
         WHERE ic.rfid = ANY($1::text[])`, [codes]));
     // Map para acceso rápido
     const byRfid: Record<string, any> = {};
     rows.rows.forEach(r=>{ byRfid[r.rfid] = r; });
     let haveCube=false, haveVip=false, ticCount=0;
-    const valid: { rfid:string; rol:'cube'|'vip'|'tic' }[] = [];
+    const valid: { rfid:string; rol:'cube'|'vip'|'tic'; atemperadoElapsedSec?: number | null }[] = [];
     const invalid: { rfid:string; reason:string }[] = [];
     // Procesar en el mismo orden de entrada (importante para UX del escaneo)
     for(const code of codes){
@@ -3670,7 +3681,9 @@ export const OperacionController = {
         if(!atemp){ invalid.push({ rfid:r.rfid, reason:'TIC no Atemperado' }); continue; }
   // Cap estricto: máximo 6 TICs
   if(ticCount >= 6){ invalid.push({ rfid:r.rfid, reason:'Máximo 6 TICs' }); continue; }
-        ticCount++; valid.push({ rfid:r.rfid, rol:'tic' });
+        const elapsedNum = Number(r.atemperado_elapsed_sec);
+        const atemperadoElapsedSec = Number.isFinite(elapsedNum) && elapsedNum > 0 ? elapsedNum : null;
+        ticCount++; valid.push({ rfid:r.rfid, rol:'tic', atemperadoElapsedSec });
       } else {
         invalid.push({ rfid:r.rfid, reason:'Modelo no permitido' });
       }

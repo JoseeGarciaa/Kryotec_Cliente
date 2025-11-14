@@ -214,12 +214,15 @@
   }
 
   let serverNowOffsetMs = 0; // client_now - server_now to keep sync
+  const completedBaselines = { congelamiento: null, atemperamiento: null };
   function fmt(ms){
-    const s = Math.max(0, Math.floor(ms/1000));
-    const hh = String(Math.floor(s/3600)).padStart(2,'0');
-    const mm = String(Math.floor((s%3600)/60)).padStart(2,'0');
-    const ss = String(s%60).padStart(2,'0');
-    return `${hh}:${mm}:${ss}`;
+    const s = Math.floor(ms/1000);
+    const negative = s < 0;
+    const abs = Math.abs(s);
+    const hh = String(Math.floor(abs/3600)).padStart(2,'0');
+    const mm = String(Math.floor((abs%3600)/60)).padStart(2,'0');
+    const ss = String(abs%60).padStart(2,'0');
+    return `${negative?'-':''}${hh}:${mm}:${ss}`;
   }
 
   let firstLoad = true;
@@ -297,6 +300,8 @@
               : '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" class="w-6 h-6" fill="currentColor"><path d="M13 5.08V4a1 1 0 10-2 0v1.08A7.002 7.002 0 005 12a7 7 0 1014 0 7.002 7.002 0 00-6-6.92zM12 20a5 5 0 01-5-5c0-2.5 1.824-4.582 4.2-4.93V4h1.6v6.07C15.176 10.418 17 12.5 17 15a5 5 0 01-5 5z"/></svg>'}
           </div>
         </div>`;
+      const baseline = completedBaselines[section];
+      const hasBaseline = typeof baseline === 'number' && Number.isFinite(baseline);
       const list = items.map(it=>{
         const isCompleted = /Congelado|Atemperado/i.test(it.sub_estado||'');
         const started = it.started_at ? new Date(it.started_at).getTime() : null;
@@ -304,27 +309,36 @@
         const active = !!it.item_active && !!started && duration>0;
         const tableId = section==='congelamiento'?'tabla-cong':'tabla-atem';
         const timerId = `tm-card-${tableId}-${it.rfid}`;
+        const updatedAt = it.item_updated_at ? new Date(it.item_updated_at).getTime() : null;
+        const showElapsed = !active && section==='atemperamiento' && /Atemperado/i.test(it.sub_estado||'') && Number.isFinite(updatedAt);
+        const effectiveCompletedAt = showElapsed && hasBaseline ? baseline : updatedAt;
+        const nowServerMs = Date.now() + serverNowOffsetMs;
+        let initialTimerText = '';
+        if(active){
+          initialTimerText = '00:00:00';
+        } else if(showElapsed && typeof effectiveCompletedAt === 'number' && Number.isFinite(effectiveCompletedAt)){
+          const elapsedInitialSec = Math.max(0, Math.floor((nowServerMs - effectiveCompletedAt)/1000));
+          initialTimerText = fmt(-elapsedInitialSec * 1000);
+        }
         const displayName = (it.nombre_unidad||'').trim() || 'TIC';
         let right = '';
         if(active){
-          // show ticking badge + stop
           right = `<span class="flex items-center gap-2">
-                     <span class="badge badge-neutral badge-xs"><span id="${timerId}">00:00:00</span></span>
+                     <span class="badge badge-neutral badge-xs"><span id="${timerId}">${initialTimerText}</span></span>
                      <button class="btn btn-ghost btn-xs text-error" data-item-clear="${it.rfid}" data-section="${section}">
                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" class="w-4 h-4" fill="currentColor"><path d="M6 6h12v12H6z"/></svg>
                      </button>
                    </span>`;
         } else if(!isCompleted){
-          // show start
           right = `<span class="flex items-center gap-2">
                      <button class="btn btn-ghost btn-xs text-success" data-item-start="${it.rfid}" data-section="${section}">
                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" class="w-4 h-4" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
                      </button>
                    </span>`;
         } else {
-          // completed -> static status label
           const label = section==='congelamiento' ? 'Congelado' : 'Atemperado';
-          right = `<span class="text-xs font-semibold ${section==='congelamiento'?'text-info':'text-warning'}">${label}</span>`;
+          const timerBadge = showElapsed ? `<span class="badge badge-success badge-xs"><span id="${timerId}">${initialTimerText}</span></span>` : '';
+          right = `<span class="flex items-center gap-2">${timerBadge}${timerBadge?'<span class="opacity-60">&middot;</span>':''}<span class="text-xs font-semibold ${section==='congelamiento'?'text-info':'text-warning'}">${label}</span></span>`;
         }
         return `<li class="flex items-center justify-between py-1">
                   <span class="truncate text-sm">${displayName}</span>
@@ -346,53 +360,95 @@
 
   function render(tbody, rows, emptyText, section){
     tbody.innerHTML = '';
+    completedBaselines[section] = null;
     if(!rows || !rows.length){
       const tr = document.createElement('tr'); const td = document.createElement('td');
       td.colSpan = 5; td.className = 'text-center py-10 opacity-70'; td.textContent = emptyText;
       tr.appendChild(td); tbody.appendChild(tr); return;
     }
+    let baselineCompletedAt = null;
+    if(section === 'atemperamiento'){
+      for(const row of rows){
+        const updatedAtMs = row.item_updated_at ? new Date(row.item_updated_at).getTime() : null;
+        const active = !!row.item_active && !!row.started_at && Number(row.duration_sec||0) > 0;
+        const subNorm = (row.sub_estado || '').toLowerCase();
+        const completed = /atemperado/.test(subNorm);
+        if(!active && completed && Number.isFinite(updatedAtMs)){
+          baselineCompletedAt = baselineCompletedAt === null ? updatedAtMs : Math.max(baselineCompletedAt, updatedAtMs);
+        }
+      }
+    }
+    completedBaselines[section] = baselineCompletedAt;
+    const hasBaseline = typeof baselineCompletedAt === 'number' && Number.isFinite(baselineCompletedAt);
+    const serverNowMs = Date.now() + serverNowOffsetMs;
     for(const r of rows){
-  const tr = document.createElement('tr');
-  const started = r.started_at ? new Date(r.started_at).getTime() : null;
-      const duration = Number(r.duration_sec)||0;
-      const active = !!r.item_active && !!started && duration>0;
+      const tr = document.createElement('tr');
+      const started = r.started_at ? new Date(r.started_at).getTime() : null;
+      const duration = Number(r.duration_sec) || 0;
+      const active = !!r.item_active && !!started && duration > 0;
       const tableId = (tbody.closest('table') && tbody.closest('table').id) || 'x';
       const timerId = `tm-${tableId}-${r.rfid}`;
-      const sub = (r.sub_estado||'').toLowerCase();
+      const subRaw = r.sub_estado || '';
+      const sub = subRaw.toLowerCase();
       const isCompleted = /congelado|atemperado/.test(sub);
+      const updatedAt = r.item_updated_at ? new Date(r.item_updated_at).getTime() : null;
+      const showElapsed = !active && section === 'atemperamiento' && /atemperado/.test(sub) && Number.isFinite(updatedAt);
+      const effectiveCompletedAt = showElapsed && hasBaseline ? baselineCompletedAt : updatedAt;
       if(isCompleted){
         tr.classList.add(section==='atemperamiento' ? 'bg-warning/10' : 'bg-info/10');
         tr.setAttribute('data-completed','1');
-      } else { tr.removeAttribute('data-completed'); }
-  let controls = '';
+      } else {
+        tr.removeAttribute('data-completed');
+      }
+      let controls = '';
       if(active){
         controls = `<button class="btn btn-ghost btn-xs text-error" title="Detener" data-item-clear="${r.rfid}" data-section="${section}">
              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" class="w-4 h-4" fill="currentColor"><path d="M6 6h12v12H6z"/></svg>
            </button>`;
       } else if(!isCompleted) {
-        // Not active and not completed -> show standard start
         controls = `<button class="btn btn-ghost btn-xs text-success" title="Iniciar" data-item-start="${r.rfid}" data-section="${section}">
              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" class="w-4 h-4" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
            </button>`;
       } else {
-        // Completed -> no extra label here (status moves to ESTADO column)
         controls = '';
       }
-  const loteVal = r.lote || '';
+      const loteVal = r.lote || '';
       const lotePill = loteVal ? `<span class="badge badge-ghost badge-xs sm:badge-sm whitespace-nowrap">L: ${loteVal}</span>` : '';
-      const badgeClass = isCompleted ? (section==='atemperamiento' ? 'badge-warning' : 'badge-info') : 'badge-neutral';
-  tr.innerHTML = `<td>${r.rfid}</td><td class="hidden md:table-cell">${r.nombre_unidad||''}</td><td class="hidden lg:table-cell">${r.lote||''}</td><td class="hidden md:table-cell">${r.sub_estado || '-'}</td>
+      let badgeClass = 'badge-neutral';
+      if(showElapsed){
+        badgeClass = 'badge-success';
+      } else if(isCompleted){
+        badgeClass = section==='atemperamiento' ? 'badge-warning' : 'badge-info';
+      }
+      let initialTimerText = '';
+      if(active){
+        initialTimerText = '00:00:00';
+      } else if(showElapsed && typeof effectiveCompletedAt === 'number' && Number.isFinite(effectiveCompletedAt)){
+        const elapsedInitialSec = Math.max(0, Math.floor((serverNowMs - effectiveCompletedAt)/1000));
+        initialTimerText = fmt(-elapsedInitialSec * 1000);
+      }
+      tr.innerHTML = `<td>${r.rfid}</td><td class="hidden md:table-cell">${r.nombre_unidad||''}</td><td class="hidden lg:table-cell">${r.lote||''}</td><td class="hidden md:table-cell">${r.sub_estado || '-'}</td>
         <td class="flex flex-wrap items-center gap-1 sm:gap-2">
-          <span class="badge ${badgeClass} badge-sm" data-threshold="1"><span id="${timerId}">${active? '00:00:00' : ''}</span></span>
+          <span class="badge ${badgeClass} badge-sm" data-threshold="1"><span id="${timerId}">${initialTimerText}</span></span>
           ${lotePill}
           ${controls}
         </td>`;
-  tr.setAttribute('data-has-lote', (r.lote && String(r.lote).trim()) ? '1' : '0');
+      tr.setAttribute('data-has-lote', (r.lote && String(r.lote).trim()) ? '1' : '0');
+      tr.setAttribute('data-timer-id', timerId);
       if(active){
         tr.setAttribute('data-item-duration', String(duration));
         tr.setAttribute('data-timer-started', String(started));
-        tr.setAttribute('data-timer-id', timerId);
+        tr.removeAttribute('data-completed-at');
+      } else {
+        tr.removeAttribute('data-item-duration');
+        tr.removeAttribute('data-timer-started');
+        if(showElapsed && typeof effectiveCompletedAt === 'number' && Number.isFinite(effectiveCompletedAt)){
+          tr.setAttribute('data-completed-at', String(effectiveCompletedAt));
+        } else {
+          tr.removeAttribute('data-completed-at');
+        }
       }
+      tr.removeAttribute('data-done');
       tbody.appendChild(tr);
     }
     // ensure ticking is running
@@ -409,53 +465,86 @@
         const started = Number(tr.getAttribute('data-timer-started')||'');
         const duration = Number(tr.getAttribute('data-item-duration')||'0');
         const id = tr.getAttribute('data-timer-id');
-        if(started && id){
-          const el = document.getElementById(id);
-          if(el){
-            if(duration>0){
-              const remaining = Math.max(0, duration - Math.floor((now - started)/1000));
-              el.textContent = fmt(remaining*1000);
-              // Mirror ticking into lot-card timer if present
-              const cardId = 'tm-card-' + id.substring(3);
-              const cardEl = document.getElementById(cardId);
-              if(cardEl){ cardEl.textContent = el.textContent; }
-              const badge = el.closest('.badge');
-              if(badge){
-                badge.classList.toggle('badge-info', remaining===0);
-                const warn = remaining>0 && remaining<=300; // <=5m
-                const danger = remaining>0 && remaining<=60; // <=1m
-                badge.classList.toggle('badge-warning', warn && !danger);
-                badge.classList.toggle('badge-error', danger);
-                // neutral when not info/warn/danger
-                const neutral = remaining>300;
-                badge.classList.toggle('badge-neutral', neutral);
-              }
-              // Mirror badge state to card badge if present
-              if(cardEl){
-                const cBadge = cardEl.closest('.badge');
-                if(cBadge){
-                  cBadge.classList.toggle('badge-info', remaining===0);
-                  const warn = remaining>0 && remaining<=300;
-                  const danger = remaining>0 && remaining<=60;
-                  cBadge.classList.toggle('badge-warning', warn && !danger);
-                  cBadge.classList.toggle('badge-error', danger);
-                  const neutral = remaining>300;
-                  cBadge.classList.toggle('badge-neutral', neutral);
-                }
-              }
-              if(remaining===0 && !tr.getAttribute('data-done')){
-                tr.setAttribute('data-done','1');
-                const rfid = tr.querySelector('td')?.textContent?.trim();
-                const tableId = tr.closest('table')?.id || '';
-                const section = tableId==='tabla-cong' ? 'congelamiento' : 'atemperamiento';
-                if(rfid){
-                  fetch('/operacion/preacond/item-timer/complete', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ section, rfid }) })
-                    .then(()=>loadData());
-                }
-              }
+        if(!Number.isFinite(started) || !Number.isFinite(duration) || !id) return;
+        const el = document.getElementById(id);
+        if(!el) return;
+        if(duration > 0){
+          const elapsedSec = Math.floor((now - started)/1000);
+          const remaining = duration - elapsedSec;
+          el.textContent = fmt(remaining * 1000);
+          const cardId = 'tm-card-' + id.substring(3);
+          const cardEl = document.getElementById(cardId);
+          if(cardEl){ cardEl.textContent = el.textContent; }
+          const badge = el.closest('.badge');
+          if(badge){
+            const done = remaining <= 0;
+            const warn = remaining > 0 && remaining <= 300;
+            const danger = remaining > 0 && remaining <= 60;
+            if(done){
+              badge.classList.add('badge-success');
+              badge.classList.remove('badge-warning','badge-error');
             } else {
-              el.textContent = fmt(now - started);
+              badge.classList.remove('badge-success');
             }
+            badge.classList.toggle('badge-info', remaining === 0);
+            badge.classList.toggle('badge-warning', warn && !danger);
+            badge.classList.toggle('badge-error', danger);
+            badge.classList.toggle('badge-neutral', remaining > 300 && !done);
+          }
+          if(cardEl){
+            const cBadge = cardEl.closest('.badge');
+            if(cBadge){
+              const done = remaining <= 0;
+              const warn = remaining > 0 && remaining <= 300;
+              const danger = remaining > 0 && remaining <= 60;
+              if(done){
+                cBadge.classList.add('badge-success');
+                cBadge.classList.remove('badge-warning','badge-error');
+              } else {
+                cBadge.classList.remove('badge-success');
+              }
+              cBadge.classList.toggle('badge-info', remaining === 0);
+              cBadge.classList.toggle('badge-warning', warn && !danger);
+              cBadge.classList.toggle('badge-error', danger);
+              cBadge.classList.toggle('badge-neutral', remaining > 300 && !done);
+            }
+          }
+          if(remaining <= 0 && !tr.getAttribute('data-done')){
+            tr.setAttribute('data-done','1');
+            const rfid = tr.querySelector('td')?.textContent?.trim();
+            const tableId = tr.closest('table')?.id || '';
+            const section = tableId==='tabla-cong' ? 'congelamiento' : 'atemperamiento';
+            if(rfid){
+              fetch('/operacion/preacond/item-timer/complete', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ section, rfid }) })
+                .then(()=>loadData());
+            }
+          }
+        } else {
+          el.textContent = fmt(now - started);
+        }
+      });
+      document.querySelectorAll('tr[data-completed-at]').forEach((tr)=>{
+        if(tr.hasAttribute('data-timer-started')) return;
+        const completed = Number(tr.getAttribute('data-completed-at')||'');
+        const id = tr.getAttribute('data-timer-id');
+        if(!Number.isFinite(completed) || !id) return;
+        const el = document.getElementById(id);
+        if(!el) return;
+        const elapsedSec = Math.floor((now - completed)/1000);
+        el.textContent = fmt(-elapsedSec * 1000);
+        const badge = el.closest('.badge');
+        if(badge){
+          badge.classList.add('badge-success');
+          badge.classList.remove('badge-neutral','badge-warning','badge-error','badge-info');
+        }
+        const cardId = 'tm-card-' + id.substring(3);
+        const cardEl = document.getElementById(cardId);
+        if(cardEl){
+          cardEl.textContent = el.textContent;
+          const cBadge = cardEl.closest('.badge');
+          if(cBadge){
+            cBadge.classList.add('badge-success');
+            cBadge.classList.remove('badge-neutral','badge-warning','badge-error','badge-info');
           }
         }
       });
