@@ -37,6 +37,7 @@
   let listoDespacho = [];  // items listos para despacho
   let scanBuffer = [];     // objetos escaneados (parcial)
   const NEGATIVE_REFRESH_DELAY_MS = 160;
+  const NEGATIVE_SYNC_THRESHOLD_MS = 2 * 60 * 1000; // 2 minutos para alinear cronómetros sin saltos grandes
   let scanNegatives = new Map(); // RFIDs -> elapsed seconds
   let scanValidationTimerId = 0;
   let scanValidationController = null;
@@ -207,39 +208,95 @@
       ? validList.filter((it)=> it && it.rol === 'tic')
       : [];
     if(!ticValid.length) return [];
-    const direct = ticValid
-      .map((it)=> ({ rfid: it.rfid, elapsed: Number(it.atemperadoElapsedSec) }))
-      .filter((it)=> Number.isFinite(it.elapsed) && it.elapsed > 0);
-    if(direct.length) return direct;
-    try {
-      const map = await loadAtemperamientoMap(!!opts.forceMap);
-      const nowMs = Date.now() + serverNowOffsetMs;
-      const fallback = ticValid.map((it)=>{
-        const code = String(it.rfid || '').toUpperCase();
-        if(!code) return null;
-        const info = map.get(code);
-        if(!info) return null;
-        const sub = String(info.sub_estado || info.subEstado || '').toLowerCase();
-        if(!sub.includes('atemperado')) return null;
-        const completedRaw = info.item_completed_at || info.completed_at || info.completedAt;
-        const updatedRaw = info.item_updated_at || info.updated_at || info.updatedAt;
-        const completedMs = completedRaw ? new Date(completedRaw).getTime() : NaN;
-        const updatedMs = updatedRaw ? new Date(updatedRaw).getTime() : NaN;
-        const finishMs = Number.isFinite(completedMs) && Number.isFinite(updatedMs)
-          ? Math.max(completedMs, updatedMs)
-          : Number.isFinite(completedMs) ? completedMs
-          : Number.isFinite(updatedMs) ? updatedMs
-          : NaN;
-        if(!Number.isFinite(finishMs)) return null;
-        const elapsed = Math.max(0, Math.floor((nowMs - finishMs)/1000));
-        if(elapsed <= 0) return null;
-        return { rfid: it.rfid, elapsed };
-      }).filter(Boolean);
-      return fallback.length ? fallback : direct;
-    } catch(err){
-      console.warn('[Acond] No se pudo calcular tiempo negativo usando mapa de preacondicionamiento', err);
-      return direct;
+    const nowMs = Date.now() + serverNowOffsetMs;
+
+    const buildFromMap = (map)=>{
+      const parseMs = (value)=>{
+        if(!value) return NaN;
+        const ms = new Date(value).getTime();
+        return Number.isFinite(ms) ? ms : NaN;
+      };
+      const entries = [];
+      const fallback = [];
+      const missing = new Set();
+      ticValid.forEach((item)=>{
+        const code = String(item.rfid || '').toUpperCase();
+        if(!code) return;
+        const info = map.get(code) || null;
+        let lote = '';
+        let completedMs = NaN;
+        if(info){
+          lote = typeof info.lote === 'string' ? info.lote.trim() : info.lote ? String(info.lote) : '';
+          const compMs = parseMs(info.item_completed_at || info.completed_at || info.completedAt);
+          const updMs = parseMs(info.item_updated_at || info.updated_at || info.updatedAt);
+          if(Number.isFinite(compMs) && Number.isFinite(updMs)) completedMs = Math.max(compMs, updMs);
+          else if(Number.isFinite(compMs)) completedMs = compMs;
+          else if(Number.isFinite(updMs)) completedMs = updMs;
+        } else {
+          missing.add(code);
+        }
+        let elapsed = Number(item.atemperadoElapsedSec);
+        if(Number.isFinite(completedMs)){
+          elapsed = Math.max(0, Math.floor((nowMs - completedMs)/1000));
+        }
+        if(Number.isFinite(elapsed) && elapsed > 0){
+          if(Number.isFinite(completedMs)){
+            entries.push({ rfid: code, elapsed, completedMs, lote });
+          } else {
+            fallback.push({ rfid: code, elapsed, lote });
+          }
+        }
+      });
+      return { entries, fallback, missing };
+    };
+
+    const ensureMap = async(force)=>{
+      try {
+        const map = await loadAtemperamientoMap(force);
+        return map instanceof Map ? map : new Map(map || []);
+      } catch(err){
+        console.warn('[Acond] No se pudo consultar mapa de atemperamiento', err);
+        return new Map();
+      }
+    };
+
+    let map = await ensureMap(!!opts.forceMap);
+    let { entries, fallback, missing } = buildFromMap(map);
+
+    if((missing.size && !opts.forceMap) || (!entries.length && fallback.length)){ // reintentar con mapa fresco
+      map = await ensureMap(true);
+      ({ entries, fallback, missing } = buildFromMap(map));
     }
+
+    if(entries.length){
+      const groups = new Map();
+      entries.forEach((entry)=>{
+        const loteKey = entry.lote ? entry.lote : '__sin_lote__';
+        if(!groups.has(loteKey)) groups.set(loteKey, []);
+        groups.get(loteKey).push(entry);
+      });
+      groups.forEach((list)=>{
+        if(!Array.isArray(list) || list.length <= 1) return;
+        const valid = list.filter((it)=> Number.isFinite(it.completedMs));
+        if(valid.length <= 1) return;
+        const minMs = Math.min(...valid.map((it)=> it.completedMs));
+        const maxMs = Math.max(...valid.map((it)=> it.completedMs));
+        if((maxMs - minMs) > NEGATIVE_SYNC_THRESHOLD_MS) return;
+        list.forEach((it)=>{
+          if(Number.isFinite(it.completedMs)){
+            it.completedMs = maxMs;
+            it.elapsed = Math.max(0, Math.floor((nowMs - maxMs)/1000));
+          }
+        });
+      });
+      return entries
+        .map(({ rfid, elapsed })=> ({ rfid, elapsed }))
+        .filter((it)=> Number.isFinite(it.elapsed) && it.elapsed > 0);
+    }
+
+    return fallback
+      .map(({ rfid, elapsed })=> ({ rfid, elapsed }))
+      .filter((it)=> Number.isFinite(it.elapsed) && it.elapsed > 0);
   }
   // Parse 24-char RFID chunks (supports raw gun bursts and mixed separators)
   function parseRfids(raw){
@@ -1623,7 +1680,7 @@
         return;
       }
       const items = Array.from(ticNegatives.entries()).map(([code, seconds])=>{
-        return `<li class="flex items-center justify-between gap-2"><span>${safeHTML(code)}</span><span class="text-error">${formatNegativeElapsed(seconds)}</span></li>`;
+        return `<li class="flex items-center justify-between gap-2"><span>${safeHTML(code)}</span><span class="badge badge-outline badge-neutral badge-xs font-mono tabular-nums">${formatNegativeElapsed(seconds)}</span></li>`;
       }).join('');
       negativeConsentList.innerHTML = items;
       negativeConsentContainer.classList.remove('hidden');
@@ -1641,10 +1698,9 @@
           const code = String(r || '').toUpperCase();
           const elapsed = ticNegatives.get(code);
           const badge = Number.isFinite(elapsed) && elapsed>0
-            ? `<span class="badge badge-error badge-xs font-mono tabular-nums ml-2">${formatNegativeElapsed(elapsed)}</span>`
+            ? `<span class="badge badge-outline badge-neutral badge-xs font-mono tabular-nums ml-2">${formatNegativeElapsed(elapsed)}</span>`
             : '';
-          const textCls = badge ? 'text-error' : '';
-          return `<li class="px-2 py-1 bg-base-200 rounded text-xs font-mono truncate flex items-center justify-between gap-2 ${textCls}"><span>${safeHTML(code)}</span>${badge}</li>`;
+          return `<li class="px-2 py-1 bg-base-200 rounded text-xs font-mono truncate flex items-center justify-between gap-2"><span>${safeHTML(code)}</span>${badge}</li>`;
         }).join('');
       }
       if(listVip) listVip.innerHTML = [...vipSet].map(r=>`<li class="px-2 py-1 bg-base-200 rounded text-xs font-mono truncate">${r}</li>`).join('');

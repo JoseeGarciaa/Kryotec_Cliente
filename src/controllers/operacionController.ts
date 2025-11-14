@@ -3738,8 +3738,13 @@ export const OperacionController = {
               CASE
                 WHEN LOWER(ic.estado) = LOWER('Pre Acondicionamiento')
                   AND LOWER(COALESCE(ic.sub_estado, '')) LIKE 'atemperad%'
-                  AND pit.completed_at IS NOT NULL
-                THEN GREATEST(0, EXTRACT(EPOCH FROM (NOW() - pit.completed_at))::int)
+                  AND (pit.completed_at IS NOT NULL OR pit.updated_at IS NOT NULL)
+                THEN GREATEST(
+                       0,
+                       EXTRACT(EPOCH FROM (
+                         NOW() - COALESCE(GREATEST(pit.completed_at, pit.updated_at), pit.completed_at, pit.updated_at)
+                       ))::int
+                     )
                 ELSE NULL
               END AS atemperado_elapsed_sec
          FROM inventario_credocubes ic
