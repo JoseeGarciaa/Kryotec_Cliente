@@ -1638,14 +1638,14 @@
       title.className = 'font-semibold text-warning';
       title.textContent = 'TICs atemperados con tiempo negativo';
       const list = document.createElement('ul');
-      list.className = 'space-y-1 font-mono text-[11px]';
+      list.className = 'space-y-1 font-mono text-[11px] text-warning';
       const label = document.createElement('label');
-      label.className = 'mt-1 flex items-start gap-2 text-[11px]';
+      label.className = 'mt-1 flex items-start gap-2 text-[11px] text-warning';
       const checkbox = document.createElement('input');
       checkbox.type = 'checkbox';
       checkbox.className = 'checkbox checkbox-warning checkbox-xs mt-[2px]';
       const span = document.createElement('span');
-      span.className = 'leading-snug';
+      span.className = 'leading-snug font-medium';
       span.textContent = 'Comprendo que estas TICs vencieron su atemperamiento y deseo crear la caja igualmente.';
       label.appendChild(checkbox);
       label.appendChild(span);
@@ -1680,7 +1680,7 @@
         return;
       }
       const items = Array.from(ticNegatives.entries()).map(([code, seconds])=>{
-        return `<li class="flex items-center justify-between gap-2"><span>${safeHTML(code)}</span><span class="badge badge-outline badge-neutral badge-xs font-mono tabular-nums">${formatNegativeElapsed(seconds)}</span></li>`;
+        return `<li class="flex items-center justify-between gap-2 text-warning"><span class="font-semibold">${safeHTML(code)}</span><span class="badge badge-warning badge-xs font-mono tabular-nums">${formatNegativeElapsed(seconds)}</span></li>`;
       }).join('');
       negativeConsentList.innerHTML = items;
       negativeConsentContainer.classList.remove('hidden');
@@ -1697,10 +1697,7 @@
         listTic.innerHTML = [...ticSet].map(r=>{
           const code = String(r || '').toUpperCase();
           const elapsed = ticNegatives.get(code);
-          const badge = Number.isFinite(elapsed) && elapsed>0
-            ? `<span class="badge badge-outline badge-neutral badge-xs font-mono tabular-nums ml-2">${formatNegativeElapsed(elapsed)}</span>`
-            : '';
-          return `<li class="px-2 py-1 bg-base-200 rounded text-xs font-mono truncate flex items-center justify-between gap-2"><span>${safeHTML(code)}</span>${badge}</li>`;
+          return `<li class="px-2 py-1 bg-base-200 rounded text-xs font-mono truncate flex items-center">${safeHTML(code)}</li>`;
         }).join('');
       }
       if(listVip) listVip.innerHTML = [...vipSet].map(r=>`<li class="px-2 py-1 bg-base-200 rounded text-xs font-mono truncate">${r}</li>`).join('');
