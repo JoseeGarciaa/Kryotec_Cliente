@@ -45,7 +45,10 @@
 
       <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
         <div id="calc-status" class="text-sm opacity-70"></div>
-        <button id="btn-calc" class="btn btn-primary btn-sm self-end">Calcular recomendaciones</button>
+        <div class="flex gap-2 self-end flex-wrap">
+          <button id="btn-calc" class="btn btn-primary btn-sm">Calcular recomendaciones</button>
+          <button id="btn-calc-mix" class="btn btn-sm btn-outline btn-primary">Calculadora mixta</button>
+        </div>
       </div>
     </div>
   </div>
@@ -62,12 +65,19 @@
     <div class="card bg-base-200 shadow">
       <div class="card-body gap-4">
         <div class="flex items-center justify-between">
-          <h2 class="card-title text-lg">Recomendaciones disponibles</h2>
+          <div>
+            <h2 class="card-title text-lg">Recomendaciones disponibles</h2>
+            <span id="calc-results-mode" class="hidden text-xs uppercase tracking-wide text-primary">Modo mixto</span>
+          </div>
           <span id="calc-results-count" class="badge hidden"></span>
         </div>
         <div id="calc-results" class="grid gap-3 md:grid-cols-2 xl:grid-cols-3"></div>
+        <div id="calc-results-mix" class="hidden space-y-3"></div>
         <div id="calc-results-empty" class="hidden alert alert-warning text-sm">
           <span>No se encontraron modelos disponibles en tu sede que se ajusten a los productos indicados.</span>
+        </div>
+        <div id="calc-results-mix-empty" class="hidden alert alert-warning text-sm">
+          <span>No se encontró una combinación mixta disponible con el inventario actual.</span>
         </div>
       </div>
     </div>

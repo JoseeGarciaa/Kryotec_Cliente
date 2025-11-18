@@ -1488,6 +1488,34 @@ export const OrdenesController = {
     }
   },
 
+  calculadoraRecomendarMixto: async (req: Request, res: Response) => {
+    const t = (req as any).user?.tenant || resolveTenant(req);
+    if (!t) return res.status(400).json({ ok: false, error: 'Tenant no especificado' });
+    const tenant = String(t).startsWith('tenant_') ? String(t) : `tenant_${t}`;
+    const sedeId = getRequestSedeId(req);
+    if (!sedeId) {
+      return res.status(403).json({ ok: false, error: 'El usuario no tiene una sede asignada.' });
+    }
+
+    try {
+      const items = parseCalculatorItems((req.body as any)?.items);
+      const result = await OrdenesCalculadoraService.calcularMixto(tenant, sedeId, items);
+      return res.json({
+        ok: true,
+        items: result.items,
+        mix: result.mix,
+        resumen: {
+          total_unidades: result.total_unidades,
+          volumen_total_m3: result.volumen_total_m3,
+        },
+      });
+    } catch (error: any) {
+      const message = error?.message || 'No fue posible generar la recomendación mixta.';
+      const status = message.includes('producto') || message.includes('agrega') ? 400 : 500;
+      return res.status(status).json({ ok: false, error: message });
+    }
+  },
+
   calculadoraCrearOrden: async (req: Request, res: Response) => {
     const t = (req as any).user?.tenant || resolveTenant(req);
     if (!t) return res.status(400).json({ ok: false, error: 'Tenant no especificado' });

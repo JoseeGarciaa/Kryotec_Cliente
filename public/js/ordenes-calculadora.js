@@ -18,10 +18,14 @@
   const addBtn = document.getElementById('btn-add-item');
   const clearBtn = document.getElementById('btn-clear-items');
   const calcBtn = document.getElementById('btn-calc');
+  const calcMixBtn = document.getElementById('btn-calc-mix');
   const statusEl = document.getElementById('calc-status');
   const resultsWrapper = document.getElementById('calc-results-wrapper');
   const resultsContainer = document.getElementById('calc-results');
+  const resultsMode = document.getElementById('calc-results-mode');
   const resultsEmpty = document.getElementById('calc-results-empty');
+  const resultsMixContainer = document.getElementById('calc-results-mix');
+  const resultsMixEmpty = document.getElementById('calc-results-mix-empty');
   const resultsCount = document.getElementById('calc-results-count');
   const summaryEl = document.getElementById('calc-summary');
   const modal = document.getElementById('modal-confirm-order');
@@ -51,6 +55,33 @@
       statusEl.classList.add('text-error');
     } else if (type === 'success') {
       statusEl.classList.add('text-success');
+    }
+  };
+
+  const setButtonLoading = (button, isLoading) => {
+    if (!button) return;
+    button.disabled = Boolean(isLoading);
+    button.classList.toggle('loading', Boolean(isLoading));
+  };
+
+  const formatCajasCount = (value) => {
+    if (!Number.isFinite(value) || value <= 0) return '0 caja(s)';
+    const rounded = Math.round(value);
+    if (Math.abs(value - rounded) < 0.01) {
+      return `${rounded} caja(s)`;
+    }
+    return `${value.toFixed(2)} caja(s)`;
+  };
+
+  const setResultsMode = (mode) => {
+    if (mode === 'mix') {
+      resultsContainer?.classList.add('hidden');
+      resultsMixContainer?.classList.remove('hidden');
+      resultsMode?.classList.remove('hidden');
+    } else {
+      resultsContainer?.classList.remove('hidden');
+      resultsMixContainer?.classList.add('hidden');
+      resultsMode?.classList.add('hidden');
     }
   };
 
@@ -279,9 +310,19 @@
     setRows(prefillList);
     if (statusEl) statusEl.textContent = '';
     resultsWrapper?.classList.add('hidden');
-    resultsContainer.innerHTML = '';
+    if (resultsContainer) {
+      resultsContainer.classList.remove('hidden');
+      resultsContainer.innerHTML = '';
+    }
     resultsEmpty?.classList.add('hidden');
+    resultsMode?.classList.add('hidden');
+    if (resultsMixContainer) {
+      resultsMixContainer.classList.add('hidden');
+      resultsMixContainer.innerHTML = '';
+    }
+    resultsMixEmpty?.classList.add('hidden');
     if (resultsCount) resultsCount.classList.add('hidden');
+    selectedRecommendation = null;
   };
 
   const collectItems = () => {
@@ -334,23 +375,52 @@
     return items;
   };
 
-  const renderSummary = (items, resumen) => {
+  const renderSummary = (items, resumen, mixSummary) => {
     if (!summaryEl) return;
     const totalReferencias = items.length;
     const totalUnidades = resumen && typeof resumen.total_unidades === 'number' ? resumen.total_unidades : items.reduce((acc, item) => acc + item.cantidad, 0);
     const volumenTotal = resumen && typeof resumen.volumen_total_m3 === 'number' ? resumen.volumen_total_m3 : 0;
     const volumenFmt = volumenTotal ? `${volumenTotal.toFixed(3)} m³` : 'N/D';
+    const mixDetails = [];
+    if (mixSummary && typeof mixSummary === 'object') {
+      if (typeof mixSummary.total_cajas === 'number') {
+        mixDetails.push(`<p><span class="font-semibold">Cajas asignadas:</span> ${mixSummary.total_cajas}</p>`);
+      }
+      const combinacion = Array.isArray(mixSummary.modelos)
+        ? mixSummary.modelos
+          .filter((modelo) => modelo && modelo.cajas_asignadas > 0)
+          .map((modelo) => `${modelo.cajas_asignadas} x ${modelo.modelo_nombre}`)
+          .join(', ')
+        : '';
+      if (combinacion) {
+        mixDetails.push(`<p><span class="font-semibold">Combinacion sugerida:</span> ${combinacion}</p>`);
+      }
+      if (typeof mixSummary.total_unidades_sin_cobertura === 'number' && mixSummary.total_unidades_sin_cobertura > 0) {
+        mixDetails.push(`<p class="text-warning"><span class="font-semibold">Unidades sin cobertura:</span> ${mixSummary.total_unidades_sin_cobertura}</p>`);
+      } else if (typeof mixSummary.total_unidades_sin_cobertura === 'number') {
+        mixDetails.push('<p class="text-success"><span class="font-semibold">Cobertura completa:</span> todas las unidades tienen cajas asignadas.</p>');
+      }
+    }
     summaryEl.innerHTML = `
       <p><span class="font-semibold">Referencias:</span> ${totalReferencias} (${totalUnidades} unidades)</p>
       <p><span class="font-semibold">Volumen total:</span> ${volumenFmt}</p>
+      ${mixDetails.join('')}
       ${sedeId ? `<p class="text-xs opacity-70">Sede actual: ${sedeId}</p>` : ''}
     `;
   };
 
   const renderRecommendations = (recs, items, resumen) => {
-    resultsContainer.innerHTML = '';
+    setResultsMode('standard');
+    selectedRecommendation = null;
+    if (resultsContainer) {
+      resultsContainer.innerHTML = '';
+      resultsContainer.classList.remove('hidden');
+    }
+    if (resultsMixContainer) resultsMixContainer.innerHTML = '';
+    resultsMixEmpty?.classList.add('hidden');
     if (!recs || !recs.length) {
       resultsEmpty?.classList.remove('hidden');
+      resultsContainer?.classList.add('hidden');
       if (resultsCount) resultsCount.classList.add('hidden');
       return;
     }
@@ -436,12 +506,139 @@
     });
   };
 
+  const renderMixResults = (mix, _items) => {
+    setResultsMode('mix');
+    selectedRecommendation = null;
+    resultsEmpty?.classList.add('hidden');
+    if (resultsContainer) {
+      resultsContainer.innerHTML = '';
+      resultsContainer.classList.add('hidden');
+    }
+    if (!resultsMixContainer) return;
+    resultsMixContainer.innerHTML = '';
+
+    const hasAssignments = mix
+      && Array.isArray(mix.modelos)
+      && mix.modelos.some((modelo) => modelo && modelo.cajas_asignadas > 0);
+
+    if (!mix || !hasAssignments) {
+      resultsMixEmpty?.classList.remove('hidden');
+      if (resultsCount) resultsCount.classList.add('hidden');
+      return;
+    }
+
+    resultsMixEmpty?.classList.add('hidden');
+    if (resultsCount) {
+      resultsCount.classList.remove('hidden');
+      const totalCajas = typeof mix.total_cajas === 'number' ? mix.total_cajas : 0;
+      const modelosCount = Array.isArray(mix.modelos)
+        ? mix.modelos.filter((modelo) => modelo && modelo.cajas_asignadas > 0).length
+        : 0;
+      resultsCount.textContent = totalCajas > 0
+        ? `${totalCajas} caja(s)`
+        : `${modelosCount} modelo(s)`;
+    }
+
+    const modelosListHtml = (Array.isArray(mix.modelos) ? mix.modelos : [])
+      .map((modelo) => {
+        if (!modelo) return '';
+        const restantes = modelo.cajas_restantes > 0 ? ` · quedan ${modelo.cajas_restantes}` : '';
+        const deficit = modelo.deficit_cajas > 0
+          ? `<span class="badge badge-warning badge-sm ml-1">Faltan ${modelo.deficit_cajas}</span>`
+          : '';
+        return `<li>
+          <span class="font-medium">${modelo.modelo_nombre}</span>
+          · ${modelo.cajas_asignadas} caja(s)${restantes}
+          ${deficit}
+        </li>`;
+      })
+      .filter(Boolean)
+      .join('');
+    const modelosContent = modelosListHtml || '<li class="text-sm opacity-70">No se asignaron modelos.</li>';
+
+    const modelosCard = document.createElement('div');
+    modelosCard.className = 'card bg-base-100 shadow border border-base-300/40';
+    modelosCard.innerHTML = `
+      <div class="card-body gap-3">
+        <div>
+          <h3 class="text-lg font-semibold">Distribución por modelo</h3>
+          <p class="text-sm opacity-70">Total asignado: ${mix.total_cajas} caja(s)</p>
+        </div>
+        <ul class="list-disc list-inside space-y-1 text-sm">
+          ${modelosContent}
+        </ul>
+      </div>
+    `;
+
+    const productosCard = document.createElement('div');
+    productosCard.className = 'card bg-base-100 shadow border border-base-300/40';
+    const productosListHtml = (Array.isArray(mix.productos) ? mix.productos : [])
+      .map((detalle) => {
+        if (!detalle) return '';
+        const nombre = detalle.nombre || detalle.codigo || 'Producto';
+        const sinCobertura = detalle.sin_cobertura > 0
+          ? `<p class="text-warning text-xs">Sin cobertura: ${detalle.sin_cobertura} unidad(es)</p>`
+          : '';
+        const asignacionesHtml = (Array.isArray(detalle.asignaciones) ? detalle.asignaciones : [])
+          .map((asignacion) => {
+            if (!asignacion) return '';
+            const orientacion = asignacion.orientacion_mm
+              ? `${asignacion.orientacion_mm.largo} × ${asignacion.orientacion_mm.ancho} × ${asignacion.orientacion_mm.alto} mm`
+              : 'N/D';
+            const layout = asignacion.layout
+              ? `${asignacion.layout.frente} × ${asignacion.layout.profundo} × ${asignacion.layout.alto}`
+              : 'N/D';
+            const sobrante = asignacion.sobrante_unidades > 0 ? ` · sobrante ${asignacion.sobrante_unidades}` : '';
+            return `<li>
+              <span class="font-medium">${asignacion.modelo_nombre}</span>
+              · ${asignacion.unidades_asignadas} uds
+              · ${formatCajasCount(asignacion.cajas_usadas)} (equivalente)
+              · capacidad ${asignacion.capacidad_por_caja}${sobrante}
+              <br><span class="opacity-70 text-xs">Orientacion: ${orientacion} · Distribucion: ${layout}</span>
+            </li>`;
+          })
+          .filter(Boolean)
+          .join('');
+        const asignacionesBlock = asignacionesHtml
+          ? `<ul class="list-disc list-inside space-y-1 text-xs">${asignacionesHtml}</ul>`
+          : '<p class="text-xs opacity-70">Sin asignaciones para este producto.</p>';
+        return `<li class="border border-base-300/40 rounded-lg p-3 space-y-2">
+          <div>
+            <p class="text-sm font-semibold">${nombre}</p>
+            <p class="text-xs opacity-70">Solicitado: ${detalle.cantidad} uds · Cubierto: ${detalle.cubierto_unidades} uds</p>
+          </div>
+          ${sinCobertura}
+          ${asignacionesBlock}
+        </li>`;
+      })
+      .filter(Boolean)
+      .join('');
+    const productosContent = productosListHtml || '<li class="text-xs opacity-70">No se encontraron productos en la mezcla.</li>';
+
+    productosCard.innerHTML = `
+      <div class="card-body gap-3">
+        <div>
+          <h3 class="text-lg font-semibold">Cobertura por producto</h3>
+          <p class="text-sm opacity-70">Incluye asignaciones según inventario disponible.</p>
+        </div>
+        <ul class="space-y-2">
+          ${productosContent}
+        </ul>
+      </div>
+    `;
+
+    resultsMixContainer.appendChild(modelosCard);
+    resultsMixContainer.appendChild(productosCard);
+  };
+
   const requestRecommendations = async () => {
     if (!calcBtn) return;
     try {
-      calcBtn.disabled = true;
-      calcBtn.classList.add('loading');
+      setButtonLoading(calcBtn, true);
+      if (calcMixBtn) calcMixBtn.disabled = true;
       setStatus('Calculando recomendaciones...', '');
+      resultsEmpty?.classList.add('hidden');
+      resultsMixEmpty?.classList.add('hidden');
       const items = collectItems();
       lastItemsPayload = items;
       const response = await fetch('/ordenes/calculadora/recomendar', {
@@ -458,21 +655,58 @@
         return;
       }
       resultsWrapper?.classList.remove('hidden');
-      renderSummary(payload.items || items, payload.resumen || {});
+      renderSummary(payload.items || items, payload.resumen || {}, null);
       renderRecommendations(payload.recomendaciones || [], payload.items || items, payload.resumen || {});
       setStatus('Recomendaciones actualizadas.', 'success');
     } catch (err) {
       const message = err instanceof Error && err.message ? err.message : 'Error inesperado calculando recomendaciones.';
       setStatus(message, 'error');
     } finally {
-      calcBtn.disabled = false;
-      calcBtn.classList.remove('loading');
+      setButtonLoading(calcBtn, false);
+      if (calcMixBtn) calcMixBtn.disabled = false;
+    }
+  };
+
+  const requestMixedRecommendations = async () => {
+    if (!calcMixBtn) return;
+    try {
+      setButtonLoading(calcMixBtn, true);
+      if (calcBtn) calcBtn.disabled = true;
+      setStatus('Calculando mezcla de modelos...', '');
+      resultsEmpty?.classList.add('hidden');
+      resultsMixEmpty?.classList.add('hidden');
+      const items = collectItems();
+      lastItemsPayload = items;
+      const response = await fetch('/ordenes/calculadora/recomendar-mixto', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'same-origin',
+        body: JSON.stringify({ items }),
+      });
+      const payload = await response.json().catch(() => null);
+      if (!response.ok || !payload || payload.ok !== true) {
+        const message = payload && typeof payload.error === 'string' ? payload.error : 'No fue posible generar la combinación mixta.';
+        setStatus(message, 'error');
+        resultsWrapper?.classList.add('hidden');
+        return;
+      }
+      resultsWrapper?.classList.remove('hidden');
+      renderSummary(payload.items || items, payload.resumen || {}, payload.mix || null);
+      renderMixResults(payload.mix || null, payload.items || items);
+      setStatus('Recomendación mixta lista.', 'success');
+    } catch (err) {
+      const message = err instanceof Error && err.message ? err.message : 'Error inesperado calculando la recomendación mixta.';
+      setStatus(message, 'error');
+    } finally {
+      setButtonLoading(calcMixBtn, false);
+      if (calcBtn) calcBtn.disabled = false;
     }
   };
 
   if (addBtn) addBtn.addEventListener('click', () => addRow());
   if (clearBtn) clearBtn.addEventListener('click', () => resetRows());
   if (calcBtn) calcBtn.addEventListener('click', requestRecommendations);
+  if (calcMixBtn) calcMixBtn.addEventListener('click', requestMixedRecommendations);
 
   if (modalForm instanceof HTMLFormElement) {
     modalForm.addEventListener('submit', async (event) => {
