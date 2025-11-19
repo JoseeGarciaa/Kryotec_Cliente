@@ -759,13 +759,15 @@
   }
 
   function timerDisplay(remainingMs, completedAt){
-  if(completedAt) return 'Listo';
-    if(remainingMs <= 0) return 'Finalizado';
+    if(completedAt) return 'Listo';
+    if(remainingMs <= 0){
+      const overSec = Math.max(0, Math.ceil(Math.abs(remainingMs)/1000));
+      return formatNegativeElapsed(overSec);
+    }
     const totalSec = Math.floor(remainingMs/1000);
     const hours = Math.floor(totalSec/3600);
     const minutes = Math.floor((totalSec % 3600)/60);
     const seconds = totalSec % 60;
-    // Always show HH:MM:SS (hours grows without cap for long timers)
     const hh = String(hours).padStart(2,'0');
     const mm = String(minutes).padStart(2,'0');
     const ss = String(seconds).padStart(2,'0');
@@ -775,7 +777,7 @@
   function timerBadgeHTML(c, remaining){
     if(!c.timer) return '<span class="badge badge-ghost badge-xs">Sin timer</span>';
   if(c.timer.completedAt) return '<span class="badge badge-success badge-xs">Listo</span>';
-    if(remaining <= 0) return '<span class="badge badge-warning badge-xs">Finalizado</span>';
+    if(remaining <= 0) return '<span class="badge badge-error badge-xs">En negativo</span>';
     return '<span class="badge badge-info badge-xs">En progreso</span>';
   }
 
@@ -858,12 +860,19 @@
         if(!t) return;
         const now = Date.now() + serverNowOffsetMs;
         const end = new Date(t.endsAt).getTime();
-        if(now>=end){ el.textContent='Finalizado'; el.className='badge badge-warning badge-xs font-mono'; return; }
-  const remMs = end-now; const sec = Math.max(0, Math.floor(remMs/1000));
-  const h = Math.floor(sec/3600); const m = Math.floor((sec%3600)/60); const s = sec%60;
-  const hh = String(h).padStart(2,'0'); const mm = String(m).padStart(2,'0'); const ss = String(s).padStart(2,'0');
-  el.textContent = `${hh}:${mm}:${ss}`;
-        let cls='badge-info'; if(sec<=60) cls='badge-error'; else if(sec<=300) cls='badge-warning';
+        const remainingMs = end - now;
+        const label = el.getAttribute('data-label');
+        const text = timerDisplay(remainingMs, t.completedAt);
+        el.textContent = label ? `${label} ${text}` : text;
+        const sec = Math.floor(remainingMs/1000);
+        let cls = 'badge-info';
+        if(sec <= 0){
+          cls = 'badge-error';
+        } else if(sec <= 60){
+          cls = 'badge-error';
+        } else if(sec <= 300){
+          cls = 'badge-warning';
+        }
         el.className = `badge ${cls} badge-xs font-mono`;
       });
     },1000);
@@ -893,10 +902,11 @@
         // Actualizar clases del badge (si hay cronómetro)
         const badge = el.querySelector('[data-caja-timer-started]');
         if(badge && caja.timer && !caja.timer.completedAt){
-          const remSec = Math.max(0, Math.floor(remaining/1000));
+          const remSecRaw = Math.floor(remaining/1000);
+          const remSec = Math.max(0, remSecRaw);
           badge.classList.remove('badge-info','badge-warning','badge-error','badge-success','badge-neutral');
-          if(remSec<=0){
-            badge.classList.add('badge-info');
+          if(remSecRaw<=0){
+            badge.classList.add('badge-error');
           } else if(remSec<=60){
             badge.classList.add('badge-error');
           } else if(remSec<=300){
@@ -910,8 +920,9 @@
         if(bar && caja.timer && caja.timer.startsAt && caja.timer.endsAt){
           const pct = timerProgressPct(caja);
           bar.style.width = Math.min(100, Math.max(0, pct)).toFixed(1) + '%';
-          const remSec = Math.max(0, Math.floor(remaining/1000));
-          bar.classList.toggle('bg-error', remSec<=0);
+          const remSecRaw = Math.floor(remaining/1000);
+          const remSec = Math.max(0, remSecRaw);
+          bar.classList.toggle('bg-error', remSecRaw<=0);
           bar.classList.toggle('bg-warning', remSec>0 && remSec<=60);
         }
       });
@@ -926,14 +937,20 @@
         const now = Date.now() + serverNowOffsetMs;
         const end = new Date(tIt.cronometro.endsAt).getTime();
         const label = el.getAttribute('data-label');
-        if(now>=end){ el.textContent = label? `${label} 00:00:00` : 'Finalizado'; el.classList.remove('badge-error','badge-warning','badge-info'); el.classList.add('badge-warning'); return; }
-        const remSec = Math.max(0, Math.floor((end-now)/1000));
-        const h=Math.floor(remSec/3600), m=Math.floor((remSec%3600)/60), s=remSec%60;
-        el.textContent = `${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`;
+        const remainingMs = end - now;
+        const text = timerDisplay(remainingMs, tIt.cronometro.completedAt);
+        el.textContent = label ? `${label} ${text}` : text;
         el.classList.remove('badge-error','badge-warning','badge-info');
-        if(remSec<=60) el.classList.add('badge-error');
-        else if(remSec<=300) el.classList.add('badge-warning');
-        else el.classList.add('badge-info');
+        const remSec = Math.floor(remainingMs/1000);
+        if(remSec <= 0){
+          el.classList.add('badge-error');
+        } else if(remSec<=60){
+          el.classList.add('badge-error');
+        } else if(remSec<=300){
+          el.classList.add('badge-warning');
+        } else {
+          el.classList.add('badge-info');
+        }
       });
   // Auto-completar cajas cuyo cronómetro llegó a cero
   autoCompleteTimers();
