@@ -577,6 +577,17 @@ export const OperacionController = {
         devParams
       ));
       const devolucion = devQ.rows[0] || { tic_pendiente:0, vip_pendiente:0 };
+      const pendInspParams: any[] = [];
+      const pendInspSede = pushSedeFilter(pendInspParams, sedeId, 'ic');
+      const pendInspQ = await withTenant(tenant, (c)=> c.query(
+        `SELECT COUNT(DISTINCT aci.caja_id)::int AS cajas
+           FROM acond_caja_items aci
+           JOIN inventario_credocubes ic ON ic.rfid = aci.rfid
+          WHERE ic.estado = 'En bodega'
+            AND ic.sub_estado IN ('Pendiente a Inspección','Pendiente a Inspeccion')${pendInspSede}`,
+        pendInspParams
+      ));
+      const pendientesBodega = pendInspQ.rows[0]?.cajas || 0;
       // Timers de cajas todavía activos en acond (Ensamblaje) y en despacho (acond_caja_timers activos)
       const acondTimersParams: any[] = [];
       let acondTimersSede = '';
@@ -781,7 +792,8 @@ export const OperacionController = {
         },
         acond: {
           ensamblaje: ensamblaje.rows[0]?.items || 0,
-          cajas: cajas.rows[0]?.total || 0
+          cajas: cajas.rows[0]?.total || 0,
+          pendientes_bodega: pendientesBodega
         },
         inspeccion,
         operacion,

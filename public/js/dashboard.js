@@ -52,23 +52,24 @@
       const ensam = data.acond?.ensamblaje||0;
       const cajas = data.acond?.cajas||0;
       const opCajas = data.operacion?.cajas_op||0;
-      const retorno = (data.devolucion?.tic_pendiente||0)+(data.devolucion?.vip_pendiente||0);
+      const cajasPendBodega = data.acond?.pendientes_bodega||0;
       const groups = [
-        { label:'PreAcond (Proc)', val: preProc, colors:['#4f46e5','#6366f1','#818cf8'] },
-        { label:'PreAcond (Listas)', val: preListas, colors:['#0ea5e9','#38bdf8','#7dd3fc'] },
-        { label:'Ensamblaje', val: ensam, colors:['#9333ea','#a855f7','#c084fc'] },
-        { label:'Cajas', val: cajas, colors:['#2563eb','#3b82f6','#60a5fa'] },
-        { label:'Operación', val: opCajas, colors:['#059669','#10b981','#34d399'] },
-        { label:'Retorno', val: retorno, colors:['#dc2626','#ef4444','#f87171'] }
+        { id:'pre-proc', label:'PreAcond (Proc)', val: preProc, colors:['#4f46e5','#6366f1','#818cf8'] },
+        { id:'pre-ready', label:'PreAcond (Listas)', val: preListas, colors:['#0ea5e9','#38bdf8','#7dd3fc'] },
+        { id:'ensam', label:'Ensamblaje', val: ensam, colors:['#9333ea','#a855f7','#c084fc'] },
+        { id:'cajas', label:'Cajas', val: cajas, colors:['#2563eb','#3b82f6','#60a5fa'] },
+        { id:'op-cajas', label:'Operación', val: opCajas, colors:['#059669','#10b981','#34d399'] },
+        { id:'pend-inspeccion', label:'Pend. inspección', val: cajasPendBodega, colors:['#dc2626','#ef4444','#f87171'] }
       ];
       const total = groups.reduce((s,g)=> s + g.val,0) || 1;
       flowChart.innerHTML='';
       groups.forEach((g,i)=>{
         const val = g.val;
-        const perc = (val/total)*100;
+        const perc = total ? (val/total)*100 : 0;
         const state = val===0? 'crit': perc < 6 ? 'warn':'ok';
         const chip = document.createElement('div');
         chip.className='k-chip';
+        chip.dataset.id = g.id;
         chip.dataset.state = state;
         chip.style.setProperty('--c1',g.colors[0]);
         chip.style.setProperty('--c2',g.colors[1]);
