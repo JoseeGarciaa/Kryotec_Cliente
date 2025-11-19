@@ -13,12 +13,23 @@
   function pct(timer){ if(!timer||!timer.startsAt||!timer.endsAt) return 0; const start=new Date(timer.startsAt).getTime(); const end=new Date(timer.endsAt).getTime(); const now=Date.now()+serverOffset; if(now<=start) return 0; if(now>=end) return 100; return ((now-start)/(end-start))*100; }
   function cardHTML(c){
     const comps = c.componentes||[];
-    const badge = comps.map(it=>{ let cls='badge-ghost'; if(it.tipo==='vip') cls='badge-info'; else if(it.tipo==='tic') cls='badge-warning'; else if(it.tipo==='cube') cls='badge-accent'; return `<span class="badge ${cls} badge-xs">${(it.tipo||'').toUpperCase()}</span>`; }).join(' ');
+    const badge = comps.map(it=>{
+      let cls='badge-ghost';
+      if(it.tipo==='vip') cls='badge-info';
+      else if(it.tipo==='tic') cls='badge-warning';
+      else if(it.tipo==='cube') cls='badge-accent';
+      const label = it.nombreUnidad || (it.tipo||'').toUpperCase();
+      return `<span class="badge ${cls} badge-xs">${label}</span>`;
+    }).join(' ');
     const timerTxt = c.timer? (c.timer.completedAt? 'Listo' : fmt(msRemaining(c.timer))) : 'Sin cronómetro';
     const progress = pct(c.timer);
+    const code = c.codigoCaja || '';
+    const displayName = c.nombreCaja || code || 'Caja';
+    const secondaryCode = code && displayName !== code ? `<div class='font-mono text-[10px] opacity-60 break-all'>${code}</div>` : '';
     return `<div class='rounded-lg border border-base-300/50 bg-base-100/50 p-3 space-y-2' data-caja='${c.id}'>
-      <div class='flex items-center justify-between text-[10px] uppercase opacity-60'><span>Caja</span><span class='font-mono'>${c.codigoCaja||''}</span></div>
-      <div class='font-semibold text-xs break-all'>${c.codigoCaja||''}</div>
+      <div class='flex items-center justify-between text-[10px] uppercase opacity-60'><span>Caja</span><span class='font-mono'>${code}</span></div>
+      <div class='font-semibold text-xs break-all'>${displayName}</div>
+      ${secondaryCode}
       <div class='flex flex-wrap gap-1'>${badge || "<span class='badge badge-ghost badge-xs'>Sin items</span>"}</div>
       <div class='h-1.5 bg-base-300/30 rounded-full overflow-hidden'><div class='h-full bg-primary' style='width:${progress.toFixed(1)}%' data-pi-bar='${c.id}'></div></div>
       <div class='text-[10px] font-mono opacity-70' id='pi-timer-${c.id}'>${timerTxt}</div>

@@ -2290,7 +2290,7 @@ export const OperacionController = {
         const itemsParams: any[] = [ids];
         const itemsSede = pushSedeFilter(itemsParams, sedeId);
         const itQ = await withTenant(tenant, (c)=> c.query(
-          `SELECT aci.caja_id, aci.rol, ic.rfid
+          `SELECT aci.caja_id, aci.rol, ic.rfid, ic.nombre_unidad
              FROM acond_caja_items aci
              JOIN inventario_credocubes ic ON ic.rfid = aci.rfid
             WHERE aci.caja_id = ANY($1::int[])${itemsSede}
@@ -2308,7 +2308,9 @@ export const OperacionController = {
       const nowRes = await withTenant(tenant, (c)=> c.query<{ now:string }>(`SELECT NOW()::timestamptz AS now`));
       const nowIso = nowRes.rows[0]?.now; const nowMs = new Date(nowIso).getTime();
       const compsMap: Record<string, any[]> = {};
-      for(const r of itemsRows){ (compsMap[r.caja_id] ||= []).push({ tipo: r.rol, codigo: r.rfid }); }
+      for(const r of itemsRows){
+        (compsMap[r.caja_id] ||= []).push({ tipo: r.rol, codigo: r.rfid, nombreUnidad: r.nombre_unidad || null });
+      }
       const tMap = new Map<number, any>((timersQ.rows||[]).map((r:any)=> [r.caja_id, r]));
       const cajas = (cajasQ.rows||[]).map((r:any)=>{
         const t = tMap.get(r.caja_id);
@@ -2318,10 +2320,15 @@ export const OperacionController = {
           const endsAt = new Date(endMs).toISOString();
           timer = { startsAt: t.started_at, endsAt, completedAt: (!t.active && endMs<=nowMs)? endsAt : null };
         }
+        const componentes = compsMap[r.caja_id]||[];
+        const cubeComp = componentes.find((comp:any) => comp.tipo === 'cube' && comp.nombreUnidad);
+        const fallbackNombre = componentes.find((comp:any) => comp.nombreUnidad);
+        const nombreCaja = cubeComp?.nombreUnidad || fallbackNombre?.nombreUnidad || null;
         return {
           id: r.caja_id,
           codigoCaja: r.lote,
-          componentes: compsMap[r.caja_id]||[],
+          nombreCaja,
+          componentes,
           timer
         };
       });

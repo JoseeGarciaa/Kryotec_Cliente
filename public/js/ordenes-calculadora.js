@@ -206,10 +206,61 @@
       const selected = catalogoProductos.find((item) => String(item.id) === select.value);
       if (selected) {
         fillFromCatalog(row, selected);
+        updateAddButtonState();
       }
     });
     return select;
   };
+
+    const isPositiveField = (input) => {
+      if (!(input instanceof HTMLInputElement)) return false;
+      const raw = input.value;
+      if (raw == null || raw.trim() === '') return false;
+      const value = Number(raw);
+      return Number.isFinite(value) && value > 0;
+    };
+
+    const isRowComplete = (row) => {
+      if (!row) return false;
+      const nombreInput = row.querySelector('[data-field="nombre"]');
+      const codigoInput = row.querySelector('[data-field="codigo"]');
+      const catalogInput = row.querySelector('[data-field="catalogo"]');
+      const largoInput = row.querySelector('[data-field="largo"]');
+      const anchoInput = row.querySelector('[data-field="ancho"]');
+      const altoInput = row.querySelector('[data-field="alto"]');
+      const cantidadInput = row.querySelector('[data-field="cantidad"]');
+      const hasDescriptor = Boolean(
+        (catalogInput && catalogInput.value) ||
+        (nombreInput && nombreInput.value && nombreInput.value.trim()) ||
+        (codigoInput && codigoInput.value && codigoInput.value.trim()),
+      );
+      if (!hasDescriptor) return false;
+      return isPositiveField(largoInput)
+        && isPositiveField(anchoInput)
+        && isPositiveField(altoInput)
+        && isPositiveField(cantidadInput);
+    };
+
+    const updateAddButtonState = () => {
+      if (!addBtn) return;
+      const rows = Array.from(tbody.querySelectorAll('.calc-item'));
+      const lastRow = rows[rows.length - 1];
+      const ready = lastRow ? isRowComplete(lastRow) : true;
+      addBtn.disabled = !ready;
+      addBtn.title = ready ? '' : 'Completa el producto actual antes de agregar otro.';
+    };
+
+    const attachRowListeners = (row) => {
+      const fields = row.querySelectorAll('[data-field]');
+      fields.forEach((field) => {
+        if (field instanceof HTMLInputElement) {
+          field.addEventListener('input', updateAddButtonState);
+          field.addEventListener('change', updateAddButtonState);
+        } else if (field instanceof HTMLSelectElement) {
+          field.addEventListener('change', updateAddButtonState);
+        }
+      });
+    };
 
   const addRow = (prefill) => {
     const row = document.createElement('div');
@@ -269,6 +320,8 @@
       row.remove();
       if (!tbody.querySelector('.calc-item')) {
         addRow();
+      } else {
+        updateAddButtonState();
       }
     });
     actionsWrapper.appendChild(actionsLabel);
@@ -289,6 +342,9 @@
       const selected = catalogoProductos.find((item) => item.id === prefill.catalogoId);
       if (selected) fillFromCatalog(row, selected);
     }
+
+    attachRowListeners(row);
+    updateAddButtonState();
   };
 
   const setRows = (prefillList) => {
@@ -304,6 +360,7 @@
     } else {
       addRow();
     }
+    updateAddButtonState();
   };
 
   const resetRows = (prefillList) => {
@@ -323,6 +380,7 @@
     resultsMixEmpty?.classList.add('hidden');
     if (resultsCount) resultsCount.classList.add('hidden');
     selectedRecommendation = null;
+    updateAddButtonState();
   };
 
   const collectItems = () => {
@@ -703,7 +761,10 @@
     }
   };
 
-  if (addBtn) addBtn.addEventListener('click', () => addRow());
+  if (addBtn) addBtn.addEventListener('click', () => {
+    if (addBtn.disabled) return;
+    addRow();
+  });
   if (clearBtn) clearBtn.addEventListener('click', () => resetRows());
   if (calcBtn) calcBtn.addEventListener('click', requestRecommendations);
   if (calcMixBtn) calcMixBtn.addEventListener('click', requestMixedRecommendations);
@@ -920,4 +981,5 @@
   }
 
   resetRows();
+  updateAddButtonState();
 })();
