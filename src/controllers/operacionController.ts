@@ -2456,6 +2456,11 @@ export const OperacionController = {
     // Try to add missing columns if table existed before
     await withTenant(tenant, (c) => c.query(`ALTER TABLE preacond_timers ADD COLUMN IF NOT EXISTS lote text`));
     await withTenant(tenant, (c) => c.query(`ALTER TABLE preacond_item_timers ADD COLUMN IF NOT EXISTS completed_at timestamptz`));
+    await withTenant(tenant, (c) => c.query(
+      `UPDATE preacond_item_timers
+          SET completed_at = NULL
+        WHERE active = true AND completed_at IS NOT NULL`
+    ));
 
     // Auto-complete item timers whose duration already finished (even if UI not open)
     const expiredTimers = await withTenant(tenant, (c) => c.query<{
@@ -3076,6 +3081,7 @@ export const OperacionController = {
              SET started_at = EXCLUDED.started_at,
                  duration_sec = EXCLUDED.duration_sec,
                  lote = COALESCE(preacond_item_timers.lote, EXCLUDED.lote),
+                 completed_at = NULL,
                  active = true,
                  updated_at = NOW()`,
           [s, dur, loteVal, allowed]
@@ -3110,7 +3116,7 @@ export const OperacionController = {
          PRIMARY KEY (rfid, section)
       )`);
       await c.query(
-        `UPDATE preacond_item_timers SET started_at = NULL, duration_sec = NULL, lote = NULL, active = false, updated_at = NOW()
+        `UPDATE preacond_item_timers SET started_at = NULL, duration_sec = NULL, lote = NULL, completed_at = NULL, active = false, updated_at = NOW()
            WHERE section = $1 AND active = true`,
         [s]
       );
