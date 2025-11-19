@@ -2496,7 +2496,10 @@ export const OperacionController = {
                     started_at = NULL,
                     duration_sec = NULL,
                     active = false,
-                    updated_at = NOW()
+                    updated_at = CASE
+                                   WHEN exp.completed_at IS NOT NULL THEN exp.completed_at
+                                   ELSE NOW()
+                                 END
                FROM UNNEST($1::text[], $2::text[], $3::timestamptz[]) AS exp(rfid, section, completed_at)
               WHERE pit.rfid = exp.rfid AND pit.section = exp.section`,
             [rfids, sections, completedList]

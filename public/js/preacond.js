@@ -6,9 +6,6 @@
     const updatedMs = updatedRaw ? new Date(updatedRaw).getTime() : NaN;
     const completedValid = Number.isFinite(completedMs);
     const updatedValid = Number.isFinite(updatedMs);
-    if(completedValid && updatedValid){
-      return Math.max(completedMs, updatedMs);
-    }
     if(completedValid) return completedMs;
     if(updatedValid) return updatedMs;
     return null;
