@@ -1529,11 +1529,14 @@ export const OrdenesController = {
     try {
       const body = req.body as any;
       const items = parseCalculatorItems(body?.items);
+      const mezclaRaw = body?.mezcla;
+      const isMixRequest = mezclaRaw && typeof mezclaRaw === 'object';
       const modeloIdRaw = body?.modeloId ?? body?.modelo_id;
-      const modeloId = Number(modeloIdRaw);
-      if (!Number.isFinite(modeloId) || modeloId <= 0) {
+      const parsedModeloId = Number(modeloIdRaw);
+      if (!isMixRequest && (!Number.isFinite(parsedModeloId) || parsedModeloId <= 0)) {
         return res.status(400).json({ ok: false, error: 'Selecciona un modelo válido.' });
       }
+      const modeloId = Number.isFinite(parsedModeloId) && parsedModeloId > 0 ? parsedModeloId : null;
 
       const numeroOrdenRaw = typeof body?.numeroOrden === 'string'
         ? body.numeroOrden.trim()
@@ -1553,15 +1556,93 @@ export const OrdenesController = {
       const ciudad = ciudadRaw ? ciudadRaw.trim().slice(0, 120) : null;
       const ubicacionRaw = typeof body?.ubicacionDestino === 'string' ? body.ubicacionDestino : typeof body?.ubicacion_destino === 'string' ? body.ubicacion_destino : null;
       const ubicacion = ubicacionRaw ? ubicacionRaw.trim().slice(0, 180) : null;
+      const calculadoEnIso = new Date().toISOString();
+      let totalUnidades = 0;
+      let volumenTotalM3 = 0;
+      let cantidadModelos = 0;
+      let codigoProducto: string | null = null;
+      let productosPayload: any = null;
+      let modeloSugeridoId: number | null = null;
 
-  const result = await OrdenesCalculadoraService.calcular(tenant, sedeId, items);
-  await ensureProductosCalculo(tenant, result.items);
-  const recomendacion = result.recomendaciones.find((r: CalculadoraRecomendacion) => r.modelo_id === modeloId);
-      if (!recomendacion) {
-        return res.status(409).json({ ok: false, error: 'La recomendación seleccionada ya no está disponible.' });
-      }
-      if (recomendacion.cajas_requeridas > recomendacion.cajas_disponibles) {
-        return res.status(409).json({ ok: false, error: 'Stock insuficiente para la sede actual.' });
+      if (isMixRequest) {
+        const mixResult = await OrdenesCalculadoraService.calcularMixto(tenant, sedeId, items);
+        await ensureProductosCalculo(tenant, mixResult.items);
+        const mix = mixResult.mix;
+        const modelosAsignados = Array.isArray(mix?.modelos)
+          ? mix.modelos.filter((modelo: any) => modelo && Number(modelo.cajas_asignadas) > 0)
+          : [];
+        if (!modelosAsignados.length) {
+          return res.status(409).json({ ok: false, error: 'La recomendación mixta ya no está disponible.' });
+        }
+        const shortage = modelosAsignados.find((modelo: any) => Number(modelo.cajas_asignadas) > Number(modelo.cajas_disponibles || 0));
+        if (shortage) {
+          return res.status(409).json({ ok: false, error: `Stock insuficiente para ${shortage.modelo_nombre}.` });
+        }
+
+        totalUnidades = mixResult.total_unidades;
+        volumenTotalM3 = mixResult.volumen_total_m3;
+        const totalCajas = Number(mix?.total_cajas || 0);
+        const sumCajas = modelosAsignados.reduce((acc: number, modelo: any) => acc + Number(modelo.cajas_asignadas || 0), 0);
+        cantidadModelos = totalCajas > 0 ? totalCajas : sumCajas;
+        if (cantidadModelos <= 0) {
+          return res.status(409).json({ ok: false, error: 'La combinación mixta ya no tiene cajas asignadas.' });
+        }
+
+        const etiquetaModelos = modelosAsignados
+          .map((modelo: any) => {
+            const cajas = Number(modelo.cajas_asignadas || 0);
+            if (!cajas) return '';
+            return `${cajas} x ${modelo.modelo_nombre}`.trim();
+          })
+          .filter((texto: string) => texto.length > 0);
+        if (etiquetaModelos.length) {
+          const base = etiquetaModelos.slice(0, 3).join(', ');
+          codigoProducto = etiquetaModelos.length > 3 ? `${base}, ...` : base;
+        } else {
+          codigoProducto = 'Mezcla CredoCube';
+        }
+
+        productosPayload = {
+          items: mixResult.items,
+          mezcla: mix,
+          calculado_en: calculadoEnIso,
+          modo: 'mix',
+        };
+        modeloSugeridoId = null;
+      } else {
+        const result = await OrdenesCalculadoraService.calcular(tenant, sedeId, items);
+        await ensureProductosCalculo(tenant, result.items);
+        const recomendacion = result.recomendaciones.find((r: CalculadoraRecomendacion) => r.modelo_id === modeloId);
+        if (!recomendacion) {
+          return res.status(409).json({ ok: false, error: 'La recomendación seleccionada ya no está disponible.' });
+        }
+        if (recomendacion.cajas_requeridas > recomendacion.cajas_disponibles) {
+          return res.status(409).json({ ok: false, error: 'Stock insuficiente para la sede actual.' });
+        }
+
+        totalUnidades = result.total_unidades;
+        volumenTotalM3 = result.volumen_total_m3;
+        cantidadModelos = recomendacion.cajas_requeridas;
+        modeloSugeridoId = recomendacion.modelo_id;
+
+        const uniqueCodes = Array.from(new Set(
+          result.items
+            .map((item) => (item.codigo ? item.codigo.trim() : ''))
+            .filter((codigo) => codigo.length),
+        ));
+        if (uniqueCodes.length === 0) {
+          codigoProducto = recomendacion.modelo_nombre ? recomendacion.modelo_nombre.trim() : null;
+        } else {
+          const joined = uniqueCodes.slice(0, 3).join(', ');
+          codigoProducto = uniqueCodes.length > 3 ? `${joined}, ...` : joined;
+        }
+
+        productosPayload = {
+          items: result.items,
+          recomendacion,
+          calculado_en: calculadoEnIso,
+          modo: 'standard',
+        };
       }
 
       const clientOffsetRaw = body?.clientTzOffset;
@@ -1569,25 +1650,6 @@ export const OrdenesController = {
       const clientLocalNowRaw = typeof body?.clientLocalNow === 'string' ? body.clientLocalNow.trim() : null;
       const clientNowIso = clientLocalNowRaw ? parseLocalIso(clientLocalNowRaw, clientOffsetMinutes) : null;
       const fechaGeneracion = clientNowIso ?? new Date().toISOString();
-
-      const payloadProductos = {
-        items: result.items,
-        recomendacion,
-        calculado_en: new Date().toISOString(),
-      };
-
-      const codigoProducto = (() => {
-        const uniqueCodes = Array.from(new Set(
-          result.items
-            .map((item) => (item.codigo ? item.codigo.trim() : ''))
-            .filter((codigo) => codigo.length),
-        ));
-        if (uniqueCodes.length === 0) {
-          return recomendacion.modelo_nombre ? recomendacion.modelo_nombre.trim() : null;
-        }
-        const joined = uniqueCodes.slice(0, 3).join(', ');
-        return uniqueCodes.length > 3 ? `${joined}, ...` : joined;
-      })();
 
       try {
         const insert = await withTenant(tenant, (client) => client.query(
@@ -1610,15 +1672,15 @@ export const OrdenesController = {
           [
             numeroOrdenRaw,
             codigoProducto,
-            result.total_unidades,
+              totalUnidades,
             ciudad,
             ubicacion,
             cliente,
             fechaGeneracion,
-            recomendacion.modelo_id,
-            recomendacion.cajas_requeridas,
-            JSON.stringify(payloadProductos),
-            result.volumen_total_m3,
+              modeloSugeridoId,
+              cantidadModelos,
+              JSON.stringify(productosPayload),
+              volumenTotalM3,
             sedeId,
             createdBy,
           ],

@@ -27,6 +27,23 @@
   const resultsMixContainer = document.getElementById('calc-results-mix');
   const resultsMixEmpty = document.getElementById('calc-results-mix-empty');
   const resultsCount = document.getElementById('calc-results-count');
+  const mixSaveWrap = document.getElementById('calc-mix-save-wrap');
+  const mixSaveBanner = document.getElementById('calc-mix-banner');
+  const mixSaveButton = document.getElementById('btn-save-calc-mix');
+  const mixSaveNote = document.getElementById('calc-mix-save-note');
+
+  let activeMixRecommendation = null;
+  let lastResumen = null;
+
+  const updateMixSaveButtonState = () => {
+    if (!mixSaveButton) return;
+    const ready = Boolean(activeMixRecommendation && activeMixRecommendation.total_cajas > 0);
+    mixSaveButton.disabled = !ready;
+    if (!ready && mixSaveNote) {
+      mixSaveNote.classList.add('hidden');
+      mixSaveNote.textContent = '';
+    }
+  };
   const summaryEl = document.getElementById('calc-summary');
   const modal = document.getElementById('modal-confirm-order');
   const modalForm = document.getElementById('form-confirm-order');
@@ -78,10 +95,20 @@
       resultsContainer?.classList.add('hidden');
       resultsMixContainer?.classList.remove('hidden');
       resultsMode?.classList.remove('hidden');
+      mixSaveWrap?.classList.remove('hidden');
+      mixSaveBanner?.classList.remove('hidden');
     } else {
       resultsContainer?.classList.remove('hidden');
       resultsMixContainer?.classList.add('hidden');
       resultsMode?.classList.add('hidden');
+      mixSaveWrap?.classList.add('hidden');
+      mixSaveBanner?.classList.add('hidden');
+      if (mixSaveNote) {
+        mixSaveNote.classList.add('hidden');
+        mixSaveNote.textContent = '';
+      }
+      activeMixRecommendation = null;
+      updateMixSaveButtonState();
     }
   };
 
@@ -380,6 +407,9 @@
     resultsMixEmpty?.classList.add('hidden');
     if (resultsCount) resultsCount.classList.add('hidden');
     selectedRecommendation = null;
+    activeMixRecommendation = null;
+    lastResumen = null;
+    updateMixSaveButtonState();
     updateAddButtonState();
   };
 
@@ -470,6 +500,9 @@
   const renderRecommendations = (recs, items, resumen) => {
     setResultsMode('standard');
     selectedRecommendation = null;
+    activeMixRecommendation = null;
+    if (mixSaveWrap) mixSaveWrap.classList.add('hidden');
+    if (mixSaveBanner) mixSaveBanner.classList.add('hidden');
     if (resultsContainer) {
       resultsContainer.innerHTML = '';
       resultsContainer.classList.remove('hidden');
@@ -567,6 +600,7 @@
   const renderMixResults = (mix, _items) => {
     setResultsMode('mix');
     selectedRecommendation = null;
+    activeMixRecommendation = mix || null;
     resultsEmpty?.classList.add('hidden');
     if (resultsContainer) {
       resultsContainer.innerHTML = '';
@@ -582,10 +616,15 @@
     if (!mix || !hasAssignments) {
       resultsMixEmpty?.classList.remove('hidden');
       if (resultsCount) resultsCount.classList.add('hidden');
+      if (mixSaveWrap) mixSaveWrap.classList.add('hidden');
+      activeMixRecommendation = null;
+      updateMixSaveButtonState();
       return;
     }
 
     resultsMixEmpty?.classList.add('hidden');
+    mixSaveWrap?.classList.remove('hidden');
+    updateMixSaveButtonState();
     if (resultsCount) {
       resultsCount.classList.remove('hidden');
       const totalCajas = typeof mix.total_cajas === 'number' ? mix.total_cajas : 0;
@@ -689,6 +728,74 @@
     resultsMixContainer.appendChild(productosCard);
   };
 
+  const buildMixOrdenPayload = (mix, items, resumen) => {
+    if (!mix) return null;
+    return {
+      modelos: Array.isArray(mix.modelos) ? mix.modelos.map((modelo) => ({
+        modelo_id: modelo.modelo_id,
+        modelo_nombre: modelo.modelo_nombre,
+        cajas_asignadas: modelo.cajas_asignadas,
+        cajas_disponibles: modelo.cajas_disponibles,
+        cajas_restantes: modelo.cajas_restantes,
+        deficit_cajas: modelo.deficit_cajas,
+        volumen_caja_m3: modelo.volumen_caja_m3,
+      })) : [],
+      productos: Array.isArray(mix.productos) ? mix.productos.map((producto) => ({
+        codigo: producto.codigo,
+        nombre: producto.nombre,
+        cantidad: producto.cantidad,
+        cubierto_unidades: producto.cubierto_unidades,
+        sin_cobertura: producto.sin_cobertura,
+        asignaciones: Array.isArray(producto.asignaciones) ? producto.asignaciones.map((asignacion) => ({
+          modelo_id: asignacion.modelo_id,
+          modelo_nombre: asignacion.modelo_nombre,
+          cajas_usadas: asignacion.cajas_usadas,
+          unidades_asignadas: asignacion.unidades_asignadas,
+          capacidad_por_caja: asignacion.capacidad_por_caja,
+          sobrante_unidades: asignacion.sobrante_unidades,
+          orientacion_mm: asignacion.orientacion_mm,
+          layout: asignacion.layout,
+        })) : [],
+      })) : [],
+      total_cajas: mix.total_cajas,
+      total_unidades_sin_cobertura: mix.total_unidades_sin_cobertura,
+      resumen: resumen || lastResumen || {},
+      items,
+    };
+  };
+
+  const openMixSaveModal = () => {
+    if (!modal) return;
+    if (!activeMixRecommendation) {
+      setStatus('No hay combinación mixta lista para guardar.', 'error');
+      return;
+    }
+
+    const payload = buildMixOrdenPayload(activeMixRecommendation, lastItemsPayload, lastResumen);
+    if (!payload) {
+      setStatus('No hay datos válidos de la mezcla para guardar.', 'error');
+      return;
+    }
+
+    if (modalDesc) {
+      modalDesc.innerHTML = `
+        Mezcla de modelos seleccionada
+        <br />Total cajas asignadas: ${activeMixRecommendation.total_cajas}
+      `;
+    }
+    if (modalForm instanceof HTMLFormElement) {
+      const modeloField = modalForm.querySelector('input[name="modelo_id"]');
+      const payloadField = modalForm.querySelector('input[name="payload"]');
+      if (modeloField) modeloField.value = 'mix';
+      if (payloadField) payloadField.value = JSON.stringify(payload);
+    }
+    if (modalError) {
+      modalError.classList.add('hidden');
+      modalError.textContent = '';
+    }
+    openDialog(modal);
+  };
+
   const requestRecommendations = async () => {
     if (!calcBtn) return;
     try {
@@ -714,6 +821,7 @@
       }
       resultsWrapper?.classList.remove('hidden');
       renderSummary(payload.items || items, payload.resumen || {}, null);
+      lastResumen = payload.resumen || {};
       renderRecommendations(payload.recomendaciones || [], payload.items || items, payload.resumen || {});
       setStatus('Recomendaciones actualizadas.', 'success');
     } catch (err) {
@@ -746,10 +854,12 @@
         const message = payload && typeof payload.error === 'string' ? payload.error : 'No fue posible generar la combinación mixta.';
         setStatus(message, 'error');
         resultsWrapper?.classList.add('hidden');
+        activeMixRecommendation = null;
         return;
       }
       resultsWrapper?.classList.remove('hidden');
-      renderSummary(payload.items || items, payload.resumen || {}, payload.mix || null);
+      lastResumen = payload.resumen || {};
+      renderSummary(payload.items || items, lastResumen, payload.mix || null);
       renderMixResults(payload.mix || null, payload.items || items);
       setStatus('Recomendación mixta lista.', 'success');
     } catch (err) {
@@ -768,11 +878,16 @@
   if (clearBtn) clearBtn.addEventListener('click', () => resetRows());
   if (calcBtn) calcBtn.addEventListener('click', requestRecommendations);
   if (calcMixBtn) calcMixBtn.addEventListener('click', requestMixedRecommendations);
+  if (mixSaveButton) mixSaveButton.addEventListener('click', () => {
+    if (mixSaveButton.disabled) return;
+    openMixSaveModal();
+  });
 
   if (modalForm instanceof HTMLFormElement) {
     modalForm.addEventListener('submit', async (event) => {
       event.preventDefault();
-      if (!selectedRecommendation) {
+      const isMixMode = activeMixRecommendation && modalForm.querySelector('input[name="modelo_id"]').value === 'mix';
+      if (!selectedRecommendation && !isMixMode) {
         if (modalError) {
           modalError.classList.remove('hidden');
           modalError.textContent = 'Selecciona una recomendación válida.';
@@ -810,7 +925,8 @@
             cliente,
             ciudadDestino: ciudad,
             ubicacionDestino: ubicacion,
-            modeloId: selectedRecommendation.modelo_id,
+            modeloId: isMixMode ? null : selectedRecommendation.modelo_id,
+            mezcla: isMixMode ? buildMixOrdenPayload(activeMixRecommendation, lastItemsPayload, lastResumen) : null,
             items: lastItemsPayload,
             clientTzOffset: tzOffset,
             clientLocalNow: localIso,
@@ -822,6 +938,10 @@
           if (modalError) {
             modalError.classList.remove('hidden');
             modalError.textContent = message;
+          }
+          if (mixSaveNote && isMixMode) {
+            mixSaveNote.classList.remove('hidden');
+            mixSaveNote.textContent = message;
           }
           return;
         }
@@ -845,7 +965,6 @@
       }
     });
   }
-
   document.querySelectorAll('#modal-confirm-order [data-close]').forEach((el) => {
     el.addEventListener('click', () => closeDialog(modal));
   });
@@ -982,4 +1101,5 @@
 
   resetRows();
   updateAddButtonState();
+  updateMixSaveButtonState();
 })();
