@@ -4457,8 +4457,11 @@ export const OperacionController = {
       // Verificar que TODOS los items estén Ensamblado (no permitir mover si quedan en Ensamblaje)
       const estadoItems = await c.query(`SELECT ic.sub_estado FROM acond_caja_items aci JOIN inventario_credocubes ic ON ic.rfid=aci.rfid WHERE aci.caja_id=$1`, [cajaId]);
       if(!estadoItems.rowCount){ await c.query('ROLLBACK'); return res.status(400).json({ ok:false, error:'Caja sin items' }); }
-  const allEnsamblado = estadoItems.rows.every((r: any) => r.sub_estado==='Ensamblado');
-      if(!allEnsamblado){ await c.query('ROLLBACK'); return res.status(400).json({ ok:false, error:'Caja no está completamente Ensamblada' }); }
+      const allEnsamblado = estadoItems.rows.every((r: any) => r.sub_estado==='Ensamblado');
+      if(!allEnsamblado && !allowIncompleteFlag){
+        await c.query('ROLLBACK');
+        return res.status(400).json({ ok:false, error:'Caja no está completamente Ensamblada' });
+      }
           // Detectar si existe columna litraje (para evitar abortar transacción por error)
           const colQ = await c.query(`SELECT 1 FROM information_schema.columns WHERE table_name='modelos' AND column_name='litraje' LIMIT 1`);
           const litrajeExists = !!colQ.rowCount;
