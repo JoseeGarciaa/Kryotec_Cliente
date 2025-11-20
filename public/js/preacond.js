@@ -375,7 +375,7 @@
                    </span>`;
         } else {
           const label = section==='congelamiento' ? 'Congelado' : 'Atemperado';
-          const timerBadge = showElapsed ? `<span class="badge badge-success badge-xs"><span id="${timerId}">${initialTimerText}</span></span>` : '';
+          const timerBadge = showElapsed ? `<span class="badge badge-warning badge-xs"><span id="${timerId}">${initialTimerText}</span></span>` : '';
           right = `<span class="flex items-center gap-2">${timerBadge}${timerBadge?'<span class="opacity-60">&middot;</span>':''}<span class="text-xs font-semibold ${section==='congelamiento'?'text-info':'text-warning'}">${label}</span></span>`;
         }
         return `<li class="flex items-center justify-between py-1">
@@ -442,7 +442,7 @@
       const lotePill = loteVal ? `<span class="badge badge-ghost badge-xs sm:badge-sm whitespace-nowrap">L: ${loteVal}</span>` : '';
       let badgeClass = 'badge-neutral';
       if(showElapsed){
-        badgeClass = 'badge-success';
+        badgeClass = 'badge-warning';
       } else if(isCompleted){
         badgeClass = section==='atemperamiento' ? 'badge-warning' : 'badge-info';
       }
@@ -560,8 +560,8 @@
         el.textContent = fmt(-elapsedSec * 1000);
         const badge = el.closest('.badge');
         if(badge){
-          badge.classList.add('badge-success');
-          badge.classList.remove('badge-neutral','badge-warning','badge-error','badge-info');
+          badge.classList.add('badge-warning');
+          badge.classList.remove('badge-neutral','badge-success','badge-error','badge-info');
         }
         const cardId = 'tm-card-' + id.substring(3);
         const cardEl = document.getElementById(cardId);
@@ -569,8 +569,8 @@
           cardEl.textContent = el.textContent;
           const cBadge = cardEl.closest('.badge');
           if(cBadge){
-            cBadge.classList.add('badge-success');
-            cBadge.classList.remove('badge-neutral','badge-warning','badge-error','badge-info');
+            cBadge.classList.add('badge-warning');
+            cBadge.classList.remove('badge-neutral','badge-success','badge-error','badge-info');
           }
         }
       });
