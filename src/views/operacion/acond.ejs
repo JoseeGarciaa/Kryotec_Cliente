@@ -116,6 +116,7 @@
 </div>
 
 <div id="cajasContainer" class="hidden"></div>
+<script src="/static/js/location-selector.js?v=<%= assetVersion %>" defer></script>
 <script src="/static/js/acond.js?v=<%= assetVersion %>" defer></script>
 
 <!-- Modal Ensamblaje -->
@@ -237,6 +238,21 @@
       </div>
       <div id="despacho-timer-hint" class="text-xs opacity-60 mt-1">Ingresa un total mayor a 0 (horas*60 + minutos) para habilitar el boton.</div>
     </div>
+    <div class="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-3">
+      <label class="form-control">
+        <span class="label-text text-xs">Zona (opcional)</span>
+        <select id="despacho-zona" class="select select-sm select-bordered">
+          <option value="">Sin zona</option>
+        </select>
+      </label>
+      <label class="form-control">
+        <span class="label-text text-xs">Sección (opcional)</span>
+        <select id="despacho-seccion" class="select select-sm select-bordered" disabled>
+          <option value="">Sin sección</option>
+        </select>
+      </label>
+    </div>
+    <p id="despacho-location-hint" class="text-[11px] opacity-60 mb-4"></p>
     <div class="flex flex-wrap gap-3 items-center">
       <button id="btn-despacho-confirm" class="btn btn-success btn-sm" disabled>Marcar cajas como Listas</button>
       <span id="despacho-msg" class="text-xs opacity-70"></span>

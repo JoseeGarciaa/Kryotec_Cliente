@@ -1246,8 +1246,20 @@ export const OperacionController = {
       );
       if (transferCheck.blocked) return;
 
+      let locationResult: { apply: boolean; zonaId: number | null; seccionId: number | null } | null = null;
+      try {
+        locationResult = await resolveLocationForRequest(tenant, sedeId, req.body);
+      } catch (err: any) {
+        if (isLocationError(err)) {
+          return res.status(400).json({ ok: false, error: err.message || 'Ubicación inválida' });
+        }
+        throw err;
+      }
+
       await runWithSede(tenant, sedeId, async (c)=>{
         const targetSede = transferCheck.targetSede;
+        const zonaParam = locationResult?.apply ? locationResult.zonaId : null;
+        const seccionParam = locationResult?.apply ? locationResult.seccionId : null;
         await c.query(`ALTER TABLE ordenes ADD COLUMN IF NOT EXISTS habilitada boolean NOT NULL DEFAULT true`);
         await c.query(`ALTER TABLE ordenes ADD COLUMN IF NOT EXISTS estado_orden boolean DEFAULT true`);
         await c.query('BEGIN');
@@ -1258,10 +1270,12 @@ export const OperacionController = {
             `UPDATE inventario_credocubes ic
                 SET estado='En bodega',
                     sub_estado='Pendiente a Inspección',
+                    zona_id = $3,
+                    seccion_id = $4,
                     sede_id = COALESCE($2::int, ic.sede_id)
               WHERE ic.rfid = ANY($1::text[])
                 AND ic.estado='Operación'`,
-            [rfids, targetSede]
+            [rfids, targetSede, zonaParam, seccionParam]
           );
           await c.query(`UPDATE acond_caja_timers SET active=false, started_at=NULL, duration_sec=NULL, updated_at=NOW() WHERE caja_id=$1`, [cajaId]);
           await c.query(`UPDATE operacion_caja_timers SET active=false, started_at=NULL, duration_sec=NULL, updated_at=NOW() WHERE caja_id=$1`, [cajaId]);
@@ -1395,8 +1409,20 @@ export const OperacionController = {
       );
       if (transferCheck.blocked) return;
 
+      let locationResult: { apply: boolean; zonaId: number | null; seccionId: number | null } | null = null;
+      try {
+        locationResult = await resolveLocationForRequest(tenant, sedeId, req.body);
+      } catch (err: any) {
+        if (isLocationError(err)) {
+          return res.status(400).json({ ok: false, error: err.message || 'Ubicación inválida' });
+        }
+        throw err;
+      }
+
       await runWithSede(tenant, sedeId, async (c)=>{
         const targetSede = transferCheck.targetSede;
+        const zonaParam = locationResult?.apply ? locationResult.zonaId : null;
+        const seccionParam = locationResult?.apply ? locationResult.seccionId : null;
         await c.query(`ALTER TABLE ordenes ADD COLUMN IF NOT EXISTS estado_orden boolean DEFAULT true`);
         await c.query(`ALTER TABLE ordenes ADD COLUMN IF NOT EXISTS habilitada boolean NOT NULL DEFAULT true`);
         await c.query('BEGIN');
@@ -1407,10 +1433,12 @@ export const OperacionController = {
             `UPDATE inventario_credocubes ic
                 SET estado='Acondicionamiento',
                     sub_estado='Lista para Despacho',
+                    zona_id = $3,
+                    seccion_id = $4,
                     sede_id = COALESCE($2::int, ic.sede_id)
               WHERE ic.rfid = ANY($1::text[])
                 AND ic.estado='Operación'`,
-            [rfids, targetSede]
+            [rfids, targetSede, zonaParam, seccionParam]
           );
           await c.query(`UPDATE inventario_credocubes SET numero_orden=NULL WHERE rfid = ANY($1::text[])`, [rfids]);
           await c.query(`UPDATE acond_cajas SET order_id = NULL WHERE caja_id=$1`, [cajaId]);
@@ -1761,18 +1789,32 @@ export const OperacionController = {
       );
       if (transferCheck.blocked) return;
 
+      let locationResult: { apply: boolean; zonaId: number | null; seccionId: number | null } | null = null;
+      try {
+        locationResult = await resolveLocationForRequest(tenant, sedeId, req.body);
+      } catch (err: any) {
+        if (isLocationError(err)) {
+          return res.status(400).json({ ok: false, error: err.message || 'Ubicación inválida' });
+        }
+        throw err;
+      }
+
       await runWithSede(tenant, sedeId, async (c)=>{
         await c.query('BEGIN');
         try {
           const targetSede = transferCheck.targetSede;
+          const zonaParam = locationResult?.apply ? locationResult.zonaId : null;
+          const seccionParam = locationResult?.apply ? locationResult.seccionId : null;
           // 1) Mover todos los items de la caja a Inspección, limpiar sub_estado
           await c.query(
             `UPDATE inventario_credocubes ic
                 SET estado='Inspección',
                     sub_estado=NULL,
+                    zona_id = $3,
+                    seccion_id = $4,
                     sede_id = COALESCE($2::int, ic.sede_id)
               WHERE ic.rfid IN (SELECT rfid FROM acond_caja_items WHERE caja_id=$1)`,
-            [cajaId, targetSede]
+            [cajaId, targetSede, zonaParam, seccionParam]
           );
           // 2) Resetear checklist solo para TICs
           await c.query(
@@ -5024,20 +5066,32 @@ export const OperacionController = {
       );
       if (transferCheck.blocked) return;
 
+      let locationResult: { apply: boolean; zonaId: number | null; seccionId: number | null } | null = null;
+      try {
+        locationResult = await resolveLocationForRequest(tenant, sedeId, req.body);
+      } catch (err: any) {
+        if (isLocationError(err)) {
+          return res.status(400).json({ ok: false, error: err.message || 'Ubicación inválida' });
+        }
+        throw err;
+      }
+
       await runWithSede(tenant, sedeId, async (c)=>{
         const targetSede = transferCheck.targetSede;
+        const zonaParam = locationResult?.apply ? locationResult.zonaId : null;
+        const seccionParam = locationResult?.apply ? locationResult.seccionId : null;
         await c.query('BEGIN');
         try {
           const upd = await c.query(
             `UPDATE inventario_credocubes ic
                 SET estado='Operación',
                     sub_estado='Transito',
-                    zona_id = NULL,
-                    seccion_id = NULL,
+                    zona_id = $3,
+                    seccion_id = $4,
                     sede_id = COALESCE($2::int, ic.sede_id)
                WHERE ic.rfid IN (SELECT rfid FROM acond_caja_items WHERE caja_id=$1)
                  AND ic.estado='Acondicionamiento'
-                 AND ic.sub_estado IN ('Lista para Despacho','Listo')`, [id, targetSede]);
+                 AND ic.sub_estado IN ('Lista para Despacho','Listo')`, [id, targetSede, zonaParam, seccionParam]);
           await c.query('COMMIT');
           res.json({ ok:true, moved: upd.rowCount });
         } catch(e){ await c.query('ROLLBACK'); throw e; }

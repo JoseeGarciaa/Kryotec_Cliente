@@ -91,6 +91,7 @@
       </div>
     </div>
   </div>
+  <script src="/static/js/location-selector.js?v=<%= assetVersion %>" defer></script>
   <script src="/static/js/inspeccion.js?v=<%= assetVersion %>" defer></script>
 </div>
 
@@ -119,6 +120,19 @@
         <span class="label-text text-xs opacity-70">Minutos</span>
         <input id="insp-add-mins" type="number" min="0" class="input input-sm input-bordered" placeholder="0" />
       </label>
+    </div>
+    <div class="grid gap-2 mb-3 text-xs">
+      <label class="form-control gap-1">
+        <span class="label-text text-[11px] opacity-70">Zona destino (opcional)</span>
+        <select id="insp-add-zona" class="select select-sm select-bordered"></select>
+      </label>
+      <label class="form-control gap-1">
+        <span class="label-text text-[11px] opacity-70">Sección destino (opcional)</span>
+        <select id="insp-add-seccion" class="select select-sm select-bordered" disabled>
+          <option value="">Sin sección</option>
+        </select>
+      </label>
+      <p id="insp-add-location-hint" class="text-[11px] opacity-70 min-h-[16px]"></p>
     </div>
     <div class="flex items-center justify-between gap-4 mt-2">
       <button type="button" id="insp-add-clear" class="btn btn-ghost btn-xs">Limpiar</button>

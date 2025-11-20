@@ -199,6 +199,56 @@
   const addConfirm = qs('#insp-add-confirm');
   const addClear = qs('#insp-add-clear');
   const addItems = qs('#insp-add-items');
+  const addZona = qs('#insp-add-zona');
+  const addSeccion = qs('#insp-add-seccion');
+  const addLocationHint = qs('#insp-add-location-hint');
+
+  let addSelectedZonaId = '';
+  let addSelectedSeccionId = '';
+  const addLocationController = (typeof window !== 'undefined' && window.LocationSelector && typeof window.LocationSelector.create === 'function')
+    ? window.LocationSelector.create({
+        zonaSelect: addZona,
+        seccionSelect: addSeccion,
+        hintElement: addLocationHint
+      })
+    : null;
+
+  function ensureAddLocation(){
+    if(!addLocationController) return Promise.resolve();
+    return addLocationController.ensure({ zonaId: addSelectedZonaId, seccionId: addSelectedSeccionId })
+      .then(()=>{
+        const current = addLocationController.getValue();
+        addSelectedZonaId = current.zonaId || '';
+        addSelectedSeccionId = current.seccionId || '';
+      });
+  }
+
+  function captureAddLocation(){
+    if(addLocationController){
+      const value = addLocationController.getValue();
+      addSelectedZonaId = value.zonaId || '';
+      addSelectedSeccionId = value.seccionId || '';
+    } else {
+      addSelectedZonaId = addZona ? String(addZona.value || '') : '';
+      addSelectedSeccionId = addSeccion ? String(addSeccion.value || '') : '';
+    }
+    return { zona_id: addSelectedZonaId, seccion_id: addSelectedSeccionId };
+  }
+
+  function resetAddLocation(){
+    addSelectedZonaId = '';
+    addSelectedSeccionId = '';
+    if(addLocationController){
+      addLocationController.reset();
+    } else {
+      if(addZona) addZona.value='';
+      if(addSeccion){
+        addSeccion.innerHTML = '<option value="">Sin sección</option>';
+        addSeccion.disabled = true;
+      }
+      if(addLocationHint) addLocationHint.textContent='';
+    }
+  }
 
   function normalizeCode(code){
     const raw = (code||'').toString().toUpperCase();
@@ -450,7 +500,16 @@
   const novConfirm = qs('#insp-nov-confirm');
 
   // Abrir modal Agregar
-  btnAdd?.addEventListener('click', ()=>{ try{ addDlg.showModal(); }catch{ addDlg.classList.remove('hidden'); } addMsg && (addMsg.textContent=''); addConfirm && (addConfirm.disabled=true); addScan && (addScan.value=''); addH && (addH.value=''); addM && (addM.value=''); setTimeout(()=> addScan?.focus(), 200); });
+  btnAdd?.addEventListener('click', ()=>{
+    try{ addDlg.showModal(); }catch{ addDlg.classList.remove('hidden'); }
+    addMsg && (addMsg.textContent='');
+    addConfirm && (addConfirm.disabled=true);
+    if(addScan) addScan.value='';
+    if(addH) addH.value='';
+    if(addM) addM.value='';
+    resetAddLocation();
+    ensureAddLocation().finally(()=> setTimeout(()=> addScan?.focus(), 200));
+  });
 
   async function lookupCaja(inputCode, opts = {}){
     if(inputCode instanceof Event){
@@ -743,7 +802,17 @@
   addScan?.addEventListener('input', ()=>{ if(addScan.value.length>24) addScan.value = addScan.value.slice(0,24); updateAddConfirm(); renderAddItems((addScan?.value||'').trim()); });
   addH?.addEventListener('input', updateAddConfirm);
   addM?.addEventListener('input', updateAddConfirm);
-  addClear?.addEventListener('click', ()=>{ addScan && (addScan.value=''); addH && (addH.value=''); addM && (addM.value=''); addMsg && (addMsg.textContent=''); if(addItems) addItems.innerHTML=''; updateAddConfirm(); addScan?.focus(); });
+  addClear?.addEventListener('click', ()=>{
+    if(addScan) addScan.value='';
+    if(addH) addH.value='';
+    if(addM) addM.value='';
+    addMsg && (addMsg.textContent='');
+    if(addItems) addItems.innerHTML='';
+    resetAddLocation();
+    ensureAddLocation();
+    updateAddConfirm();
+    addScan?.focus();
+  });
   addScan?.addEventListener('keydown', (e)=>{ if(e.key==='Enter'){ e.preventDefault(); addConfirm?.click(); }});
 
   // Confirmar Agregar (pull con cronómetro obligatorio)
@@ -760,7 +829,13 @@
     }catch(_e){ addMsg && (addMsg.textContent='Error validando'); return; }
     addMsg && (addMsg.textContent='Agregando...');
     try {
-      const attempt = await postJSONWithSedeTransfer('/operacion/inspeccion/pull', { rfid: code, durationSec: sec }, {
+      const locationPayload = captureAddLocation();
+      const attempt = await postJSONWithSedeTransfer('/operacion/inspeccion/pull', {
+        rfid: code,
+        durationSec: sec,
+        zona_id: locationPayload.zona_id,
+        seccion_id: locationPayload.seccion_id
+      }, {
         promptMessage: (payload) => payload?.confirm || payload?.error || `La caja ${code} pertenece a otra sede. ¿Deseas trasladarla a tu sede actual?`
       });
       if(attempt.cancelled){

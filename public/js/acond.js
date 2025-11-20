@@ -1507,6 +1507,8 @@
   const locationHint = document.getElementById('ensam-location-hint');
 
     const ticNegatives = new Map();
+    let negativeSyncMs = Date.now();
+    let negativeTickerId = 0;
     let negativeConsentRequired = false;
     let negativeConsentChecked = false;
     let negativeConsentContainer = null;
@@ -1523,127 +1525,54 @@
 
     function setLocationMessage(text){ if(locationHint){ locationHint.textContent = text || ''; } }
 
-    async function loadUbicaciones(){
-      if(ubicacionesCache.data) return ubicacionesCache.data;
-      if(!ubicacionesCache.promise){
-        ubicacionesCache.promise = fetch('/inventario/ubicaciones', { headers:{ Accept:'application/json' } })
-          .then((res)=> res.ok ? res.json() : null)
-          .then((json)=>{
-            const zonas = Array.isArray(json?.zonas) ? json.zonas : [];
-            ubicacionesCache.data = zonas.map((z)=>({
-              zona_id: z.zona_id,
-              nombre: z.nombre,
-              activa: z.activa,
-              secciones: Array.isArray(z.secciones) ? z.secciones.map((s)=>({
-                seccion_id: s.seccion_id,
-                nombre: s.nombre,
-                activa: s.activa,
-              })) : [],
-            }));
-            return ubicacionesCache.data;
-          })
-          .catch((err)=>{
-            console.error('[Acond] Error cargando ubicaciones', err);
-            ubicacionesCache.data = [];
-            return ubicacionesCache.data;
-          })
-          .finally(()=>{ ubicacionesCache.promise = null; });
-      }
-      return ubicacionesCache.promise;
-    }
-
-    function populateZonaSelect(selected){
-      if(!selectZona) return;
-      const zonas = ubicacionesCache.data || [];
-      const opts = ['<option value="">Sin zona</option>'];
-      zonas.forEach((z)=>{
-        const label = safeHTML(z.nombre || `Zona ${z.zona_id}`) + (z.activa === false ? ' (inactiva)' : '');
-        opts.push(`<option value="${safeHTML(z.zona_id)}">${label}</option>`);
-      });
-      selectZona.innerHTML = opts.join('');
-      selectZona.disabled = zonas.length === 0;
-      const desired = selected ? String(selected) : '';
-      selectZona.value = desired;
-      if(desired && selectZona.value !== desired){
-        const opt = document.createElement('option');
-        opt.value = desired;
-        opt.textContent = `Zona ${desired}`;
-        selectZona.appendChild(opt);
-        selectZona.value = desired;
-      }
-      ensamZonaId = selectZona.value || '';
-      if(zonas.length === 0){
-        setLocationMessage('No hay zonas configuradas para tu sede.');
-      }
-    }
-
-    function populateSeccionSelect(zonaId, selected){
-      if(!selectSeccion) return;
-      const zonas = ubicacionesCache.data || [];
-      const opts = ['<option value="">Sin sección</option>'];
-      let disable = false;
-      let message = 'Selecciona una zona para listar las secciones disponibles (opcional).';
-
-      if(!zonas.length){
-        disable = true;
-        message = 'No hay zonas configuradas para tu sede.';
-      } else if(!zonaId){
-        disable = true;
-      } else {
-        const zona = zonas.find((z)=> String(z.zona_id) === String(zonaId));
-        if(!zona){
-          disable = true;
-          message = 'Zona no disponible para tu sede.';
-        } else {
-          const secciones = Array.isArray(zona.secciones) ? zona.secciones : [];
-          if(!secciones.length){
-            disable = true;
-            message = 'Esta zona no tiene secciones registradas.';
-          } else {
-            message = 'Selecciona una sección (opcional).';
-            secciones.forEach((s)=>{
-              const label = safeHTML(s.nombre || `Sección ${s.seccion_id}`) + (s.activa === false ? ' (inactiva)' : '');
-              opts.push(`<option value="${safeHTML(s.seccion_id)}">${label}</option>`);
-            });
-          }
-        }
-      }
-
-      selectSeccion.innerHTML = opts.join('');
-      selectSeccion.disabled = disable;
-      const desired = !disable && selected ? String(selected) : '';
-      if(desired){
-        selectSeccion.value = desired;
-        if(selectSeccion.value !== desired){
-          const opt = document.createElement('option');
-          opt.value = desired;
-          opt.textContent = `Sección ${desired}`;
-          selectSeccion.appendChild(opt);
-          selectSeccion.value = desired;
-        }
-        ensamSeccionId = selectSeccion.value || '';
-      } else {
-        selectSeccion.value = '';
-        if(disable){ ensamSeccionId = ''; }
-      }
-      setLocationMessage(message);
-    }
+    const locationController = (typeof window !== 'undefined' && window.LocationSelector && typeof window.LocationSelector.create === 'function')
+      ? window.LocationSelector.create({
+          zonaSelect: selectZona,
+          seccionSelect: selectSeccion,
+          hintElement: locationHint
+        })
+      : null;
 
     function ensureLocationSelectors(){
-      if(!selectZona || !selectSeccion) return Promise.resolve();
-      setLocationMessage('Cargando ubicaciones...');
-      return loadUbicaciones()
+      if(!locationController) return Promise.resolve();
+      return locationController.ensure({ zonaId: ensamZonaId, seccionId: ensamSeccionId })
         .then(()=>{
-          populateZonaSelect(ensamZonaId);
-          populateSeccionSelect(ensamZonaId, ensamSeccionId);
-        })
-        .catch(()=>{
-          setLocationMessage('No se pudieron cargar las ubicaciones.');
-          if(selectZona) selectZona.disabled = true;
-          if(selectSeccion) selectSeccion.disabled = true;
+          const current = locationController.getValue();
+          ensamZonaId = current.zonaId || '';
+          ensamSeccionId = current.seccionId || '';
         });
     }
 
+
+    function stopNegativeTicker(){
+      if(!negativeTickerId) return;
+      clearInterval(negativeTickerId);
+      negativeTickerId = 0;
+    }
+
+    function updateNegativeBadges(){
+      if(!negativeConsentList) return;
+      const delta = Math.max(0, Math.floor((Date.now() - negativeSyncMs)/1000));
+      negativeConsentList.querySelectorAll('[data-negative-code]').forEach((badge)=>{
+        if(!(badge instanceof HTMLElement)) return;
+        const code = badge.dataset.negativeCode;
+        if(!code) return;
+        const base = ticNegatives.get(code);
+        if(base == null) return;
+        badge.textContent = formatNegativeElapsed(base + delta);
+      });
+    }
+
+    function ensureNegativeTicker(){
+      if(negativeTickerId) return;
+      negativeTickerId = window.setInterval(()=>{
+        if(!ticNegatives.size){
+          stopNegativeTicker();
+          return;
+        }
+        updateNegativeBadges();
+      }, 1000);
+    }
 
     function ensureNegativeConsentElements(){
       if(negativeConsentContainer || !crearBtn) return;
@@ -1694,10 +1623,11 @@
         negativeConsentCheckbox.checked = false;
         negativeConsentRequired = false;
         negativeConsentChecked = false;
+        stopNegativeTicker();
         return;
       }
       const items = Array.from(ticNegatives.entries()).map(([code, seconds])=>{
-        return `<li class="flex items-center justify-between gap-2 text-warning"><span class="font-semibold">${safeHTML(code)}</span><span class="badge badge-warning badge-xs font-mono tabular-nums">${formatNegativeElapsed(seconds)}</span></li>`;
+        return `<li class="flex items-center justify-between gap-2 text-warning"><span class="font-semibold">${safeHTML(code)}</span><span class="badge badge-warning badge-xs font-mono tabular-nums" data-negative-code="${safeHTML(code)}">${formatNegativeElapsed(seconds)}</span></li>`;
       }).join('');
       negativeConsentList.innerHTML = items;
       negativeConsentContainer.classList.remove('hidden');
@@ -1706,6 +1636,8 @@
         negativeConsentCheckbox.checked = false;
       }
       negativeConsentChecked = !!negativeConsentCheckbox.checked;
+      updateNegativeBadges();
+      ensureNegativeTicker();
     }
 
 
@@ -1835,6 +1767,7 @@
             console.warn('[Ensamblaje] No se pudo obtener tiempos negativos', err);
           }
         }
+        negativeSyncMs = Date.now();
         const negativesChanged = !mapsEqual(ticNegatives, prevNegatives);
         if(negativesChanged){
           negativeConsentChecked = false;
@@ -1842,6 +1775,7 @@
         }
         renderLists();
         renderNegativeConsent();
+        updateNegativeBadges();
         updateStatus();
         if(msg && !invalid.length) msg.textContent='';
         console.debug('[Ensamblaje] Validación OK', json);
@@ -1851,13 +1785,18 @@
     let scanProcessQueue = Promise.resolve();
 
     selectZona?.addEventListener('change', ()=>{
-      ensamZonaId = selectZona.value || '';
+      if(!locationController) return;
+      const value = locationController.getValue();
+      ensamZonaId = value.zonaId || '';
       ensamSeccionId = '';
-      populateSeccionSelect(ensamZonaId, ensamSeccionId);
+      locationController.setValue(ensamZonaId, ensamSeccionId);
     });
 
     selectSeccion?.addEventListener('change', ()=>{
-      ensamSeccionId = selectSeccion.value || '';
+      if(!locationController) return;
+      const value = locationController.getValue();
+      ensamZonaId = value.zonaId || '';
+      ensamSeccionId = value.seccionId || '';
     });
 
     function extractScanTokens(str){
@@ -1943,8 +1882,16 @@
       // Optional order id
       let orderId = null;
       if(linkOrderChk && linkOrderChk.checked && orderSelect && orderSelect.value){ orderId = Number(orderSelect.value); if(!Number.isFinite(orderId)) orderId = null; }
-      const zonaId = selectZona ? String(selectZona.value || '').trim() : '';
-      const seccionId = selectSeccion ? String(selectSeccion.value || '').trim() : '';
+      let zonaId = '';
+      let seccionId = '';
+      if(locationController){
+        const value = locationController.getValue();
+        zonaId = value.zonaId || '';
+        seccionId = value.seccionId || '';
+      } else {
+        zonaId = selectZona ? String(selectZona.value || '').trim() : '';
+        seccionId = selectSeccion ? String(selectSeccion.value || '').trim() : '';
+      }
       ensamZonaId = zonaId;
       ensamSeccionId = seccionId;
       crearBtn.disabled = true; if(msg) msg.textContent='Validando cronómetro...';
@@ -1986,6 +1933,18 @@
     const confirmBtn = document.getElementById('btn-despacho-confirm');
     const minInput = document.getElementById('despacho-min');
     const hrInput = document.getElementById('despacho-hr');
+    const selectZona = document.getElementById('despacho-zona');
+    const selectSeccion = document.getElementById('despacho-seccion');
+    const locationHint = document.getElementById('despacho-location-hint');
+    const locationController = (typeof window !== 'undefined' && window.LocationSelector && typeof window.LocationSelector.create === 'function')
+      ? window.LocationSelector.create({
+          zonaSelect: selectZona,
+          seccionSelect: selectSeccion,
+          hintElement: locationHint
+        })
+      : null;
+    let selectedZonaId = '';
+    let selectedSeccionId = '';
 
     let queue = [];
     let selectedCajaId = null;
@@ -2019,8 +1978,9 @@
 
     function updateConfirmState(){
       const durationSec = computeDurationSec();
+      const ready = queue.length && durationSec > 0;
       if(confirmBtn){
-        confirmBtn.disabled = !(queue.length && durationSec > 0);
+        confirmBtn.disabled = !ready;
       }
     }
 
@@ -2041,6 +2001,9 @@
       if(msg){ msg.textContent = ''; }
       if(minInput){ minInput.value = ''; }
       if(hrInput){ hrInput.value = ''; }
+      selectedZonaId = '';
+      selectedSeccionId = '';
+      locationController && locationController.reset();
       updateCount();
       updateConfirmState();
     }
@@ -2258,6 +2221,7 @@
     openBtn.addEventListener('click', ()=>{
       try { dialog.showModal(); } catch { dialog.classList.remove('hidden'); }
       reset();
+      locationController && locationController.ensure();
       setTimeout(()=> input?.focus(), 40);
     });
 
@@ -2271,6 +2235,14 @@
       if(!queue.length){
         if(msg){ msg.textContent = 'No hay cajas escaneadas.'; }
         return;
+      }
+      if(locationController){
+        const value = locationController.getValue();
+        selectedZonaId = value.zonaId || '';
+        selectedSeccionId = value.seccionId || '';
+      } else {
+        selectedZonaId = selectZona ? String(selectZona.value || '') : '';
+        selectedSeccionId = selectSeccion ? String(selectSeccion.value || '') : '';
       }
       confirmBtn.disabled = true;
       if(msg){ msg.textContent = 'Marcando cajas...'; }
@@ -2298,7 +2270,7 @@
             continue;
           }
         }
-        const attempt = await postJSONWithSedeTransfer('/operacion/acond/despacho/move', { rfid, durationSec, allowIncomplete: needsForce }, {
+        const attempt = await postJSONWithSedeTransfer('/operacion/acond/despacho/move', { rfid, durationSec, allowIncomplete: needsForce, zona_id: selectedZonaId, seccion_id: selectedSeccionId }, {
           promptMessage: (data) => data?.confirm || data?.error || `La caja ${entry.lote} pertenece a otra sede. ¿Deseas trasladarla a tu sede actual?`
         });
         if(attempt.cancelled){

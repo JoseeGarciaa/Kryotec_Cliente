@@ -22,6 +22,9 @@
   const decideMsg = qs('#dev-decide-msg');
   const decideActions = qs('#dev-decide-actions');
   const decideClose = qs('#dev-decide-close');
+  const decideZona = qs('#dev-zona');
+  const decideSeccion = qs('#dev-seccion');
+  const decideLocationHint = qs('#dev-location-hint');
   // Confirm dialog
   const confirmDlg = qs('#dev-confirm');
   const confirmYes = qs('#dev-confirm-yes');
@@ -35,10 +38,83 @@
   const piMins = qs('#dev-pi-mins');
   const piAccept = qs('#dev-pi-accept');
   const piCancel = qs('#dev-pi-cancel');
+  const piZona = qs('#dev-pi-zona');
+  const piSeccion = qs('#dev-pi-seccion');
+  const piLocationHint = qs('#dev-pi-location-hint');
   let piCajaId = null;
   let data = { cajas: [], serverNow: null, ordenes: {} };
   let serverOffset = 0; // serverNow - Date.now()
   let tick = null; let poll = null;
+
+  let selectedZonaId = '';
+  let selectedSeccionId = '';
+  const decideLocationController = (typeof window !== 'undefined' && window.LocationSelector && typeof window.LocationSelector.create === 'function')
+    ? window.LocationSelector.create({
+        zonaSelect: decideZona,
+        seccionSelect: decideSeccion,
+        hintElement: decideLocationHint
+      })
+    : null;
+  const piLocationController = (typeof window !== 'undefined' && window.LocationSelector && typeof window.LocationSelector.create === 'function')
+    ? window.LocationSelector.create({
+        zonaSelect: piZona,
+        seccionSelect: piSeccion,
+        hintElement: piLocationHint
+      })
+    : null;
+
+  function ensureDecideLocation(){
+    if(!decideLocationController) return Promise.resolve();
+    return decideLocationController.ensure({ zonaId: selectedZonaId, seccionId: selectedSeccionId })
+      .then(()=>{
+        const current = decideLocationController.getValue();
+        selectedZonaId = current.zonaId || '';
+        selectedSeccionId = current.seccionId || '';
+      });
+  }
+
+  function ensurePiLocation(){
+    if(!piLocationController) return Promise.resolve();
+    return piLocationController.ensure({ zonaId: selectedZonaId, seccionId: selectedSeccionId })
+      .then(()=>{
+        const current = piLocationController.getValue();
+        selectedZonaId = current.zonaId || selectedZonaId;
+        selectedSeccionId = current.seccionId || selectedSeccionId;
+      });
+  }
+
+  function captureDecideLocation(){
+    if(decideLocationController){
+      const value = decideLocationController.getValue();
+      selectedZonaId = value.zonaId || '';
+      selectedSeccionId = value.seccionId || '';
+    } else {
+      selectedZonaId = decideZona ? String(decideZona.value || '') : '';
+      selectedSeccionId = decideSeccion ? String(decideSeccion.value || '') : '';
+    }
+    return { zona_id: selectedZonaId, seccion_id: selectedSeccionId };
+  }
+
+  function capturePiLocation(){
+    if(piLocationController){
+      const value = piLocationController.getValue();
+      selectedZonaId = value.zonaId || '';
+      selectedSeccionId = value.seccionId || '';
+    } else {
+      selectedZonaId = piZona ? String(piZona.value || '') : '';
+      selectedSeccionId = piSeccion ? String(piSeccion.value || '') : '';
+    }
+    return { zona_id: selectedZonaId, seccion_id: selectedSeccionId };
+  }
+
+  function syncPiLocationFromDecide(){
+    if(piLocationController){
+      piLocationController.setValue(selectedZonaId, selectedSeccionId);
+    } else {
+      if(piZona) piZona.value = selectedZonaId;
+      if(piSeccion) piSeccion.value = selectedSeccionId;
+    }
+  }
 
   function buildDefaultSedePrompt(payload){
     if(payload && typeof payload.confirm === 'string' && payload.confirm.trim()) return payload.confirm;
@@ -486,6 +562,7 @@
         html = `<button class='btn btn-error btn-sm flex-1' data-act='insp' data-id='${id}'>Enviar a Pendiente a Inspección</button>`;
       }
       if(decideActions) decideActions.innerHTML = html;
+      ensureDecideLocation();
       try { decideDlg.showModal(); } catch { decideDlg.classList.remove('hidden'); }
     } catch(e){ if(scanMsg) scanMsg.textContent='Error'; }
   }
@@ -501,9 +578,14 @@
       if(!id) return;
       try {
         if(scanMsg) scanMsg.textContent='Aplicando...';
+        const locationPayload = captureDecideLocation();
         if(act==='reuse'){
           const cajaLabel = cajaLabelById(id);
-          const attempt = await postJSONWithSedeTransfer('/operacion/devolucion/reuse', { caja_id: id }, {
+          const attempt = await postJSONWithSedeTransfer('/operacion/devolucion/reuse', {
+            caja_id: id,
+            zona_id: locationPayload.zona_id,
+            seccion_id: locationPayload.seccion_id
+          }, {
             promptMessage: (payload) => payload?.confirm || payload?.error || `La caja ${cajaLabel} pertenece a otra sede. ¿Deseas trasladarla a tu sede actual?`
           });
           if(attempt.cancelled){
@@ -522,6 +604,8 @@
         } else if(act==='insp'){
           // Abrir modal para horas/minutos; solo se envía tras Aceptar
           piCajaId = id;
+          syncPiLocationFromDecide();
+          ensurePiLocation();
           try { piDlg.showModal(); } catch { piDlg.classList.remove('hidden'); }
         }
         try{ modal.close(); }catch{ modal.classList.add('hidden'); }
@@ -543,7 +627,13 @@
     let shouldReset = true;
     try {
       const cajaLabel = cajaLabelById(currentId);
-      const attempt = await postJSONWithSedeTransfer('/operacion/devolucion/to-pend-insp', { caja_id: currentId, durationSec: sec }, {
+      const locationPayload = capturePiLocation();
+      const attempt = await postJSONWithSedeTransfer('/operacion/devolucion/to-pend-insp', {
+        caja_id: currentId,
+        durationSec: sec,
+        zona_id: locationPayload.zona_id,
+        seccion_id: locationPayload.seccion_id
+      }, {
         promptMessage: (payload) => payload?.confirm || payload?.error || `La caja ${cajaLabel} pertenece a otra sede. ¿Deseas trasladarla a tu sede actual?`
       });
       if(attempt.cancelled){

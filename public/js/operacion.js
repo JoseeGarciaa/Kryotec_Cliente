@@ -19,6 +19,18 @@
   const addMsg = document.getElementById('op-add-msg');
   const addConfirm = document.getElementById('op-add-confirm');
   const addClear = document.getElementById('op-add-clear');
+  const addZonaSelect = document.getElementById('op-add-zona');
+  const addSeccionSelect = document.getElementById('op-add-seccion');
+  const addLocationHint = document.getElementById('op-add-location-hint');
+  const addLocationController = (typeof window !== 'undefined' && window.LocationSelector && typeof window.LocationSelector.create === 'function')
+    ? window.LocationSelector.create({
+        zonaSelect: addZonaSelect,
+        seccionSelect: addSeccionSelect,
+        hintElement: addLocationHint
+      })
+    : null;
+  let addSelectedZonaId = '';
+  let addSelectedSeccionId = '';
   // Se eliminaron inputs de duración y contadores del modal; referencias removidas
   let addCajaId = null;
   let addFirstScan = null; // first TIC to auto-group
@@ -403,7 +415,32 @@
   btnViewList?.addEventListener('click', ()=> activateList());
   // Por defecto vista tarjetas (cubo)
   activateCards();
-  function openAddModal(){ try { modal.showModal(); } catch{ modal.classList.remove('hidden'); } resetAdd(); setTimeout(()=> addScan?.focus(), 40); }
+
+  function ensureAddLocation(){
+    if(!addLocationController) return Promise.resolve();
+    return addLocationController.ensure({ zonaId: addSelectedZonaId, seccionId: addSelectedSeccionId });
+  }
+
+  function resetAddLocation(){
+    addSelectedZonaId = '';
+    addSelectedSeccionId = '';
+    if(addLocationController){
+      addLocationController.reset();
+    } else {
+      if(addZonaSelect) addZonaSelect.value = '';
+      if(addSeccionSelect){
+        addSeccionSelect.innerHTML = '<option value="">Sin sección</option>';
+        addSeccionSelect.disabled = true;
+      }
+      if(addLocationHint) addLocationHint.textContent = '';
+    }
+  }
+
+  function openAddModal(){
+    try { modal.showModal(); } catch{ modal.classList.remove('hidden'); }
+    resetAdd();
+    ensureAddLocation().finally(()=> setTimeout(()=> addScan?.focus(), 40));
+  }
   btnAdd?.addEventListener('click', openAddModal);
   function resetAdd(){
     addQueue = [];
@@ -419,6 +456,7 @@
     if(addSummary) addSummary.classList.add('hidden');
     if(addMsg) addMsg.textContent='';
     if(addConfirm) addConfirm.disabled=true;
+    resetAddLocation();
   }
   function updateCounts(){
     const hasEntries = addQueue.some(entry => Array.isArray(entry.roles) && entry.roles.length>0);
@@ -559,6 +597,15 @@
 
     if(!targets.length){ if(addMsg) addMsg.textContent = 'No hay cajas elegibles'; return; }
 
+    if(addLocationController){
+      const value = addLocationController.getValue();
+      addSelectedZonaId = value.zonaId || '';
+      addSelectedSeccionId = value.seccionId || '';
+    } else {
+      addSelectedZonaId = addZonaSelect ? String(addZonaSelect.value || '') : '';
+      addSelectedSeccionId = addSeccionSelect ? String(addSeccionSelect.value || '') : '';
+    }
+
     addConfirm.disabled = true;
 
     if(addMsg) addMsg.textContent = 'Moviendo cajas...';
@@ -569,7 +616,11 @@
 
     for (const entry of targets){
       try {
-        const attempt = await postJSONWithSedeTransfer('/operacion/add/move', { caja_id: entry.id }, {
+        const attempt = await postJSONWithSedeTransfer('/operacion/add/move', {
+          caja_id: entry.id,
+          zona_id: addSelectedZonaId,
+          seccion_id: addSelectedSeccionId
+        }, {
           promptMessage: (data) => data?.confirm || data?.error || `La caja ${entry.lote} pertenece a otra sede. ¿Deseas moverla a tu sede actual?`
         });
 

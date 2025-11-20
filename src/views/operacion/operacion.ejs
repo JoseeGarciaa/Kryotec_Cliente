@@ -70,6 +70,21 @@
       <div class="text-xs font-semibold mb-1">Items (Lista para Despacho)</div>
       <div id="op-add-items" class="grid grid-cols-2 gap-1 max-h-40 overflow-auto"></div>
     </div>
+    <div class="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-3">
+      <label class="form-control">
+        <span class="label-text text-xs">Zona (opcional)</span>
+        <select id="op-add-zona" class="select select-bordered select-sm">
+          <option value="">Sin zona</option>
+        </select>
+      </label>
+      <label class="form-control">
+        <span class="label-text text-xs">Sección (opcional)</span>
+        <select id="op-add-seccion" class="select select-bordered select-sm" disabled>
+          <option value="">Sin sección</option>
+        </select>
+      </label>
+    </div>
+    <p id="op-add-location-hint" class="text-[11px] opacity-60 mb-3"></p>
     <div class="flex items-center justify-between gap-4 mt-2">
       <button type="button" id="op-add-clear" class="btn btn-ghost btn-xs">Limpiar</button>
       <div class="flex items-center gap-3">
@@ -80,6 +95,7 @@
   </div>
 </dialog>
 
+<script src="/static/js/location-selector.js?v=<%= assetVersion %>" defer></script>
 <script src="/static/js/operacion.js?v=<%= assetVersion %>" defer></script>
 
 <!-- Modal Detalle Caja (mismo diseño que vistas anteriores) -->
