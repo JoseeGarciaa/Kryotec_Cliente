@@ -4257,6 +4257,7 @@ export const OperacionController = {
                        WHEN m.nombre_modelo ILIKE '%tic%' THEN 'tic'
                        ELSE 'tic' END AS rol,
                   m.litraje,
+                  m.nombre_modelo,
                   ic.estado, ic.sub_estado
              FROM acond_caja_items aci
              JOIN inventario_credocubes ic ON ic.rfid = aci.rfid
@@ -4270,7 +4271,8 @@ export const OperacionController = {
                     CASE WHEN m.nombre_modelo ILIKE '%cube%' THEN 'cube'
                          WHEN m.nombre_modelo ILIKE '%vip%' THEN 'vip'
                          WHEN m.nombre_modelo ILIKE '%tic%' THEN 'tic'
-                         ELSE 'tic' END AS rol,
+                    ELSE 'tic' END AS rol,
+                  m.nombre_modelo,
                     ic.estado, ic.sub_estado
                FROM acond_caja_items aci
                JOIN inventario_credocubes ic ON ic.rfid = aci.rfid
@@ -4328,18 +4330,36 @@ export const OperacionController = {
           }
         }
         // recargar
-        const recQ = await withTenant(tenant, (c)=> c.query(
-          `SELECT aci.rfid,
-                  CASE WHEN m.nombre_modelo ILIKE '%cube%' THEN 'cube'
-                       WHEN m.nombre_modelo ILIKE '%vip%' THEN 'vip'
-                       WHEN m.nombre_modelo ILIKE '%tic%' THEN 'tic'
-                       ELSE 'tic' END AS rol,
-                  ic.estado, ic.sub_estado
-             FROM acond_caja_items aci
-             JOIN inventario_credocubes ic ON ic.rfid = aci.rfid
-             JOIN modelos m ON m.modelo_id = ic.modelo_id
-            WHERE aci.caja_id=$1`, [cajaId]));
-        rows = recQ.rows as any[];
+          let recQ;
+          if(litrajeDisponible){
+            recQ = await withTenant(tenant, (c)=> c.query(
+              `SELECT aci.rfid,
+                      CASE WHEN m.nombre_modelo ILIKE '%cube%' THEN 'cube'
+                           WHEN m.nombre_modelo ILIKE '%vip%' THEN 'vip'
+                           WHEN m.nombre_modelo ILIKE '%tic%' THEN 'tic'
+                           ELSE 'tic' END AS rol,
+                      m.litraje,
+                      m.nombre_modelo,
+                      ic.estado, ic.sub_estado
+                 FROM acond_caja_items aci
+                 JOIN inventario_credocubes ic ON ic.rfid = aci.rfid
+                 JOIN modelos m ON m.modelo_id = ic.modelo_id
+                WHERE aci.caja_id=$1`, [cajaId]));
+          } else {
+            recQ = await withTenant(tenant, (c)=> c.query(
+              `SELECT aci.rfid,
+                      CASE WHEN m.nombre_modelo ILIKE '%cube%' THEN 'cube'
+                           WHEN m.nombre_modelo ILIKE '%vip%' THEN 'vip'
+                           WHEN m.nombre_modelo ILIKE '%tic%' THEN 'tic'
+                           ELSE 'tic' END AS rol,
+                      m.nombre_modelo,
+                      ic.estado, ic.sub_estado
+                 FROM acond_caja_items aci
+                 JOIN inventario_credocubes ic ON ic.rfid = aci.rfid
+                 JOIN modelos m ON m.modelo_id = ic.modelo_id
+                WHERE aci.caja_id=$1`, [cajaId]));
+          }
+          rows = recQ.rows as any[];
       }
       const total = rows.length;
       let listos = 0;
@@ -4374,7 +4394,12 @@ export const OperacionController = {
         timer,
         // Back-compat: mantener rfids plano; nuevo: incluir rol por componente
         rfids: allEnsamblado ? rows.map(r=>r.rfid) : [],
-        componentes: allEnsamblado ? rows.map(r=> ({ rfid: r.rfid, rol: r.rol })) : [],
+        componentes: allEnsamblado ? rows.map(r=> ({
+          rfid: r.rfid,
+          rol: r.rol,
+          litraje: Object.prototype.hasOwnProperty.call(r, 'litraje') ? r.litraje : null,
+          nombre: r.nombre_modelo ?? null
+        })) : [],
         pendientes,
         total,
         allEnsamblado,

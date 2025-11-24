@@ -1953,9 +1953,9 @@
 
     function badgeForRol(rol){
       const type = String(rol || '').toLowerCase();
-      if(type === 'vip') return 'badge-info';
-      if(type === 'cube') return 'badge-accent';
-      return 'badge-warning';
+      if(type === 'vip') return 'badge-info text-white';
+      if(type === 'cube') return 'badge-accent text-white';
+      return 'badge-warning text-black';
     }
 
     function normalizeComponentes(source){
@@ -1965,7 +1965,9 @@
       }
       return source.map(item => ({
         rfid: item.rfid || item.codigo || '',
-        rol: item.rol || item.tipo || ''
+        rol: item.rol || item.tipo || '',
+        litraje: item.litraje ?? item.litros ?? null,
+        nombre: item.nombre || item.modelo || item.nombre_modelo || item.descripcion || ''
       }));
     }
 
@@ -2010,12 +2012,38 @@
 
     function formatComponents(entry){
       if(entry.componentes && entry.componentes.length){
-        return entry.componentes.map(comp => {
+        const cards = entry.componentes.map(comp => {
           const cls = badgeForRol(comp.rol);
-          const label = safeHTML(comp.rol || comp.tipo || '');
+          const rawRol = String(comp.rol || comp.tipo || '').trim().toUpperCase();
+          const label = safeHTML(rawRol || '');
           const code = safeHTML(comp.rfid || comp.codigo || '');
-          return `<div class="flex items-center justify-between gap-2 px-2 py-1 bg-base-200 rounded"><span class="badge ${cls} badge-xs font-semibold uppercase">${label}</span><span class="font-mono text-[10px]">${code}</span></div>`;
+          const nombreRaw = typeof comp.nombre === 'string' ? comp.nombre.trim() : '';
+          let litrajeLabel = '';
+          if(comp.litraje !== undefined && comp.litraje !== null && comp.litraje !== ''){
+            const numeric = Number(comp.litraje);
+            if(Number.isFinite(numeric)){
+              const normalized = Number.isInteger(numeric) ? String(numeric) : numeric.toFixed(1);
+              litrajeLabel = normalized + ' L';
+            } else {
+              const text = String(comp.litraje).trim();
+              if(text){
+                litrajeLabel = /l$/i.test(text) ? text : text + ' L';
+              }
+            }
+          }
+          const metaParts = [];
+          if(nombreRaw) metaParts.push(safeHTML(nombreRaw));
+          if(litrajeLabel) metaParts.push(safeHTML(litrajeLabel));
+          const meta = metaParts.length ? `<div class="text-[10px] opacity-70 leading-tight">${metaParts.join(' · ')}</div>` : '';
+          return `<div class="flex flex-col gap-1 px-2 py-2 rounded bg-base-200/60">
+            <div class="flex items-center justify-between gap-2">
+              <span class="badge ${cls} badge-xs font-semibold">${label}</span>
+              <span class="font-mono text-[10px] tracking-tight">${code}</span>
+            </div>
+            ${meta}
+          </div>`;
         }).join('');
+        return `<div class="grid gap-2 grid-cols-1 sm:grid-cols-2">${cards}</div>`;
       }
       if(entry.componentesOcultos){
         return '<div class="text-[11px] text-warning">Componentes ocultos: la caja no esta completa.</div>';
@@ -2038,34 +2066,41 @@
         const orderLabel = entry.orderNum ? entry.orderNum : (entry.orderId ? `#${entry.orderId}` : '-');
         const pendLabel = entry.pendientes != null ? entry.pendientes : '?';
         const needsForce = (!entry.allEnsamblado || entry.timerActive);
-        const pendienteBadge = !entry.allEnsamblado ? `<span class="badge badge-error badge-xs">Pend ${pendLabel}</span>` : '';
-        const timerBadge = entry.timerActive ? '<span class="badge badge-info badge-xs">Cronometro activo</span>' : '';
-        const forceBadge = (needsForce && entry.force) ? '<span class="badge badge-warning badge-xs">Forzado</span>' : '';
-        const headerBadges = [pendienteBadge, timerBadge, forceBadge].filter(Boolean).join(' ');
+        const pendValue = safeHTML(String(pendLabel));
+        const badges = [];
+        if(!entry.allEnsamblado){ badges.push(`<span class="badge badge-error badge-xs text-white">Pend ${pendValue}</span>`); }
+        if(entry.timerActive){ badges.push('<span class="badge badge-info badge-xs text-white">Cronometro activo</span>'); }
+        if(needsForce && entry.force){ badges.push('<span class="badge badge-warning badge-xs text-black">Forzado</span>'); }
+        const badgesHtml = badges.length
+          ? `<div class="flex flex-wrap items-center justify-start sm:justify-end gap-1 text-[9px] font-semibold">${badges.join('')}</div>`
+          : '';
         const warnHtmlParts = [];
         const warnPlainParts = [];
         if(!entry.allEnsamblado){ warnHtmlParts.push('<span>La caja tiene componentes pendientes o en Ensamblaje.</span>'); warnPlainParts.push('Componentes pendientes.'); }
         if(entry.timerActive){ warnHtmlParts.push('<span>Cronometro en progreso.</span>'); warnPlainParts.push('Cronometro activo.'); }
         const warnings = needsForce
-          ? `<div class="mt-2 text-[11px] text-warning flex flex-wrap items-center gap-2">${warnHtmlParts.join(' ')}<button type="button" class="btn btn-ghost btn-xs" data-toggle-force="${safeHTML(entry.cajaId)}">${entry.force ? 'Cancelar forzar' : 'Permitir mover incompleta'}</button></div>`
+          ? `<div class="mt-3 text-[11px] text-warning flex flex-wrap items-center gap-2">${warnHtmlParts.join(' ')}<button type="button" class="btn btn-ghost btn-xs text-warning hover:bg-warning/10" data-toggle-force="${safeHTML(entry.cajaId)}">${entry.force ? 'Cancelar forzar' : 'Permitir mover incompleta'}</button></div>`
           : '';
         const collapsedNotice = (!isSelected && needsForce)
           ? `<div class="px-3 pb-3 text-[10px] text-warning">${warnPlainParts.join(' ')}</div>`
           : '';
+        const componentsMarkup = formatComponents(entry);
         const details = isSelected
-          ? `<div class="px-3 pb-3 space-y-2">${formatComponents(entry)}${warnings}</div>`
+          ? `<div class="px-3 pb-3 space-y-3">${componentsMarkup}${warnings}</div>`
           : collapsedNotice;
-        return `<div class="border rounded-lg ${isSelected ? 'border-primary bg-base-200/40' : 'border-base-300/60 bg-base-200/10'} cursor-pointer" data-select-caja="${safeHTML(entry.cajaId)}">
-          <div class="flex items-center justify-between gap-3 px-3 py-2">
+        return `<div class="border rounded-lg ${isSelected ? 'border-primary bg-base-200/40' : 'border-base-300/60 bg-base-200/10'} cursor-pointer transition-colors" data-select-caja="${safeHTML(entry.cajaId)}">
+          <div class="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-2 px-3 py-2">
             <div class="flex items-center gap-2 text-xs font-semibold">
               <span class="text-[10px] opacity-60">${idx + 1}</span>
-              <span>${safeHTML(entry.lote || ('Caja ' + entry.cajaId))}</span>
+              <span class="break-words leading-tight">${safeHTML(entry.lote || ('Caja ' + entry.cajaId))}</span>
             </div>
-            <div class="flex items-center gap-2 text-[10px] uppercase opacity-70">
-              <span>Orden: ${safeHTML(orderLabel)}</span>
-              <span>${entry.total || 0} items</span>
-              ${headerBadges}
-              <button type="button" class="btn btn-ghost btn-xs" data-remove-caja="${safeHTML(entry.cajaId)}">x</button>
+            <div class="flex flex-col gap-1 w-full sm:w-auto">
+              <div class="flex flex-wrap items-center justify-between sm:justify-end gap-2 text-[10px] uppercase opacity-70">
+                <span class="whitespace-nowrap">Orden: ${safeHTML(orderLabel)}</span>
+                <span class="whitespace-nowrap">${safeHTML(String(entry.total || 0))} items</span>
+                <button type="button" class="btn btn-ghost btn-xs shrink-0" data-remove-caja="${safeHTML(entry.cajaId)}">x</button>
+              </div>
+              ${badgesHtml}
             </div>
           </div>
           ${details}
