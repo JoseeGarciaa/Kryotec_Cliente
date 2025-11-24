@@ -1544,9 +1544,12 @@ export const OperacionController = {
   inspeccion: (_req: Request, res: Response) => res.render('operacion/inspeccion', { title: 'Operación · Inspección' }),
   inspeccionData: async (req: Request, res: Response) => {
     const tenant = (req as any).user?.tenant;
+    const sedeId = getRequestSedeId(req);
     try {
       // Traer cajas cuyos items estén en estado 'Inspección'
       const nowRes = await withTenant(tenant, (c)=> c.query<{ now:string }>(`SELECT NOW()::timestamptz AS now`));
+      const rowsParams: any[] = [];
+      const rowsSede = pushSedeFilter(rowsParams, sedeId, 'ic');
       const rowsQ = await withTenant(tenant, (c)=> c.query(
         `SELECT c.caja_id, c.lote,
           aci.rol,
@@ -1559,8 +1562,8 @@ export const OperacionController = {
       LEFT JOIN acond_caja_items aci ON aci.rfid = ic.rfid
       LEFT JOIN acond_cajas c ON c.caja_id = aci.caja_id
       LEFT JOIN modelos m ON m.modelo_id = ic.modelo_id
-          WHERE ic.estado='Inspección'
-          ORDER BY c.caja_id NULLS LAST, ic.rfid`));
+          WHERE ic.estado='Inspección'${rowsSede}
+          ORDER BY c.caja_id NULLS LAST, ic.rfid`, rowsParams));
       const mapa: Record<string, any> = {};
       const ids: number[] = [];
       for(const r of rowsQ.rows as any[]){
