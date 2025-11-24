@@ -1,14 +1,14 @@
 <% title = title || 'Calculadora de órdenes' %>
-<div class="flex flex-col gap-4">
-  <div class="flex items-center justify-between flex-wrap gap-3">
+<div class="flex flex-col gap-4 px-3 sm:px-0">
+  <div class="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
     <div>
       <h1 class="text-2xl font-bold">Calculadora de órdenes</h1>
       <p class="opacity-70 text-sm">Simula combinaciones de productos y obtén recomendaciones de CredoCubes disponibles en tu sede.</p>
     </div>
-    <div class="flex gap-2 flex-wrap">
-      <a href="/ordenes/calculadora/plantilla-productos" class="btn btn-ghost btn-sm">Descargar plantilla</a>
-      <button id="btn-import-productos" class="btn btn-secondary btn-sm">Importar productos</button>
-      <a href="/ordenes" class="btn btn-ghost btn-sm">Volver a órdenes</a>
+    <div class="flex flex-col sm:flex-row gap-2 w-full lg:w-auto">
+      <a href="/ordenes/calculadora/plantilla-productos" class="btn btn-ghost btn-sm w-full sm:w-auto">Descargar plantilla</a>
+      <button id="btn-import-productos" class="btn btn-secondary btn-sm w-full sm:w-auto">Importar productos</button>
+      <a href="/ordenes" class="btn btn-ghost btn-sm w-full sm:w-auto">Volver a órdenes</a>
     </div>
   </div>
 
@@ -20,14 +20,14 @@
 
   <div class="card bg-base-200 shadow">
     <div class="card-body gap-4">
-      <div class="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
+      <div class="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
         <div>
           <h2 class="card-title text-lg">Productos a despachar</h2>
           <p class="text-sm opacity-70">Ingresa las dimensiones internas del producto en milímetros (mm). Puedes seleccionar registros guardados como referencia y ajustar las cantidades necesarias.</p>
         </div>
-        <div class="flex gap-2">
-          <button id="btn-clear-items" class="btn btn-ghost btn-sm">Limpiar</button>
-          <button id="btn-add-item" class="btn btn-secondary btn-sm">Agregar producto</button>
+        <div class="flex flex-col sm:flex-row gap-2 w-full lg:w-auto">
+          <button id="btn-clear-items" class="btn btn-ghost btn-sm w-full sm:w-auto">Limpiar</button>
+          <button id="btn-add-item" class="btn btn-secondary btn-sm w-full sm:w-auto">Agregar producto</button>
         </div>
       </div>
 
@@ -45,9 +45,9 @@
 
       <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
         <div id="calc-status" class="text-sm opacity-70"></div>
-        <div class="flex gap-2 self-end flex-wrap">
-          <button id="btn-calc" class="btn btn-primary btn-sm">Calcular recomendaciones</button>
-          <button id="btn-calc-mix" class="btn btn-sm btn-outline btn-primary">Calculadora mixta</button>
+        <div class="flex flex-col sm:flex-row gap-2 self-stretch sm:self-end">
+          <button id="btn-calc" class="btn btn-primary btn-sm w-full sm:w-auto">Calcular recomendaciones</button>
+          <button id="btn-calc-mix" class="btn btn-sm btn-outline btn-primary w-full sm:w-auto">Calculadora mixta</button>
         </div>
       </div>
     </div>
@@ -57,23 +57,23 @@
     <div class="card bg-base-200 shadow">
       <div class="card-body gap-3">
         <h2 class="card-title text-lg">Resumen del cálculo</h2>
-        <div id="calc-summary" class="text-sm opacity-80">
+        <div id="calc-summary" class="text-sm opacity-80 space-y-2">
         </div>
       </div>
     </div>
 
     <div class="card bg-base-200 shadow">
       <div class="card-body gap-4">
-        <div class="flex flex-col gap-2">
-          <div class="flex items-center justify-between gap-4">
-            <div class="flex items-center gap-2">
+        <div class="flex flex-col gap-3">
+          <div class="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+            <div class="flex flex-col sm:flex-row sm:items-center gap-2">
               <h2 class="card-title text-lg">Recomendaciones disponibles</h2>
               <span id="calc-results-mode" class="hidden text-xs uppercase tracking-wide text-primary">Modo mixto</span>
             </div>
-            <div class="flex items-center gap-2">
-              <span id="calc-results-count" class="badge hidden"></span>
-              <div id="calc-mix-save-wrap" class="hidden">
-                <button id="btn-save-calc-mix" class="btn btn-sm btn-primary">Guardar mezcla</button>
+            <div class="flex flex-col sm:flex-row sm:items-center gap-2">
+              <span id="calc-results-count" class="badge hidden self-start sm:self-auto"></span>
+              <div id="calc-mix-save-wrap" class="hidden flex flex-col sm:flex-row sm:items-center gap-2">
+                <button id="btn-save-calc-mix" class="btn btn-sm btn-primary w-full sm:w-auto">Guardar mezcla</button>
                 <div id="calc-mix-save-note" class="hidden text-xs opacity-70"></div>
               </div>
             </div>
@@ -82,7 +82,7 @@
             <span>Recuerda que la recomendación mixta usa varias referencias de CredoCube. Selecciona una opción para guardar.</span>
           </div>
         </div>
-        <div id="calc-results" class="grid gap-3 md:grid-cols-2 xl:grid-cols-3"></div>
+        <div id="calc-results" class="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3"></div>
         <div id="calc-results-mix" class="hidden space-y-3"></div>
         <div id="calc-results-empty" class="hidden alert alert-warning text-sm">
           <span>No se encontraron modelos disponibles en tu sede que se ajusten a los productos indicados.</span>
