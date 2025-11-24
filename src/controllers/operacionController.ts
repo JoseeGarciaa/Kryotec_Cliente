@@ -4392,14 +4392,16 @@ export const OperacionController = {
         order_id: orderId,
         order_num: orderNum,
         timer,
-        // Back-compat: mantener rfids plano; nuevo: incluir rol por componente
-        rfids: allEnsamblado ? rows.map(r=>r.rfid) : [],
-        componentes: allEnsamblado ? rows.map(r=> ({
+        // Back-compat: mantener rfids plano sólo cuando todo está ensamblado (evita flujos previos que dependen de vacíos)
+        rfids: allEnsamblado ? rows.map(r=> r.rfid) : [],
+        componentes: rows.map(r=> ({
           rfid: r.rfid,
           rol: r.rol,
           litraje: Object.prototype.hasOwnProperty.call(r, 'litraje') ? r.litraje : null,
-          nombre: r.nombre_modelo ?? null
-        })) : [],
+          nombre: r.nombre_modelo ?? null,
+          estado: r.estado ?? null,
+          sub_estado: r.sub_estado ?? null
+        })),
         pendientes,
         total,
         allEnsamblado,

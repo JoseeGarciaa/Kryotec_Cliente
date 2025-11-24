@@ -1967,7 +1967,9 @@
         rfid: item.rfid || item.codigo || '',
         rol: item.rol || item.tipo || '',
         litraje: item.litraje ?? item.litros ?? null,
-        nombre: item.nombre || item.modelo || item.nombre_modelo || item.descripcion || ''
+        nombre: item.nombre || item.modelo || item.nombre_modelo || item.descripcion || '',
+        estado: item.estado || item.estado_actual || '',
+        subEstado: item.sub_estado || item.subEstado || ''
       }));
     }
 
@@ -2034,6 +2036,8 @@
           const metaParts = [];
           if(nombreRaw) metaParts.push(safeHTML(nombreRaw));
           if(litrajeLabel) metaParts.push(safeHTML(litrajeLabel));
+          const subState = String(comp.subEstado || '').trim();
+          if(subState && subState.toLowerCase() !== 'ensamblado'){ metaParts.push(`<span class="text-warning">${safeHTML(subState)}</span>`); }
           const meta = metaParts.length ? `<div class="text-[10px] opacity-70 leading-tight">${metaParts.join(' · ')}</div>` : '';
           return `<div class="flex flex-col gap-1 px-2 py-2 rounded bg-base-200/60">
             <div class="flex items-center justify-between gap-2">
@@ -2043,10 +2047,11 @@
             ${meta}
           </div>`;
         }).join('');
-        return `<div class="grid gap-2 grid-cols-1 sm:grid-cols-2">${cards}</div>`;
-      }
-      if(entry.componentesOcultos){
-        return '<div class="text-[11px] text-warning">Componentes ocultos: la caja no esta completa.</div>';
+        const cardsGrid = `<div class="grid gap-2 grid-cols-1 sm:grid-cols-2">${cards}</div>`;
+        const note = entry.componentesOcultos
+          ? '<div class="text-[11px] text-warning mt-2">Componentes pendientes: verifica el cronómetro de Ensamblaje.</div>'
+          : '';
+        return cardsGrid + note;
       }
       return '<div class="text-[10px] opacity-60">Sin componentes disponibles</div>';
     }
