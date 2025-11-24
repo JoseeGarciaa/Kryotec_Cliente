@@ -778,8 +778,9 @@
   // Validación de inputs del modal
   function updateAddConfirm(){
     const code = (addScan?.value||'').trim();
-    const h = parseInt(addH?.value||'0',10)||0; const m = parseInt(addM?.value||'0',10)||0; const sec = h*3600 + m*60;
-    addConfirm && (addConfirm.disabled = !(code.length===24 && sec>0));
+    if(addConfirm){
+      addConfirm.disabled = code.length !== 24;
+    }
   }
   async function renderAddItems(code){
     if(!addItems) return;
@@ -818,9 +819,11 @@
   // Confirmar Agregar (pull con cronómetro obligatorio)
   addConfirm?.addEventListener('click', async ()=>{
     const code = (addScan?.value||'').trim();
-    const h = parseInt(addH?.value||'0',10)||0; const m = parseInt(addM?.value||'0',10)||0; const sec = h*3600 + m*60;
+    const h = parseInt(addH?.value||'0',10)||0;
+    const m = parseInt(addM?.value||'0',10)||0;
+    const secRaw = h*3600 + m*60;
+    const sec = Math.max(0, secRaw);
     if(code.length!==24){ addMsg && (addMsg.textContent='RFID inválido'); return; }
-    if(sec<=0){ addMsg && (addMsg.textContent='Asigna horas/minutos'); return; }
     // Validate eligibility again before pulling
     try{
       const r0 = await fetch('/operacion/inspeccion/pending/preview',{ method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ rfid: code })});
@@ -832,7 +835,7 @@
       const locationPayload = captureAddLocation();
       const attempt = await postJSONWithSedeTransfer('/operacion/inspeccion/pull', {
         rfid: code,
-        durationSec: sec,
+        durationSec: sec > 0 ? sec : null,
         zona_id: locationPayload.zona_id,
         seccion_id: locationPayload.seccion_id
       }, {

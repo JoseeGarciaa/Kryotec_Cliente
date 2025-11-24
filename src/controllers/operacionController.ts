@@ -1619,14 +1619,83 @@ export const OperacionController = {
     const allowSedeTransferFlag = allowSedeTransferFromValue(req.body?.allowSedeTransfer);
     if(code.length !== 24) return res.status(400).json({ ok:false, error:'RFID inválido' });
     try {
+      const inferRol = (nombre: string) => {
+        const n = (nombre || '').toLowerCase();
+        if(n.includes('vip')) return 'vip';
+        if(n.includes('tic')) return 'tic';
+        if(n.includes('cube') || n.includes('cubo')) return 'cube';
+        return 'otro';
+      };
       const cajaQ = await withTenant(tenant, (c)=> c.query(
         `SELECT c.caja_id, c.lote
            FROM acond_caja_items aci
            JOIN acond_cajas c ON c.caja_id = aci.caja_id
           WHERE aci.rfid = $1
           LIMIT 1`, [code]));
-      if(!cajaQ.rowCount) return res.status(404).json({ ok:false, error:'RFID no pertenece a ninguna caja' });
-      const cajaId = cajaQ.rows[0].caja_id; const lote = cajaQ.rows[0].lote;
+      let cajaId: number | null = cajaQ.rowCount ? cajaQ.rows[0].caja_id : null;
+      let lote: string | null = cajaQ.rowCount ? (cajaQ.rows[0].lote || null) : null;
+      if(cajaId == null){
+        const fallbackQ = await withTenant(tenant, (c)=> c.query(
+          `SELECT ic.lote, m.nombre_modelo
+             FROM inventario_credocubes ic
+        LEFT JOIN modelos m ON m.modelo_id = ic.modelo_id
+            WHERE ic.rfid = $1
+            LIMIT 1`, [code]));
+        if(fallbackQ.rowCount){
+          const info = fallbackQ.rows[0] as any;
+          const loteRaw = typeof info.lote === 'string' ? info.lote.trim() : '';
+          const safeLote = loteRaw || `AUTO-${code}`;
+          const rol = inferRol(info.nombre_modelo || '');
+          await withTenant(tenant, async (client)=>{
+            await client.query('BEGIN');
+            try {
+              const existing = await client.query(`SELECT caja_id, lote FROM acond_cajas WHERE lote=$1 LIMIT 1`, [safeLote]);
+              if(existing.rowCount){
+                cajaId = existing.rows[0].caja_id;
+                lote = existing.rows[0].lote;
+              } else {
+                const inserted = await client.query(`INSERT INTO acond_cajas(lote) VALUES($1) RETURNING caja_id, lote`, [safeLote]);
+                cajaId = inserted.rows[0].caja_id;
+                lote = inserted.rows[0].lote;
+              }
+              await client.query(
+                `INSERT INTO acond_caja_items(caja_id, rfid, rol)
+                   VALUES ($1, $2, $3)
+                 ON CONFLICT (caja_id, rfid) DO NOTHING`,
+                [cajaId, code, rol]
+              );
+              await client.query('COMMIT');
+            } catch(err){
+              await client.query('ROLLBACK');
+              throw err;
+            }
+          });
+          if(cajaId != null && lote){
+            try {
+              await withTenant(tenant, (c)=> c.query(
+                `INSERT INTO acond_caja_items (caja_id, rfid, rol)
+                   SELECT $1, ic.rfid,
+                          CASE
+                            WHEN m.nombre_modelo ILIKE '%tic%' THEN 'tic'
+                            WHEN m.nombre_modelo ILIKE '%vip%' THEN 'vip'
+                            WHEN m.nombre_modelo ILIKE '%cube%' OR m.nombre_modelo ILIKE '%cubo%' THEN 'cube'
+                            ELSE 'otro'
+                          END
+                     FROM inventario_credocubes ic
+                     JOIN modelos m ON m.modelo_id = ic.modelo_id
+                LEFT JOIN acond_caja_items ac ON ac.rfid = ic.rfid
+                    WHERE ac.rfid IS NULL AND ic.lote = $2`,
+                [cajaId, lote]
+              ));
+            } catch(err){ if(KANBAN_DEBUG) console.log('[inspeccionCajaLookup] auto-fill acond_caja_items error', (err as any)?.message); }
+          }
+        }
+      }
+      if(cajaId == null){
+        return res.status(404).json({ ok:false, error:'RFID no pertenece a ninguna caja' });
+      }
+      const cajaIdNum = cajaId;
+      const loteVal = lote;
 
       const fetchTics = async () => {
         const q = await withTenant(tenant, (c)=> c.query(
@@ -1637,7 +1706,7 @@ export const OperacionController = {
             WHERE aci.caja_id = $1
               AND (m.nombre_modelo ILIKE '%tic%')
               AND LOWER(ic.estado) IN ('inspeccion','inspección')
-            ORDER BY ic.rfid`, [cajaId]));
+            ORDER BY ic.rfid`, [cajaIdNum]));
         return q.rows || [];
       };
 
@@ -1653,7 +1722,7 @@ export const OperacionController = {
             WHERE aci.caja_id = $1
               AND LOWER(ic.estado) IN ('inspeccion','inspección')
               AND (m.nombre_modelo ILIKE '%vip%' OR m.nombre_modelo ILIKE '%cube%' OR m.nombre_modelo ILIKE '%cubo%')
-            ORDER BY ic.rfid`, [cajaId]));
+            ORDER BY ic.rfid`, [cajaIdNum]));
         return q.rows || [];
       };
 
@@ -1670,7 +1739,7 @@ export const OperacionController = {
                JOIN inventario_credocubes ic ON ic.rfid = aci.rfid
               WHERE aci.caja_id = $1
                 AND LOWER(ic.estado)=LOWER('En bodega')
-                AND ic.sub_estado IN ('Pendiente a Inspección','Pendiente a Inspeccion')`, [cajaId]));
+                AND ic.sub_estado IN ('Pendiente a Inspección','Pendiente a Inspeccion')`, [cajaIdNum]));
           const pendCount = pendQ.rows[0]?.cnt || 0;
           if(pendCount > 0){
             const sedeRows = await withTenant(tenant, (c)=> c.query(
@@ -1678,7 +1747,7 @@ export const OperacionController = {
                  FROM acond_caja_items aci
                  JOIN inventario_credocubes ic ON ic.rfid = aci.rfid
                 WHERE aci.caja_id=$1`,
-              [cajaId]
+              [cajaIdNum]
             ));
             const fallbackRfids = (sedeRows.rows as any[]).map((row) => row.rfid);
             const transferCheck = await ensureCrossSedeAuthorization(
@@ -1715,15 +1784,15 @@ export const OperacionController = {
                           sub_estado=NULL,
                           sede_id = COALESCE($2::int, ic.sede_id)
                     WHERE ic.rfid IN (SELECT rfid FROM acond_caja_items WHERE caja_id=$1)`,
-                  [cajaId, targetSede]
+                  [cajaIdNum, targetSede]
                 );
-                await c.query(`DELETE FROM pend_insp_caja_timers WHERE caja_id=$1`, [cajaId]);
+                await c.query(`DELETE FROM pend_insp_caja_timers WHERE caja_id=$1`, [cajaIdNum]);
                 await c.query(
                   `INSERT INTO inspeccion_caja_timers(caja_id, started_at, duration_sec, active, updated_at)
-                     VALUES ($1, NULL, NULL, false, NOW())
+                    VALUES ($1, NULL, NULL, false, NOW())
                    ON CONFLICT (caja_id) DO UPDATE
                      SET active=false, started_at=NULL, updated_at=NOW()`,
-                  [cajaId]
+                  [cajaIdNum]
                 );
                 await c.query('COMMIT');
               } catch(e){ await c.query('ROLLBACK'); throw e; }
@@ -1743,7 +1812,7 @@ export const OperacionController = {
         comps = await fetchVipCube();
       }
 
-      return res.json({ ok:true, caja:{ id: cajaId, lote }, tics, comps, reactivated });
+      return res.json({ ok:true, caja:{ id: cajaIdNum, lote: loteVal }, tics, comps, reactivated });
     } catch(e:any){ res.status(500).json({ ok:false, error: e.message||'Error lookup caja inspección' }); }
   },
   // 1b) Pull: desde Inspección, escanear un RFID (TIC/VIP/CUBE) de una caja que esté en 'En bodega · Pendiente a Inspección', cancelar su timer pendiente, iniciar un timer manual de inspección y devolver info para checklist
@@ -1752,10 +1821,21 @@ export const OperacionController = {
     const sedeId = getRequestSedeId(req);
     const { rfid, durationSec } = req.body as any;
     const code = typeof rfid === 'string' ? rfid.trim() : '';
-    const dur = Number(durationSec);
+    const durRaw = durationSec;
+    let dur: number | null = null;
+    if(durRaw !== undefined && durRaw !== null && durRaw !== ''){
+      const parsed = Number(durRaw);
+      if(!Number.isFinite(parsed) || parsed < 0){
+        return res.status(400).json({ ok:false, error:'Duración inválida' });
+      }
+      if(parsed > 0){
+        dur = Math.floor(parsed);
+      }
+    }
+    const hasTimer = dur !== null;
+    const durationParam = hasTimer ? (dur as number) : null;
     const allowSedeTransferFlag = allowSedeTransferFromValue(req.body?.allowSedeTransfer);
     if(code.length !== 24) return res.status(400).json({ ok:false, error:'RFID inválido' });
-    if(!Number.isFinite(dur) || dur<=0) return res.status(400).json({ ok:false, error:'Se requiere un cronómetro (horas/minutos)' });
     try {
       // Localizar caja por RFID
       const cajaQ = await withTenant(tenant, (c)=> c.query(
@@ -1849,10 +1929,10 @@ export const OperacionController = {
           await c.query(`ALTER TABLE inspeccion_caja_timers ADD COLUMN IF NOT EXISTS duration_sec integer`);
           await c.query(
             `INSERT INTO inspeccion_caja_timers(caja_id, started_at, duration_sec, active, updated_at)
-               VALUES ($1, NOW(), $2, true, NOW())
+               VALUES ($1, ${hasTimer ? 'NOW()' : 'NULL'}, $2, $3, NOW())
              ON CONFLICT (caja_id) DO UPDATE
-               SET started_at = NOW(), duration_sec = EXCLUDED.duration_sec, active = true, updated_at = NOW()`,
-            [cajaId, dur]
+               SET started_at = ${hasTimer ? 'NOW()' : 'NULL'}, duration_sec = EXCLUDED.duration_sec, active = $3, updated_at = NOW()`,
+            [cajaId, durationParam, hasTimer]
           );
           await c.query('COMMIT');
         } catch(e){ await c.query('ROLLBACK'); throw e; }
@@ -1924,6 +2004,13 @@ export const OperacionController = {
     if(!Number.isFinite(cajaId) || cajaId<=0) return res.status(400).json({ ok:false, error:'caja_id inválido' });
     const allowSedeTransferFlag = allowSedeTransferFromValue(req.body?.allowSedeTransfer);
     try {
+      const inferRol = (nombre:string)=>{
+        const n = (nombre||'').toLowerCase();
+        if(n.includes('vip')) return 'vip';
+        if(n.includes('tic')) return 'tic';
+        if(n.includes('cube') || n.includes('cubo')) return 'cube';
+        return 'otro';
+      };
       const list = Array.isArray(confirm_rfids) ? confirm_rfids.filter((x:any)=> typeof x==='string' && x.trim().length===24) : [];
       // Validate against current TICs in Inspección for this caja (can be 0..6)
       const ticsQ = await withTenant(tenant, (c)=> c.query(
