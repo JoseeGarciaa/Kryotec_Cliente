@@ -1519,6 +1519,7 @@
   const ticSet = new Set();
   const vipSet = new Set();
   const cubeSet = new Set();
+  const componentMeta = new Map();
   // Buffer de escaneos (todos los códigos escaneados pendientes/validados)
   const scannedSet = new Set();
   let _validateTimer = 0;
@@ -1627,7 +1628,16 @@
         return;
       }
       const items = Array.from(ticNegatives.entries()).map(([code, seconds])=>{
-        return `<li class="flex items-center justify-between gap-2 text-warning"><span class="font-semibold">${safeHTML(code)}</span><span class="badge badge-warning badge-xs font-mono tabular-nums" data-negative-code="${safeHTML(code)}">${formatNegativeElapsed(seconds)}</span></li>`;
+        const meta = componentMeta.get(code);
+        const unit = meta && meta.nombreUnidad ? meta.nombreUnidad : '';
+        const unitLine = unit ? `<span class="text-[11px] leading-tight text-warning-content/80">${safeHTML(unit)}</span>` : '';
+        return `<li class="flex items-center justify-between gap-2 text-warning">
+            <span class="flex flex-col">
+              <span class="font-semibold">${safeHTML(code)}</span>
+              ${unitLine}
+            </span>
+            <span class="badge badge-warning badge-xs font-mono tabular-nums" data-negative-code="${safeHTML(code)}">${formatNegativeElapsed(seconds)}</span>
+          </li>`;
       }).join('');
       negativeConsentList.innerHTML = items;
       negativeConsentContainer.classList.remove('hidden');
@@ -1645,12 +1655,39 @@
       if(listTic){
         listTic.innerHTML = [...ticSet].map(r=>{
           const code = String(r || '').toUpperCase();
-          const elapsed = ticNegatives.get(code);
-          return `<li class="px-2 py-1 bg-base-200 rounded text-xs font-mono truncate flex items-center">${safeHTML(code)}</li>`;
+          const meta = componentMeta.get(code);
+          const unit = meta && meta.nombreUnidad ? meta.nombreUnidad : '';
+          const unitLine = unit ? `<span class="text-[10px] leading-tight text-base-content/70">${safeHTML(unit)}</span>` : '';
+          return `<li class="px-2 py-1 bg-base-200 rounded text-xs flex flex-col">
+              <span class="font-mono">${safeHTML(code)}</span>
+              ${unitLine}
+            </li>`;
         }).join('');
       }
-      if(listVip) listVip.innerHTML = [...vipSet].map(r=>`<li class="px-2 py-1 bg-base-200 rounded text-xs font-mono truncate">${r}</li>`).join('');
-      if(listCube) listCube.innerHTML = [...cubeSet].map(r=>`<li class="px-2 py-1 bg-base-200 rounded text-xs font-mono truncate">${r}</li>`).join('');
+      if(listVip){
+        listVip.innerHTML = [...vipSet].map(r=>{
+          const code = String(r || '').toUpperCase();
+          const meta = componentMeta.get(code);
+          const unit = meta && meta.nombreUnidad ? meta.nombreUnidad : '';
+          const unitLine = unit ? `<span class="text-[10px] leading-tight text-base-content/70">${safeHTML(unit)}</span>` : '';
+          return `<li class="px-2 py-1 bg-base-200 rounded text-xs flex flex-col">
+              <span class="font-mono">${safeHTML(code)}</span>
+              ${unitLine}
+            </li>`;
+        }).join('');
+      }
+      if(listCube){
+        listCube.innerHTML = [...cubeSet].map(r=>{
+          const code = String(r || '').toUpperCase();
+          const meta = componentMeta.get(code);
+          const unit = meta && meta.nombreUnidad ? meta.nombreUnidad : '';
+          const unitLine = unit ? `<span class="text-[10px] leading-tight text-base-content/70">${safeHTML(unit)}</span>` : '';
+          return `<li class="px-2 py-1 bg-base-200 rounded text-xs flex flex-col">
+              <span class="font-mono">${safeHTML(code)}</span>
+              ${unitLine}
+            </li>`;
+        }).join('');
+      }
     }
     function compComplete(){ return ticSet.size===6 && vipSet.size===1 && cubeSet.size===1; }
     function durationMinutes(){
@@ -1678,6 +1715,7 @@
       ticSet.clear();
       vipSet.clear();
       cubeSet.clear();
+      componentMeta.clear();
       scannedSet.clear();
       scanProcessQueue = Promise.resolve();
       ticNegatives.clear();
@@ -1727,20 +1765,36 @@
         const roles = Array.isArray(json.roles) ? json.roles : [];
         const invalid = Array.isArray(json.invalid) ? json.invalid : [];
         // Reconstruir válidos por rol
-        ticSet.clear(); vipSet.clear(); cubeSet.clear();
+        ticSet.clear();
+        vipSet.clear();
+        cubeSet.clear();
+        componentMeta.clear();
         roles.forEach(v=>{
           const code=String(v.rfid||'').toUpperCase();
           if(!code) return;
+          const nombreUnidad = v.nombre_unidad || v.nombreUnidad || v.nombre_modelo || '';
+          componentMeta.set(code, { rol: v.rol, nombreUnidad });
           if(v.rol==='tic') ticSet.add(code);
           else if(v.rol==='vip') vipSet.add(code);
           else if(v.rol==='cube') cubeSet.add(code);
         });
         // Auto-filtrar: remover inválidos del buffer (no mostrar en UI ni revalidarlos)
-        if(invalid.length){ invalid.forEach(it=> scannedSet.delete(String(it.rfid||'').toUpperCase())); }
+        if(invalid.length){
+          invalid.forEach(it=>{
+            const code = String(it.rfid||'').toUpperCase();
+            scannedSet.delete(code);
+            componentMeta.delete(code);
+          });
+        }
         // Cap local: máximo 6 TICs visibles/seleccionables
         if(ticSet.size > 6){
           const keep = Array.from(ticSet).slice(0,6);
+          const removed = Array.from(ticSet).slice(6);
           ticSet.clear(); keep.forEach(r=> ticSet.add(r));
+          removed.forEach(code=>{
+            componentMeta.delete(code);
+            ticNegatives.delete(code);
+          });
           if(msg) msg.textContent = 'Máximo 6 TICs';
         }
         const prevNegatives = new Map(ticNegatives);

@@ -3893,7 +3893,7 @@ export const OperacionController = {
       await c.query(`DELETE FROM acond_cajas c WHERE NOT EXISTS (SELECT 1 FROM acond_caja_items aci WHERE aci.caja_id=c.caja_id)`);
     });
     const rows = await withTenant(tenant, (c)=> c.query(
-      `SELECT ic.rfid, ic.estado, ic.sub_estado, ic.activo, m.nombre_modelo,
+      `SELECT ic.rfid, ic.estado, ic.sub_estado, ic.activo, ic.nombre_unidad, m.nombre_modelo,
               EXISTS(SELECT 1 FROM acond_caja_items aci WHERE aci.rfid=ic.rfid) AS ya_en_caja,
               CASE
                 WHEN LOWER(ic.estado) = LOWER('Pre Acondicionamiento')
@@ -3916,7 +3916,7 @@ export const OperacionController = {
     const byRfid: Record<string, any> = {};
     rows.rows.forEach(r=>{ byRfid[r.rfid] = r; });
     let haveCube=false, haveVip=false, ticCount=0;
-    const valid: { rfid:string; rol:'cube'|'vip'|'tic'; atemperadoElapsedSec?: number | null }[] = [];
+    const valid: { rfid:string; rol:'cube'|'vip'|'tic'; atemperadoElapsedSec?: number | null; nombre_unidad?: string | null; nombre_modelo?: string | null }[] = [];
     const invalid: { rfid:string; reason:string }[] = [];
     // Procesar en el mismo orden de entrada (importante para UX del escaneo)
     for(const code of codes){
@@ -3929,16 +3929,17 @@ export const OperacionController = {
       const name=(r.nombre_modelo||'').toLowerCase();
   if(r.ya_en_caja){ invalid.push({ rfid: r.rfid, reason: 'Ya en una caja' }); continue; }
   if(r.activo === false){ invalid.push({ rfid:r.rfid, reason:'Item inhabilitado (activo=false)' }); continue; }
+      const nombreUnidad = r.nombre_unidad || r.nombre_modelo || null;
       if(/cube/.test(name)){
         if(haveCube){ invalid.push({ rfid:r.rfid, reason:'Más de un CUBE' }); continue; }
   const enBodega = estadoLower.includes('en bodega') || subLower.includes('en bodega');
         if(!enBodega){ invalid.push({ rfid:r.rfid, reason:'CUBE no En bodega' }); continue; }
-        haveCube=true; valid.push({ rfid:r.rfid, rol:'cube' });
+        haveCube=true; valid.push({ rfid:r.rfid, rol:'cube', nombre_unidad: nombreUnidad, nombre_modelo: r.nombre_modelo || null });
       } else if(/vip/.test(name)){
         if(haveVip){ invalid.push({ rfid:r.rfid, reason:'Más de un VIP' }); continue; }
         const enBodega = estadoLower.includes('en bodega') || subLower.includes('en bodega');
         if(!enBodega){ invalid.push({ rfid:r.rfid, reason:'VIP no En bodega' }); continue; }
-        haveVip=true; valid.push({ rfid:r.rfid, rol:'vip' });
+        haveVip=true; valid.push({ rfid:r.rfid, rol:'vip', nombre_unidad: nombreUnidad, nombre_modelo: r.nombre_modelo || null });
       } else if(/tic/.test(name)){
         const atemp = (estadoLower.replace(/\s+/g,'').includes('preacondicionamiento') || estadoLower.includes('pre acond')) && subLower.includes('atemperad');
         if(!atemp){ invalid.push({ rfid:r.rfid, reason:'TIC no Atemperado' }); continue; }
@@ -3946,7 +3947,7 @@ export const OperacionController = {
   if(ticCount >= 6){ invalid.push({ rfid:r.rfid, reason:'Máximo 6 TICs' }); continue; }
         const elapsedNum = Number(r.atemperado_elapsed_sec);
         const atemperadoElapsedSec = Number.isFinite(elapsedNum) && elapsedNum > 0 ? elapsedNum : null;
-        ticCount++; valid.push({ rfid:r.rfid, rol:'tic', atemperadoElapsedSec });
+        ticCount++; valid.push({ rfid:r.rfid, rol:'tic', atemperadoElapsedSec, nombre_unidad: nombreUnidad, nombre_modelo: r.nombre_modelo || null });
       } else {
         invalid.push({ rfid:r.rfid, reason:'Modelo no permitido' });
       }
