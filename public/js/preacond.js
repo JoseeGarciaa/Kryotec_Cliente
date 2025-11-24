@@ -84,6 +84,7 @@
   let rfids = [];
   let invalid = [];
   let valid = [];
+  const validMeta = new Map();
   const ubicacionesState = { data: null, promise: null };
   let selectedZonaId = '';
   let selectedSeccionId = '';
@@ -612,6 +613,7 @@
   function openModal(toTarget){
     target = toTarget;
     rfids = []; invalid = []; valid = [];
+    validMeta.clear();
     chipsBox.innerHTML=''; msg.textContent='';
     btnConfirm.disabled = true;
   // If opening for congelamiento, force individual mode and hide lote option
@@ -649,8 +651,18 @@
     // Mostrar únicamente los válidos (verdes) y contar
     const uniqueValid = Array.from(new Set(valid));
     const items = uniqueValid.map(code=>{
-      return `<div class="inline-flex flex-col items-center">
-                <span class="badge badge-success gap-2">${code}<button type="button" class="btn btn-ghost btn-xs" data-remove="${code}">✕</button></span>
+      const meta = validMeta.get(code);
+      const codeHtml = escapeHtml(code);
+      const unitRaw = typeof meta?.nombre_unidad === 'string' ? meta.nombre_unidad.trim() : '';
+      const modelRaw = typeof meta?.nombre_modelo === 'string' ? meta.nombre_modelo.trim() : '';
+      const labelSource = unitRaw || modelRaw;
+      const label = labelSource ? escapeHtml(labelSource.length > 40 ? `${labelSource.slice(0, 37)}…` : labelSource) : '';
+      return `<div class="inline-flex flex-col items-start gap-1">
+                <span class="badge badge-success gap-3 items-center text-left whitespace-normal">
+                  <span class="font-mono text-xs tracking-tight">${codeHtml}</span>
+                  ${label ? `<span class="text-xs font-medium max-w-[180px] truncate">${label}</span>` : ''}
+                  <button type="button" class="btn btn-ghost btn-xs" data-remove="${codeHtml}">✕</button>
+                </span>
                 <div class="text-[10px] text-success">ok</div>
               </div>`;
     }).join('');
@@ -673,7 +685,7 @@
 
   let validateToken = 0;
   async function validate(){
-    if(!rfids.length){ invalid=[]; valid=[]; renderChips(); return; }
+    if(!rfids.length){ invalid=[]; valid=[]; validMeta.clear(); renderChips(); return; }
     const myToken = ++validateToken;
     try{
       const r = await fetch('/operacion/preacond/validate', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ target, rfids }) });
@@ -683,8 +695,21 @@
   const ok = Array.isArray(j.valid)? j.valid : [];
   // Auto-filtrar: conservar solo válidos y limpiar inválidos (no mostrar rojos)
   invalid = [];
-  valid = ok.map(String);
-  rfids = rfids.filter(c => valid.includes(c));
+  validMeta.clear();
+  const normalizedOk = ok.map((entry)=>{
+    if(typeof entry === 'string'){
+      return { rfid: entry.toUpperCase(), nombre_unidad: '', nombre_modelo: '' };
+    }
+    const rfid = typeof entry?.rfid === 'string' ? entry.rfid.toUpperCase() : '';
+    return {
+      rfid,
+      nombre_unidad: typeof entry?.nombre_unidad === 'string' ? entry.nombre_unidad : '',
+      nombre_modelo: typeof entry?.nombre_modelo === 'string' ? entry.nombre_modelo : ''
+    };
+  }).filter(item=>item.rfid);
+  normalizedOk.forEach((item)=>{ validMeta.set(item.rfid, item); });
+  valid = normalizedOk.map(item=>item.rfid);
+  rfids = rfids.filter(c => validMeta.has(c));
   renderChips();
   msg.textContent = '';
     }catch{ if(myToken === validateToken){ /* keep state */ } }
@@ -703,7 +728,7 @@
   document.querySelectorAll('input[name="scan-mode"]').forEach(r=>{
     r.addEventListener('change', (e)=>{
       scanMode = (e.target).value;
-      rfids=[]; invalid=[]; valid=[]; loteDetected=null; loteItemsCache=[];
+      rfids=[]; invalid=[]; valid=[]; validMeta.clear(); loteDetected=null; loteItemsCache=[];
       chipsBox.innerHTML=''; msg.textContent=''; btnConfirm.disabled=true;
       if(scanLoteSummary){ scanLoteSummary.classList.add('hidden'); scanLoteSummary.innerHTML=''; }
       scanInput.value='';
@@ -716,9 +741,10 @@
 
   async function handleLoteScan(code){
     if(!code || code.length!==24) return;
+  const normalizedCode = code.toUpperCase();
   msg.textContent='Buscando lote y sus TICs...';
     try{
-      const r = await fetch('/operacion/preacond/lote/lookup', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ rfid: code }) });
+      const r = await fetch('/operacion/preacond/lote/lookup', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ rfid: normalizedCode }) });
       const j = await r.json();
       if(!j.ok){ msg.textContent=j.error||'No se pudo obtener lote'; return; }
   loteDetected = j.lote; // backend devuelve 'tics'
@@ -733,7 +759,19 @@
         scanLoteSummary.classList.remove('hidden');
       }
       // Marcar un solo RFID para habilitar botón
-      rfids=[code]; valid=[code]; invalid=[]; renderChips(); msg.textContent='';
+      rfids=[normalizedCode];
+      valid=[normalizedCode];
+      invalid=[];
+      validMeta.clear();
+      const loteEntry = loteItemsCache.find((it)=> String(it.rfid||'').trim().toUpperCase() === normalizedCode);
+      if(loteEntry){
+        validMeta.set(normalizedCode, {
+          rfid: normalizedCode,
+          nombre_unidad: typeof loteEntry.nombre_unidad === 'string' ? loteEntry.nombre_unidad : '',
+          nombre_modelo: typeof loteEntry.nombre_modelo === 'string' ? loteEntry.nombre_modelo : ''
+        });
+      }
+      renderChips(); msg.textContent='';
     }catch{ msg.textContent='Error consultando lote'; }
   }
 
@@ -862,7 +900,10 @@
     if(gSectionLabel) gSectionLabel.textContent = section === 'congelamiento' ? 'Congelamiento' : 'Atemperamiento';
     const n = section==='congelamiento' ? (qtyCongEl?.textContent||'0') : (qtyAtemEl?.textContent||'0');
     if(gCount) gCount.textContent = n;
-    if(gMsg) gMsg.textContent = '';
+    if(gMsg){
+      gMsg.textContent = '';
+      gMsg.classList.remove('text-warning','text-error','text-success');
+    }
   if(gLote) gLote.value = '';
   if(gHr) gHr.value = '';
   if(gMin) gMin.value = '';
@@ -929,7 +970,14 @@
     const hours = Number(gHr?.value||'0');
     const minutes = Number(gMin?.value||'0');
     const totalMinutes = (isFinite(hours)?Math.max(0,hours):0)*60 + (isFinite(minutes)?Math.max(0,minutes):0);
-  if(!Number.isFinite(totalMinutes) || totalMinutes<=0){ if(gMsg) gMsg.textContent='Duración debe ser > 0.'; return; }
+  if(!Number.isFinite(totalMinutes) || totalMinutes<=0){
+    if(gMsg){
+      gMsg.textContent='Duración debe ser > 0.';
+      gMsg.classList.remove('text-warning','text-success');
+      gMsg.classList.add('text-error');
+    }
+    return;
+  }
   // lote puede ir vacío en modo nuevo para autogenerarse en backend
     if(pendingItemStart){
       gDlg?.close?.();
@@ -943,6 +991,7 @@
     }
     // Collect RFIDs (considerar preseleccionados)
     let rfids = [];
+    const sectionLabel = currentSectionForModal==='congelamiento' ? 'Congelamiento' : 'Atemperamiento';
     if(preselectedRfids && currentSectionForModal==='atemperamiento'){
       const set = new Set(preselectedRfids);
       const tbody = currentSectionForModal==='congelamiento' ? tableCongBody : tableAtemBody;
@@ -980,6 +1029,14 @@
           return (!hasActive && !hasLote && !completed) ? rfid : null;
         }).filter(Boolean);
       }
+    }
+    if(!rfids.length){
+      if(gMsg){
+        gMsg.textContent = `No hay TICs disponibles en ${sectionLabel} para iniciar este cronómetro.`;
+        gMsg.classList.remove('text-success','text-error');
+        gMsg.classList.add('text-warning');
+      }
+      return;
     }
     gDlg?.close?.();
     await startSectionTimer(currentSectionForModal, lote, totalMinutes, rfids);

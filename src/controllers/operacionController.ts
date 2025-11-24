@@ -3030,7 +3030,7 @@ export const OperacionController = {
     }
 
     const found = await withTenant(tenant, (c) => c.query(
-      `SELECT ic.rfid, ic.estado, ic.sub_estado, ic.activo, ic.sede_id, m.nombre_modelo
+      `SELECT ic.rfid, ic.estado, ic.sub_estado, ic.activo, ic.sede_id, ic.nombre_unidad, m.nombre_modelo
          FROM inventario_credocubes ic
          JOIN modelos m ON m.modelo_id = ic.modelo_id
         WHERE ic.rfid = ANY($1::text[])`,
@@ -3043,7 +3043,7 @@ export const OperacionController = {
     };
 
     const rows = found.rows as any[];
-    const ok: string[] = [];
+    const ok: { rfid: string; nombre_unidad?: string | null; nombre_modelo?: string | null }[] = [];
     const invalid: { rfid: string; reason: string }[] = [];
 
     for (const code of codes) {
@@ -3058,7 +3058,7 @@ export const OperacionController = {
       const subAtemper = subEstadoNorm.includes('atemperad');
       if (t === 'atemperamiento') {
         if (enPreAcond && subEstadoNorm.includes('congelado')) {
-          ok.push(code);
+          ok.push({ rfid: code, nombre_unidad: r.nombre_unidad, nombre_modelo: r.nombre_modelo });
         } else if (enPreAcond && subAtemper) {
           invalid.push({ rfid: code, reason: 'Ya está en Atemperamiento' });
         } else {
@@ -3072,7 +3072,7 @@ export const OperacionController = {
         } else if (!enBodega && !(enPreAcond && subAtemper)) {
           invalid.push({ rfid: code, reason: 'Solo se acepta desde En bodega o Atemperamiento' });
         } else {
-          ok.push(code);
+          ok.push({ rfid: code, nombre_unidad: r.nombre_unidad, nombre_modelo: r.nombre_modelo });
         }
       }
     }
