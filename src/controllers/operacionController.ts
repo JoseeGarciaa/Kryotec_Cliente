@@ -4950,29 +4950,48 @@ export const OperacionController = {
           LIMIT 300`, cajasParams));
       const cajaIds = cajasQ.rows.map(r=> r.caja_id);
       let itemsRows: any[] = [];
+      let litrajeDisponible = true;
       if(cajaIds.length){
         const itemsParams: any[] = [cajaIds];
         const itemsSede = pushSedeFilter(itemsParams, sedeId);
         const itemsSql =
-          `SELECT c.caja_id, aci.rol, ic.rfid, ic.estado, ic.sub_estado, ic.nombre_unidad, m.nombre_modelo
+          `SELECT c.caja_id, aci.rol, ic.rfid, ic.estado, ic.sub_estado, ic.nombre_unidad, m.nombre_modelo, m.litraje
              FROM acond_caja_items aci
              JOIN acond_cajas c ON c.caja_id = aci.caja_id
              JOIN inventario_credocubes ic ON ic.rfid = aci.rfid
              JOIN modelos m ON m.modelo_id = ic.modelo_id
             WHERE c.caja_id = ANY($1::int[])${itemsSede}
             ORDER BY c.caja_id DESC, CASE aci.rol WHEN 'vip' THEN 0 WHEN 'tic' THEN 1 ELSE 2 END, ic.rfid`;
-        const itemsQ = await withTenant(tenant, (c)=> c.query(itemsSql, itemsParams));
-        itemsRows = itemsQ.rows as any[];
+        try {
+          const itemsQ = await withTenant(tenant, (c)=> c.query(itemsSql, itemsParams));
+          itemsRows = itemsQ.rows as any[];
+        } catch(err: any){
+          if(/litraje/i.test(err?.message || '')){
+            litrajeDisponible = false;
+            const fallbackSql =
+              `SELECT c.caja_id, aci.rol, ic.rfid, ic.estado, ic.sub_estado, ic.nombre_unidad, m.nombre_modelo
+                 FROM acond_caja_items aci
+                 JOIN acond_cajas c ON c.caja_id = aci.caja_id
+                 JOIN inventario_credocubes ic ON ic.rfid = aci.rfid
+                 JOIN modelos m ON m.modelo_id = ic.modelo_id
+                WHERE c.caja_id = ANY($1::int[])${itemsSede}
+                ORDER BY c.caja_id DESC, CASE aci.rol WHEN 'vip' THEN 0 WHEN 'tic' THEN 1 ELSE 2 END, ic.rfid`;
+            const fallbackQ = await withTenant(tenant, (c)=> c.query(fallbackSql, itemsParams));
+            itemsRows = fallbackQ.rows as any[];
+          } else { throw err; }
+        }
       }
       const mapaItems: Record<string, any[]> = {};
       for(const row of itemsRows){
         (mapaItems[row.caja_id] ||= []).push({
           codigo: row.rfid,
           rol: row.rol,
+          tipo: row.rol,
           estado: row.estado,
-            sub_estado: row.sub_estado,
+          sub_estado: row.sub_estado,
           nombre: row.nombre_modelo,
-          nombreUnidad: row.nombre_unidad || null
+          nombreUnidad: row.nombre_unidad || null,
+          litraje: litrajeDisponible ? (row.litraje ?? null) : null
         });
       }
       const nowIso = nowRes.rows[0]?.now;
@@ -5002,7 +5021,16 @@ export const OperacionController = {
           orderId: (r as any).order_id ?? null,
           orderNumero: (r as any).order_num ?? null,
           timer,
-          componentes: items.map(it=> ({ codigo: it.codigo, tipo: it.rol, nombre: it.nombre, estado: it.estado, sub_estado: it.sub_estado, nombreUnidad: it.nombreUnidad || null }))
+          componentes: items.map(it=> ({
+            codigo: it.codigo,
+            tipo: it.tipo,
+            rol: it.rol,
+            nombre: it.nombre,
+            litraje: it.litraje,
+            estado: it.estado,
+            sub_estado: it.sub_estado,
+            nombreUnidad: it.nombreUnidad || null
+          }))
         };
       });
       res.json({ ok:true, now: nowIso, cajas: cajasUI });
@@ -5044,13 +5072,32 @@ export const OperacionController = {
       if(!caja) return res.status(404).json({ ok:false, error:'Caja no encontrada' });
       // Obtener items de la caja
       const itemParams: any[] = [caja.caja_id];
-      const itemsQ = await withTenant(tenant, (c)=> c.query(
-        `SELECT aci.rfid, ic.estado, ic.sub_estado, aci.rol, m.nombre_modelo
-           FROM acond_caja_items aci
-           JOIN inventario_credocubes ic ON ic.rfid = aci.rfid
-           JOIN modelos m ON m.modelo_id = ic.modelo_id
-          WHERE aci.caja_id=$1`, itemParams));
-      const items = itemsQ.rows as any[];
+      let litrajeDisponible = true;
+      let itemsRows: any[] = [];
+      try {
+        const itemsQ = await withTenant(tenant, (c)=> c.query(
+          `SELECT aci.rfid, ic.estado, ic.sub_estado, aci.rol, m.nombre_modelo, m.litraje, ic.nombre_unidad
+             FROM acond_caja_items aci
+             JOIN inventario_credocubes ic ON ic.rfid = aci.rfid
+             JOIN modelos m ON m.modelo_id = ic.modelo_id
+            WHERE aci.caja_id=$1`, itemParams));
+        itemsRows = itemsQ.rows as any[];
+      } catch(err: any){
+        if(/litraje/i.test(err?.message || '')){
+          litrajeDisponible = false;
+          const fallbackQ = await withTenant(tenant, (c)=> c.query(
+            `SELECT aci.rfid, ic.estado, ic.sub_estado, aci.rol, m.nombre_modelo, ic.nombre_unidad
+               FROM acond_caja_items aci
+               JOIN inventario_credocubes ic ON ic.rfid = aci.rfid
+               JOIN modelos m ON m.modelo_id = ic.modelo_id
+              WHERE aci.caja_id=$1`, itemParams));
+          itemsRows = fallbackQ.rows as any[];
+        } else { throw err; }
+      }
+      const items = itemsRows.map(row => ({
+        ...row,
+        litraje: litrajeDisponible ? (row as any).litraje ?? null : null
+      }));
       // Elegibles para mover: sub_estado Lista para Despacho o Listo
       const elegibles = items.filter(i=> i.estado==='Acondicionamiento' && (i.sub_estado==='Lista para Despacho' || i.sub_estado==='Listo'));
       if(!elegibles.length) return res.status(400).json({ ok:false, error:'Caja no está Lista para Despacho' });
@@ -5066,7 +5113,23 @@ export const OperacionController = {
           timer = { startsAt: t.started_at, endsAt, completedAt };
         }
       }
-  res.json({ ok:true, caja_id: caja.caja_id, lote: caja.lote, order_id: (caja as any).order_id ?? null, order_num: (caja as any).order_num ?? null, total: items.length, elegibles: elegibles.map(e=> e.rfid), roles: elegibles.map(e=> ({ rfid: e.rfid, rol: e.rol })), timer });
+  res.json({
+        ok:true,
+        caja_id: caja.caja_id,
+        lote: caja.lote,
+        order_id: (caja as any).order_id ?? null,
+        order_num: (caja as any).order_num ?? null,
+        total: items.length,
+        elegibles: elegibles.map(e=> e.rfid),
+        roles: elegibles.map(e=> ({
+          rfid: e.rfid,
+          rol: e.rol,
+          nombre: e.nombre_modelo || '',
+          litraje: e.litraje ?? null,
+          nombreUnidad: e.nombre_unidad || null
+        })),
+        timer
+      });
     } catch(e:any){ res.status(500).json({ ok:false, error: e.message||'Error lookup' }); }
   },
   operacionAddMove: async (req: Request, res: Response) => {

@@ -115,6 +115,43 @@
     if(norm==='cube') return 'badge-accent';
     return 'badge-warning';
   }
+  function escapeAttr(str){
+    return String(str == null ? '' : str)
+      .replace(/&/g,'&amp;')
+      .replace(/"/g,'&quot;')
+      .replace(/'/g,'&#39;')
+      .replace(/</g,'&lt;')
+      .replace(/>/g,'&gt;');
+  }
+  function formatLitraje(value){
+    if(value === undefined || value === null || value === '') return '';
+    const num = Number(value);
+    if(Number.isFinite(num)){
+      return Number.isInteger(num) ? `${num} L` : `${num.toFixed(1)} L`;
+    }
+    const text = String(value).trim();
+    if(!text) return '';
+    return /l$/i.test(text) ? text : `${text} L`;
+  }
+  function resolveComponenteNombre(comp){
+    if(!comp) return '';
+    const base = typeof comp.nombreUnidad === 'string' && comp.nombreUnidad.trim()
+      ? comp.nombreUnidad.trim()
+      : (typeof comp.nombre === 'string' ? comp.nombre.trim() : '');
+    const lit = formatLitraje(comp.litraje);
+    if(base && lit){
+      const normBase = base.toLowerCase();
+      if(normBase.includes(lit.toLowerCase())) return base;
+      return `${base} ${lit}`;
+    }
+    return base || lit || '';
+  }
+  function resolveComponenteDescriptor(comp){
+    const rol = String(comp?.tipo || comp?.rol || '').toUpperCase();
+    const nombre = resolveComponenteNombre(comp);
+    if(rol && nombre) return `${rol} · ${nombre}`;
+    return rol || nombre || '';
+  }
   function msRemaining(timer){ if(!timer||!timer.endsAt) return 0; return new Date(timer.endsAt).getTime() - (Date.now()+serverOffset); }
   function timerDisplay(rem){
     if(rem<=0) return 'Finalizado';
@@ -149,13 +186,24 @@
     if(!comps.length){
       return `<tr data-caja-row="${caja.id}" data-caja-id="${caja.id}">${cajaCell}<td class="hidden md:table-cell text-xs">-</td><td class="hidden lg:table-cell text-xs">${caja.estado}</td><td class="text-xs font-mono">${code}</td><td class="w-32">${badge}</td></tr>`;
     }
-    return comps.map(it=> `<tr data-caja-row="${caja.id}" data-caja-id="${caja.id}">
+    return comps.map(it=> {
+      const role = String(it.tipo || it.rol || '').toUpperCase();
+      const label = resolveComponenteNombre(it);
+      const descriptor = resolveComponenteDescriptor(it);
+      const metaHtml = (role || label)
+        ? `<div class="flex flex-col leading-tight gap-0.5">
+            ${role ? `<span class="text-[10px] font-semibold uppercase tracking-wide">${role}</span>` : ''}
+            ${label ? `<span class="text-xs">${label}</span>` : ''}
+          </div>`
+        : '';
+      return `<tr data-caja-row="${caja.id}" data-caja-id="${caja.id}">
       <td class="font-mono text-[10px]">${it.codigo}</td>
-      <td class="hidden md:table-cell text-xs">${it.nombre||''}</td>
+      <td class="hidden md:table-cell text-xs">${metaHtml || descriptor || '-'}</td>
       <td class="hidden lg:table-cell text-xs">${caja.estado}</td>
       ${cajaCell}
       <td class="w-32">${badge}</td>
-    </tr>`).join('');
+    </tr>`;
+    }).join('');
   }
   function timerProgressPct(caja){
     if(!caja.timer || !caja.timer.startsAt || !caja.timer.endsAt) return 0;
@@ -169,14 +217,14 @@
   function cardHTML(caja){
     // Replica del diseño de tarjetas de acond.js
     const comps = caja.componentes||[];
-    const vip = comps.filter(x=>x.tipo==='vip');
-    const tics = comps.filter(x=>x.tipo==='tic');
-    const cubes = comps.filter(x=>x.tipo==='cube');
-    const compBadges = [
-      ...vip.map(()=>`<span class='badge badge-info badge-xs font-semibold'>VIP</span>`),
-      ...tics.map(()=>`<span class='badge badge-warning badge-xs font-semibold'>TIC</span>`),
-      ...cubes.map(()=>`<span class='badge badge-accent badge-xs font-semibold'>CUBE</span>`)
-    ].join(' ');
+    const componentTiles = comps.length
+      ? `<div class='flex flex-wrap gap-1'>${comps.slice(0,8).map(comp=>{
+          const role = String(comp.tipo || comp.rol || '').toUpperCase() || 'ITEM';
+          const cls = badgeForRol(comp.tipo || comp.rol);
+          const descriptor = resolveComponenteDescriptor(comp) || resolveComponenteNombre(comp) || comp.codigo || role;
+          return `<span class='badge ${cls} badge-xs font-semibold uppercase' title='${escapeAttr(descriptor)}'>${role}</span>`;
+        }).join('')}</div>`
+      : "<span class='badge badge-ghost badge-xs'>Sin items</span>";
     const remaining = caja.timer? msRemaining(caja.timer):0;
     const progress = timerProgressPct(caja);
     const timerTxt = caja.timer? timerDisplay(remaining):'';
@@ -198,7 +246,7 @@
     return `<div class='caja-card rounded-lg border border-base-300/40 bg-base-200/10 p-3 flex flex-col gap-2 hover:border-primary/60 transition' data-caja-card='${caja.id}' data-caja-id='${caja.id}' title='${titleText}'>
       <div class='text-[10px] uppercase opacity-60 tracking-wide'>Caja</div>
       <div class='font-semibold text-xs leading-tight break-all pr-2'>${displayName}</div>
-      <div class='flex flex-wrap gap-1 text-[9px] flex-1'>${compBadges || "<span class='badge badge-ghost badge-xs'>Sin items</span>"}</div>
+      <div class='flex flex-col gap-1 text-[9px] flex-1'>${componentTiles}</div>
       <div class='timer-progress h-1.5 w-full bg-base-300/30 rounded-full overflow-hidden'>
         <div class='timer-bar h-full bg-gradient-to-r from-primary via-primary to-primary/70' style='width:${pct.toFixed(1)}%' data-caja-bar='${caja.id}'></div>
       </div>
@@ -313,10 +361,17 @@
     const itemsBox = document.getElementById('detalle-caja-items');
     if(itemsBox){
       itemsBox.innerHTML = comps.map(cc=>{
-        let color='badge-ghost'; if(cc.tipo==='vip') color='badge-info'; else if(cc.tipo==='tic') color='badge-warning'; else if(cc.tipo==='cube') color='badge-accent';
+        let color='badge-ghost';
+        if(cc.tipo==='vip') color='badge-info';
+        else if(cc.tipo==='tic') color='badge-warning';
+        else if(cc.tipo==='cube') color='badge-accent';
+        const label = resolveComponenteNombre(cc);
         return `<div class="border rounded-lg p-3 bg-base-300/10 flex flex-col gap-2" title="${cc.codigo||''}">
-          <div class="flex items-center justify-between"><span class="badge ${color} badge-xs font-semibold uppercase">${cc.tipo||''}</span></div>
-          <div class="font-mono text-sm break-all">${cc.codigo||''}</div>
+          <div class="flex items-center justify-between">
+            <span class="badge ${color} badge-xs font-semibold uppercase">${(cc.tipo||'').toString().toUpperCase()}</span>
+            <span class="font-mono text-[10px]">${cc.codigo||''}</span>
+          </div>
+          ${label ? `<div class="text-xs leading-tight">${label}</div>` : ''}
         </div>`;
       }).join('');
       if(!comps.length) itemsBox.innerHTML='<div class="col-span-full text-center text-xs opacity-60 italic">Sin componentes</div>';
@@ -503,7 +558,21 @@
       const itemsHtml = (entry.roles||[]).map(ro=>{
         const cls = badgeForRol(ro.rol);
         const label = String(ro.rol||'').toUpperCase();
-        return `<div class='flex items-center justify-between gap-2 px-2 py-1 bg-base-200 rounded'><span class='badge ${cls} badge-xs font-semibold uppercase'>${label}</span><span class='font-mono text-[10px]'>${ro.rfid}</span></div>`;
+        const descriptor = resolveComponenteNombre({
+          tipo: ro.rol,
+          rol: ro.rol,
+          nombre: ro.nombre,
+          nombreUnidad: ro.nombreUnidad,
+          litraje: ro.litraje
+        });
+        const extra = descriptor ? `<span class='text-[10px] opacity-80'>${descriptor}</span>` : '';
+        return `<div class='flex flex-col gap-1 px-2 py-2 bg-base-200 rounded'>
+          <div class='flex items-center justify-between gap-2'>
+            <span class='badge ${cls} badge-xs font-semibold uppercase'>${label}</span>
+            <span class='font-mono text-[10px]'>${ro.rfid}</span>
+          </div>
+          ${extra}
+        </div>`;
       }).join('');
       const chevron = isActive ? '▾' : '▸';
 
