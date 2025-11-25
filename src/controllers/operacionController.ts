@@ -2090,17 +2090,34 @@ export const OperacionController = {
     const code = typeof rfid === 'string' ? rfid.trim() : '';
     if (code.length !== 24) return res.status(400).json({ ok:false, error:'RFID inválido' });
     try {
-      const rowQ = await withTenant(tenant, (c)=> c.query(
-        `SELECT aci.caja_id, c.lote, ic.rfid, ic.estado, ic.sub_estado, ic.sede_id,
-                m.nombre_modelo, m.litraje
-           FROM acond_caja_items aci
-           JOIN acond_cajas c ON c.caja_id = aci.caja_id
-           JOIN inventario_credocubes ic ON ic.rfid = aci.rfid
-           JOIN modelos m ON m.modelo_id = ic.modelo_id
-          WHERE ic.rfid = $1
-          LIMIT 1`,
-        [code]
-      ));
+      let rowQ;
+      try {
+        rowQ = await withTenant(tenant, (c)=> c.query(
+          `SELECT aci.caja_id, c.lote, ic.rfid, ic.estado, ic.sub_estado, ic.sede_id,
+                  m.nombre_modelo, m.litraje
+             FROM acond_caja_items aci
+             JOIN acond_cajas c ON c.caja_id = aci.caja_id
+             JOIN inventario_credocubes ic ON ic.rfid = aci.rfid
+             JOIN modelos m ON m.modelo_id = ic.modelo_id
+            WHERE ic.rfid = $1
+            LIMIT 1`,
+          [code]
+        ));
+      } catch (err: any) {
+        if (err?.code !== '42703') throw err;
+        rowQ = await withTenant(tenant, (c)=> c.query(
+          `SELECT aci.caja_id, c.lote, ic.rfid, ic.estado, ic.sub_estado, ic.sede_id,
+                  m.nombre_modelo,
+                  NULL::text AS litraje
+             FROM acond_caja_items aci
+             JOIN acond_cajas c ON c.caja_id = aci.caja_id
+             JOIN inventario_credocubes ic ON ic.rfid = aci.rfid
+             JOIN modelos m ON m.modelo_id = ic.modelo_id
+            WHERE ic.rfid = $1
+            LIMIT 1`,
+          [code]
+        ));
+      }
       if(!rowQ.rowCount) return res.status(404).json({ ok:false, error:'RFID no pertenece a ninguna caja' });
       const row = rowQ.rows[0] as any;
       const estadoNorm = normalizeBasic(row.estado);
