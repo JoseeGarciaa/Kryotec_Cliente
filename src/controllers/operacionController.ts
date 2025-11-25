@@ -2053,60 +2053,6 @@ export const OperacionController = {
       });
     } catch(e:any){ res.status(500).json({ ok:false, error: e.message||'Error al jalar cajas a Inspección' }); }
   },
-  inspeccionPendingItemInfo: async (req: Request, res: Response) => {
-    const tenant = (req as any).user?.tenant;
-    const { rfid } = req.body as any;
-    const code = typeof rfid === 'string' ? rfid.trim() : '';
-    if (code.length !== 24) {
-      return res.status(400).json({ ok:false, error:'RFID inválido' });
-    }
-    try {
-      const itemQ = await withTenant(tenant, (c)=> c.query(
-        `SELECT ic.rfid, ic.estado, ic.sub_estado, ic.sede_id,
-                aci.caja_id, c.lote,
-                CASE
-                  WHEN m.nombre_modelo ILIKE '%tic%' THEN 'tic'
-                  WHEN m.nombre_modelo ILIKE '%vip%' THEN 'vip'
-                  WHEN m.nombre_modelo ILIKE '%cube%' OR m.nombre_modelo ILIKE '%cubo%' THEN 'cube'
-                  ELSE 'otro'
-                END AS rol
-           FROM inventario_credocubes ic
-           JOIN modelos m ON m.modelo_id = ic.modelo_id
-      LEFT JOIN acond_caja_items aci ON aci.rfid = ic.rfid
-      LEFT JOIN acond_cajas c ON c.caja_id = aci.caja_id
-          WHERE ic.rfid = $1
-          LIMIT 1`,
-        [code]
-      ));
-      if (!itemQ.rowCount) {
-        return res.status(404).json({ ok:false, error:'RFID no encontrado' });
-      }
-      const row = itemQ.rows[0] as any;
-      if (row.rol === 'otro') {
-        return res.status(400).json({ ok:false, error:'El modelo no es válido para Inspección' });
-      }
-      if (row.caja_id == null) {
-        return res.status(400).json({ ok:false, error:'El item no está asociado a ninguna caja' });
-      }
-      const estadoNorm = normalizeBasic(row.estado);
-      const subEstadoNorm = normalizeBasic(row.sub_estado);
-      const enBodega = estadoNorm === 'en bodega';
-      const pendInsp = subEstadoNorm === 'pendiente a inspeccion';
-      if (!(enBodega && pendInsp)) {
-        return res.status(400).json({ ok:false, error:'El item no está Pendiente a Inspección' });
-      }
-      return res.json({ ok:true, item: {
-        rfid: row.rfid,
-        rol: row.rol,
-        caja_id: row.caja_id,
-        lote: row.lote || null,
-        estado: row.estado,
-        sub_estado: row.sub_estado
-      }});
-    } catch (e:any) {
-      res.status(500).json({ ok:false, error: e.message || 'Error consultando RFID' });
-    }
-  },
   // Preview-only: verify a caja (by any component RFID) is exactly 'En bodega · Pendiente a Inspección' and return its items/roles
   inspeccionPendingPreview: async (req: Request, res: Response) => {
     const tenant = (req as any).user?.tenant;
