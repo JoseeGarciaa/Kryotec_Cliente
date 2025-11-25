@@ -92,7 +92,7 @@
     const displayName = caja.nombreCaja || code || '';
     const titleText = displayName && code && displayName !== code ? `${displayName} · ${code}` : displayName || code;
     return `<div class='caja-card rounded-lg border border-base-300/40 bg-base-200/10 p-3 flex flex-col gap-2' title='${titleText}'>
-      <div class='text-[10px] uppercase opacity-60 tracking-wide'>Caja</div>
+      <div class='text-[10px] uppercase opacity-60 tracking-wide'>Pieza</div>
       <div class='font-semibold text-xs leading-tight break-all pr-2'>${displayName}</div>
       <div class='flex flex-wrap gap-1 text-[9px] flex-1'>${compBadges || "<span class='badge badge-ghost badge-xs'>Sin items</span>"}</div>
       <div class='flex items-center justify-between text-[10px] opacity-70'>
@@ -105,7 +105,7 @@
   function render(){
     if(!grid) return;
     const cajas = state.cajas||[];
-    if(!cajas.length){ grid.innerHTML = `<div class='col-span-full py-10 text-center text-xs opacity-60'>Sin cajas en Inspección</div>`; return; }
+    if(!cajas.length){ grid.innerHTML = `<div class='col-span-full py-10 text-center text-xs opacity-60'>Sin piezas en Inspección</div>`; return; }
     grid.innerHTML = cajas.map(cardHTML).join('');
   }
 
@@ -289,7 +289,7 @@
   function renderBulkQueue(){
     if(!bulkList) return;
     if(!state.bulkQueue.length){
-      bulkList.innerHTML = "<div class='text-xs opacity-60'>Sin cajas en cola.</div>";
+      bulkList.innerHTML = "<div class='text-xs opacity-60'>Sin piezas en cola.</div>";
       return;
     }
     bulkList.innerHTML = state.bulkQueue.map(entry=>{
@@ -356,7 +356,7 @@
   function loadNextBulkCode(){
     const next = state.bulkQueue.find(entry=> entry.status==='queued' || entry.status==='error');
     if(next){ lookupCaja(next.code, { fromBulk:true }); }
-    else { setBulkMessage('No hay cajas pendientes en la cola.'); }
+    else { setBulkMessage('No hay piezas pendientes en la cola.'); }
   }
 
   renderBulkQueue();
@@ -380,7 +380,7 @@
       else { duplicateCount++; }
     }
     if(addedTotal>0){
-      setBulkMessage(`Cajas añadidas: ${addedTotal}`);
+      setBulkMessage(`Piezas añadidas: ${addedTotal}`);
       if(!hasActiveBulk()){ loadNextBulkCode(); }
     } else if(duplicateCount>0){
       setBulkMessage('Sin códigos nuevos.');
@@ -551,7 +551,7 @@
       updateBulkEntry(code, { status:'loading', message:'' });
       renderBulkQueue();
     }
-    let lastError = 'Caja no encontrada';
+    let lastError = 'Pieza no encontrada';
     try {
       const r = await fetch('/operacion/inspeccion/lookup',{ method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ rfid: code })});
       const j = await r.json();
@@ -572,8 +572,8 @@
           }
         }
         renderChecklist();
-        if(targetMsg) targetMsg.textContent = fromBulk ? `Caja lista (${code})` : '';
-        if(fromBulk){ updateBulkEntry(code, { status:'active', message:'Caja cargada para inspección' }); renderBulkQueue(); }
+        if(targetMsg) targetMsg.textContent = fromBulk ? `Pieza lista (${code})` : '';
+        if(fromBulk){ updateBulkEntry(code, { status:'active', message:'Pieza cargada para Inspección' }); renderBulkQueue(); }
         return;
       }
       lastError = j.error || lastError;
@@ -585,7 +585,7 @@
           state.cajaSel = { id: j2.caja.id, lote: j2.caja.lote, componentes: comps };
           state.tics = []; state.ticChecks = new Map(); state.activeTic = null; state.inInspeccion = false;
           renderChecklist();
-          const msg = 'Caja no está en Inspección. Usa "Agregar a Inspección" para traerla.';
+          const msg = 'La pieza no está en Inspección. Usa "Agregar piezas a Inspección" para traerla.';
           if(targetMsg) targetMsg.textContent = msg;
           if(fromBulk){ updateBulkEntry(code, { status:'error', message: msg }); renderBulkQueue(); }
           return;
@@ -715,7 +715,7 @@
         if(panel){ panel.classList.add('hidden'); }
         state.cajaSel = null; state.tics = []; state.ticChecks.clear(); state.activeTic = null;
         await load();
-        scanMsg && (scanMsg.textContent = 'Caja retirada de Inspección');
+        scanMsg && (scanMsg.textContent = 'Pieza retirada de Inspección');
         return; // done
       }
       // close modal
@@ -743,7 +743,7 @@
       const attempt = await postJSONWithSedeTransfer('/operacion/inspeccion/complete', { caja_id: state.cajaSel.id, confirm_rfids: confirm }, {
         promptMessage: (payload) => {
           const label = state.cajaSel?.lote || state.cajaSel?.codigoCaja || `#${state.cajaSel?.id}`;
-          return payload?.confirm || payload?.error || `La caja ${label} pertenece a otra sede. ¿Deseas trasladarla a tu sede actual?`;
+          return payload?.confirm || payload?.error || `El conjunto ${label} pertenece a otra sede. ¿Deseas trasladarlo a tu sede actual?`;
         }
       });
       if(attempt.cancelled){
@@ -769,7 +769,7 @@
       panel.classList.add('hidden'); state.cajaSel=null; state.tics=[]; state.ticChecks.clear(); state.activeTic=null;
       scanInput && (scanInput.value='');
       await load();
-      scanMsg && (scanMsg.textContent='Inspección finalizada: caja devuelta a Bodega');
+      scanMsg && (scanMsg.textContent='Inspección finalizada: pieza devuelta a Bodega');
     } catch(e){ completeBtn.disabled=false; scanMsg && (scanMsg.textContent='Error'); }
   });
 
@@ -788,7 +788,7 @@
   function activateTic(rfid){
     if(!rfid) return;
     const exists = (state.tics||[]).some(t=>t.rfid===rfid);
-    if(!exists){ ticMsg && (ticMsg.textContent='TIC no pertenece a la caja'); return; }
+    if(!exists){ ticMsg && (ticMsg.textContent='TIC no pertenece al conjunto activo'); return; }
     state.activeTic = rfid; ticMsg && (ticMsg.textContent=''); renderChecklist();
   const row = document.querySelector(`[data-tic-row='${rfid}']`);
   row?.scrollIntoView({ behavior:'smooth', block:'center' });
@@ -869,7 +869,7 @@
         const rol = (entry.rol||'').toUpperCase();
         const badgeClass = rol==='VIP' ? 'badge-info' : rol==='TIC' ? 'badge-warning' : rol==='CUBE' ? 'badge-accent' : 'badge-ghost';
         const metaParts = [];
-        if(entry.lote) metaParts.push(`Caja ${escapeHtml(entry.lote)}`);
+        if(entry.lote) metaParts.push(`Lote ${escapeHtml(entry.lote)}`);
         if(entry.litraje) metaParts.push(escapeHtml(entry.litraje));
         const meta = metaParts.length ? `<span class='opacity-60 text-[10px]'>${metaParts.join(' · ')}</span>` : '';
         const safeRfid = escapeHtml(entry.rfid);
@@ -992,7 +992,7 @@
     const rfids = Array.from(addState.items.keys());
     if(!rfids.length){ addMsg && (addMsg.textContent='Escanea al menos una pieza'); return; }
     const { boxes } = renderAddCounts();
-    if(boxes <= 0){ addMsg && (addMsg.textContent='Identifica al menos una caja para continuar'); return; }
+    if(boxes <= 0){ addMsg && (addMsg.textContent='Identifica al menos un conjunto para continuar'); return; }
     const h = parseInt(addH?.value||'0',10)||0;
     const m = parseInt(addM?.value||'0',10)||0;
     const secRaw = h*3600 + m*60;
@@ -1024,7 +1024,7 @@
       addState.items.clear();
       renderAddItems();
       const cajasProcesadas = typeof payload.cajasProcesadas === 'number' ? payload.cajasProcesadas : boxes;
-      addMsg && (addMsg.textContent=`Se enviaron ${cajasProcesadas} caja${cajasProcesadas===1?'':'s'} a Inspección.`);
+      addMsg && (addMsg.textContent=`Se enviaron ${cajasProcesadas} conjunto${cajasProcesadas===1?'':'s'} a Inspección.`);
       setTimeout(()=> addScan?.focus(), 200);
     } catch(e){ addMsg && (addMsg.textContent='Error'); }
   });

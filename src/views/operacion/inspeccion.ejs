@@ -8,9 +8,9 @@
       <div class="flex items-center justify-between mb-4">
         <div class="flex items-center gap-2">
           <span id="insp-spin" class="loading loading-spinner loading-xs hidden"></span>
-          <span class="text-sm opacity-60">Cajas en Inspección.</span>
+          <span class="text-sm opacity-60">Piezas en Inspección.</span>
         </div>
-        <button id="insp-btn-add" type="button" class="btn btn-primary btn-sm">Agregar a Inspección</button>
+        <button id="insp-btn-add" type="button" class="btn btn-primary btn-sm">Agregar piezas a Inspección</button>
       </div>
       <div id="insp-caja-grid" class="grid gap-4 sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-4"></div>
     </div>
@@ -18,7 +18,7 @@
     <!-- Panel de trabajo: identificar caja y checklist de 6 TICs -->
   <div class="rounded-xl border border-base-300/50 bg-base-200/5 p-5 flex flex-col gap-4">
       <div class="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-        <h2 class="text-sm font-semibold tracking-wide uppercase opacity-80">Identificar Caja</h2>
+        <h2 class="text-sm font-semibold tracking-wide uppercase opacity-80">Inspección individual</h2>
         <div class="join join-sm self-start sm:self-end">
           <button id="insp-mode-individual" type="button" class="btn btn-xs join-item btn-primary">Modo individual</button>
           <button id="insp-mode-bulk" type="button" class="btn btn-xs join-item btn-ghost">Modo masivo</button>
@@ -30,7 +30,7 @@
           <input id="insp-scan" type="text" maxlength="24" class="input input-sm input-bordered font-mono" placeholder="RFID 24" autocomplete="off" />
         </div>
         <div class="flex gap-2">
-          <button id="insp-scan-btn" class="btn btn-sm btn-primary flex-1">Buscar caja</button>
+          <button id="insp-scan-btn" class="btn btn-sm btn-primary flex-1">Buscar pieza</button>
           <button id="insp-scan-clear" class="btn btn-sm">Limpiar</button>
         </div>
         <div id="insp-scan-msg" class="text-xs min-h-[18px] font-mono opacity-80"></div>
@@ -47,19 +47,19 @@
         </div>
         <div id="insp-bulk-msg" class="text-xs min-h-[18px] font-mono opacity-80"></div>
         <div class="border border-dashed border-base-300 rounded-lg p-3 bg-base-300/10 space-y-2 max-h-48 overflow-y-auto" id="insp-bulk-list">
-          <div class="text-xs opacity-60">Sin cajas en cola.</div>
+          <div class="text-xs opacity-60">Sin piezas en cola.</div>
         </div>
       </div>
 
   <div id="insp-caja-panel" class="hidden space-y-3">
-        <div class="text-xs opacity-60 uppercase tracking-wide">Caja detectada</div>
+        <div class="text-xs opacity-60 uppercase tracking-wide">Pieza detectada</div>
         <div class="border rounded-lg p-3 bg-base-300/10 space-y-2">
-          <div class="flex items-center justify-between text-[11px] font-mono opacity-70"><span>Caja</span><span id="insp-caja-lote">—</span></div>
+          <div class="flex items-center justify-between text-[11px] font-mono opacity-70"><span>Pieza</span><span id="insp-caja-lote">—</span></div>
           <div class="text-[11px] font-mono opacity-70"><span>Conteo TICs:</span> <span id="insp-caja-tic-count">0</span>/6</div>
         </div>
-        <!-- Componentes de la caja (TIC/VIP/CUBE) mostrados al escanear cualquier RFID -->
+        <!-- Componentes identificados (TIC/VIP/CUBE) mostrados al escanear cualquier RFID -->
         <div class="space-y-2">
-          <div class="text-xs opacity-80">Componentes de la caja:</div>
+          <div class="text-xs opacity-80">Componentes identificados:</div>
           <div id="insp-caja-comps" class="flex flex-wrap gap-1"></div>
         </div>
 
@@ -83,10 +83,10 @@
           <div id="insp-tic-list" class="space-y-2"></div>
 
           <div class="divider my-2"></div>
-          <div class="text-xs opacity-80">Componentes de la caja (VIP / CUBE):</div>
+          <div class="text-xs opacity-80">Componentes vinculados (VIP / CUBE):</div>
           <div id="insp-comp-list" class="space-y-2"></div>
 
-          <button id="insp-complete" class="btn btn-sm btn-success w-full" disabled>Finalizar y devolver caja a Bodega</button>
+          <button id="insp-complete" class="btn btn-sm btn-success w-full" disabled>Finalizar y devolver a Bodega</button>
         </div>
       </div>
     </div>
@@ -102,7 +102,7 @@
       <button class="btn btn-sm btn-circle btn-ghost absolute right-2 top-2">✕</button>
     </form>
     <h3 class="font-bold text-lg mb-2">Agregar piezas a Inspección</h3>
-    <p class="text-xs opacity-70 mb-4">Escanea múltiples RFIDs de piezas en <strong>En bodega · Pendiente a Inspección</strong>. Se estimará automáticamente cuántas cajas pasarán a Inspección en cuanto identifiques alguna pieza de cada caja.</p>
+      <p class="text-xs opacity-70 mb-4">Escanea múltiples RFIDs de piezas en <strong>En bodega · Pendiente a Inspección</strong>. Se estimará automáticamente cuántas unidades se liberarán en cuanto identifiques alguna pieza de cada conjunto.</p>
     <label class="input input-bordered flex items-center gap-2 w-full mb-2">
       <span class="opacity-60 text-xs">RFID</span>
       <input id="insp-add-scan" type="text" class="grow font-mono" maxlength="24" autocomplete="off" placeholder="Listo para escanear..." />
@@ -133,7 +133,7 @@
           </div>
         </div>
         <div class="border rounded-lg p-3 bg-base-300/10 space-y-1">
-          <div class="text-[10px] uppercase opacity-70 tracking-wide">Cajas estimadas</div>
+          <div class="text-[10px] uppercase opacity-70 tracking-wide">Unidades estimadas</div>
           <div id="insp-add-count-boxes" class="text-2xl font-semibold">0</div>
         </div>
       </div>
