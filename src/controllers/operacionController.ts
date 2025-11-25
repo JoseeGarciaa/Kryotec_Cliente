@@ -15,6 +15,39 @@ const normalizeBasic = (val: string | null | undefined): string => {
     .toLowerCase();
 };
 
+const formatLitrajeNumber = (value: string): string | null => {
+  const normalized = value.replace(',', '.').trim();
+  if (!normalized) return null;
+  const num = Number(normalized);
+  if (!Number.isFinite(num)) return null;
+  const clean = Number.isInteger(num) ? String(num) : normalized.replace(/\.0+$/, '');
+  return `${clean}L`;
+};
+
+const parseLitrajeValue = (source: unknown): string | null => {
+  if (source === null || source === undefined) return null;
+  const raw = String(source).trim();
+  if (!raw) return null;
+  if (/^\d+(?:[.,]\d+)?$/.test(raw)) {
+    return formatLitrajeNumber(raw);
+  }
+  const match = raw.match(/(\d+(?:[.,]\d+)?)[\s-]*(?:l|lt|litros?)/i);
+  if (match) {
+    return formatLitrajeNumber(match[1]);
+  }
+  return null;
+};
+
+const inferLitrajeFromRow = (row: any): string | null => {
+  if (!row) return null;
+  return (
+    parseLitrajeValue(row.litraje) ??
+    parseLitrajeValue(row.litros) ??
+    parseLitrajeValue(row.nombre_unidad) ??
+    parseLitrajeValue(row.nombre_modelo)
+  );
+};
+
 // Debug control for kanbanData verbosity
 const KANBAN_DEBUG = process.env.KANBAN_DEBUG === '1';
 let lastKanbanLog = 0; // rate-limit logs (ms)
@@ -3892,31 +3925,59 @@ export const OperacionController = {
       // Eliminar cajas huérfanas (sin items). No elimina timers activos porque arriba no se borran sus items.
       await c.query(`DELETE FROM acond_cajas c WHERE NOT EXISTS (SELECT 1 FROM acond_caja_items aci WHERE aci.caja_id=c.caja_id)`);
     });
-    const rows = await withTenant(tenant, (c)=> c.query(
-      `SELECT ic.rfid, ic.estado, ic.sub_estado, ic.activo, ic.nombre_unidad, m.nombre_modelo,
-              EXISTS(SELECT 1 FROM acond_caja_items aci WHERE aci.rfid=ic.rfid) AS ya_en_caja,
-              CASE
-                WHEN LOWER(ic.estado) = LOWER('Pre Acondicionamiento')
-                  AND LOWER(COALESCE(ic.sub_estado, '')) LIKE 'atemperad%'
-                  AND (pit.completed_at IS NOT NULL OR pit.updated_at IS NOT NULL)
-                THEN GREATEST(
-                       0,
-                       EXTRACT(EPOCH FROM (
-                         NOW() - COALESCE(GREATEST(pit.completed_at, pit.updated_at), pit.completed_at, pit.updated_at)
-                       ))::int
-                     )
-                ELSE NULL
-              END AS atemperado_elapsed_sec
-         FROM inventario_credocubes ic
-         JOIN modelos m ON m.modelo_id = ic.modelo_id
-    LEFT JOIN preacond_item_timers pit
-           ON pit.rfid = ic.rfid AND pit.section = 'atemperamiento'
-        WHERE ic.rfid = ANY($1::text[])`, [codes]));
+    let rows;
+    try {
+      rows = await withTenant(tenant, (c)=> c.query(
+        `SELECT ic.rfid, ic.estado, ic.sub_estado, ic.activo, ic.nombre_unidad, m.nombre_modelo,
+                m.litraje::text AS litraje,
+                EXISTS(SELECT 1 FROM acond_caja_items aci WHERE aci.rfid=ic.rfid) AS ya_en_caja,
+                CASE
+                  WHEN LOWER(ic.estado) = LOWER('Pre Acondicionamiento')
+                    AND LOWER(COALESCE(ic.sub_estado, '')) LIKE 'atemperad%'
+                    AND (pit.completed_at IS NOT NULL OR pit.updated_at IS NOT NULL)
+                  THEN GREATEST(
+                         0,
+                         EXTRACT(EPOCH FROM (
+                           NOW() - COALESCE(GREATEST(pit.completed_at, pit.updated_at), pit.completed_at, pit.updated_at)
+                         ))::int
+                       )
+                  ELSE NULL
+                END AS atemperado_elapsed_sec
+           FROM inventario_credocubes ic
+           JOIN modelos m ON m.modelo_id = ic.modelo_id
+      LEFT JOIN preacond_item_timers pit
+             ON pit.rfid = ic.rfid AND pit.section = 'atemperamiento'
+          WHERE ic.rfid = ANY($1::text[])`, [codes]));
+    } catch (err: any) {
+      if (err?.code !== '42703') throw err;
+      rows = await withTenant(tenant, (c)=> c.query(
+        `SELECT ic.rfid, ic.estado, ic.sub_estado, ic.activo, ic.nombre_unidad, m.nombre_modelo,
+                NULL::text AS litraje,
+                EXISTS(SELECT 1 FROM acond_caja_items aci WHERE aci.rfid=ic.rfid) AS ya_en_caja,
+                CASE
+                  WHEN LOWER(ic.estado) = LOWER('Pre Acondicionamiento')
+                    AND LOWER(COALESCE(ic.sub_estado, '')) LIKE 'atemperad%'
+                    AND (pit.completed_at IS NOT NULL OR pit.updated_at IS NOT NULL)
+                  THEN GREATEST(
+                         0,
+                         EXTRACT(EPOCH FROM (
+                           NOW() - COALESCE(GREATEST(pit.completed_at, pit.updated_at), pit.completed_at, pit.updated_at)
+                         ))::int
+                       )
+                  ELSE NULL
+                END AS atemperado_elapsed_sec
+           FROM inventario_credocubes ic
+           JOIN modelos m ON m.modelo_id = ic.modelo_id
+      LEFT JOIN preacond_item_timers pit
+             ON pit.rfid = ic.rfid AND pit.section = 'atemperamiento'
+          WHERE ic.rfid = ANY($1::text[])`, [codes]));
+    }
     // Map para acceso rápido
     const byRfid: Record<string, any> = {};
     rows.rows.forEach(r=>{ byRfid[r.rfid] = r; });
     let haveCube=false, haveVip=false, ticCount=0;
-    const valid: { rfid:string; rol:'cube'|'vip'|'tic'; atemperadoElapsedSec?: number | null; nombre_unidad?: string | null; nombre_modelo?: string | null }[] = [];
+    let cajaLitraje: string | null = null;
+    const valid: { rfid:string; rol:'cube'|'vip'|'tic'; atemperadoElapsedSec?: number | null; nombre_unidad?: string | null; nombre_modelo?: string | null; litraje?: string | null }[] = [];
     const invalid: { rfid:string; reason:string }[] = [];
     // Procesar en el mismo orden de entrada (importante para UX del escaneo)
     for(const code of codes){
@@ -3930,24 +3991,47 @@ export const OperacionController = {
   if(r.ya_en_caja){ invalid.push({ rfid: r.rfid, reason: 'Ya en una caja' }); continue; }
   if(r.activo === false){ invalid.push({ rfid:r.rfid, reason:'Item inhabilitado (activo=false)' }); continue; }
       const nombreUnidad = r.nombre_unidad || r.nombre_modelo || null;
+      const litraje = inferLitrajeFromRow(r);
+      const ensureLitrajeMatch = (): boolean => {
+        if (!litraje) {
+          invalid.push({ rfid: r.rfid, reason: `No se detecta litraje para ${r.rfid}` });
+          return false;
+        }
+        if (cajaLitraje && cajaLitraje !== litraje) {
+          const expected = cajaLitraje;
+          invalid.push({ rfid: r.rfid, reason: `Litraje distinto (${litraje} vs ${expected})` });
+          return false;
+        }
+        if (!cajaLitraje) cajaLitraje = litraje;
+        return true;
+      };
       if(/cube/.test(name)){
         if(haveCube){ invalid.push({ rfid:r.rfid, reason:'Más de un CUBE' }); continue; }
   const enBodega = estadoLower.includes('en bodega') || subLower.includes('en bodega');
         if(!enBodega){ invalid.push({ rfid:r.rfid, reason:'CUBE no En bodega' }); continue; }
-        haveCube=true; valid.push({ rfid:r.rfid, rol:'cube', nombre_unidad: nombreUnidad, nombre_modelo: r.nombre_modelo || null });
+        if(!ensureLitrajeMatch()) continue;
+        haveCube=true;
+        const matchedCube = cajaLitraje || litraje || null;
+        valid.push({ rfid:r.rfid, rol:'cube', nombre_unidad: nombreUnidad, nombre_modelo: r.nombre_modelo || null, litraje: matchedCube });
       } else if(/vip/.test(name)){
         if(haveVip){ invalid.push({ rfid:r.rfid, reason:'Más de un VIP' }); continue; }
         const enBodega = estadoLower.includes('en bodega') || subLower.includes('en bodega');
         if(!enBodega){ invalid.push({ rfid:r.rfid, reason:'VIP no En bodega' }); continue; }
-        haveVip=true; valid.push({ rfid:r.rfid, rol:'vip', nombre_unidad: nombreUnidad, nombre_modelo: r.nombre_modelo || null });
+        if(!ensureLitrajeMatch()) continue;
+        haveVip=true;
+        const matchedVip = cajaLitraje || litraje || null;
+        valid.push({ rfid:r.rfid, rol:'vip', nombre_unidad: nombreUnidad, nombre_modelo: r.nombre_modelo || null, litraje: matchedVip });
       } else if(/tic/.test(name)){
         const atemp = (estadoLower.replace(/\s+/g,'').includes('preacondicionamiento') || estadoLower.includes('pre acond')) && subLower.includes('atemperad');
         if(!atemp){ invalid.push({ rfid:r.rfid, reason:'TIC no Atemperado' }); continue; }
   // Cap estricto: máximo 6 TICs
   if(ticCount >= 6){ invalid.push({ rfid:r.rfid, reason:'Máximo 6 TICs' }); continue; }
+        if(!ensureLitrajeMatch()) continue;
         const elapsedNum = Number(r.atemperado_elapsed_sec);
         const atemperadoElapsedSec = Number.isFinite(elapsedNum) && elapsedNum > 0 ? elapsedNum : null;
-        ticCount++; valid.push({ rfid:r.rfid, rol:'tic', atemperadoElapsedSec, nombre_unidad: nombreUnidad, nombre_modelo: r.nombre_modelo || null });
+        ticCount++;
+        const matchedTic = cajaLitraje || litraje || null;
+        valid.push({ rfid:r.rfid, rol:'tic', atemperadoElapsedSec, nombre_unidad: nombreUnidad, nombre_modelo: r.nombre_modelo || null, litraje: matchedTic });
       } else {
         invalid.push({ rfid:r.rfid, reason:'Modelo no permitido' });
       }
@@ -4003,23 +4087,46 @@ export const OperacionController = {
                          )`);
       await c.query(`DELETE FROM acond_cajas c WHERE NOT EXISTS (SELECT 1 FROM acond_caja_items aci WHERE aci.caja_id=c.caja_id)`);
     });
-    const rows = await withTenant(tenant, (c) => c.query(
-      `WITH cajas_validas AS (
-         SELECT c.caja_id
-           FROM acond_cajas c
-           JOIN acond_caja_items aci ON aci.caja_id = c.caja_id
-           JOIN inventario_credocubes ic2 ON ic2.rfid = aci.rfid
-          GROUP BY c.caja_id
-         HAVING bool_and(ic2.estado='Acondicionamiento' AND ic2.sub_estado IN ('Ensamblaje','Ensamblado'))
-       )
-  SELECT ic.rfid, ic.estado, ic.sub_estado, ic.lote, ic.activo, ic.sede_id, m.nombre_modelo,
-              CASE WHEN aci.rfid IS NOT NULL THEN true ELSE false END AS ya_en_caja
-         FROM inventario_credocubes ic
-         JOIN modelos m ON m.modelo_id = ic.modelo_id
-    LEFT JOIN acond_caja_items aci ON aci.rfid = ic.rfid AND aci.caja_id IN (SELECT caja_id FROM cajas_validas)
-        WHERE ic.rfid = ANY($1::text[])`, [codes]));
+    let rows;
+    try {
+      rows = await withTenant(tenant, (c) => c.query(
+        `WITH cajas_validas AS (
+           SELECT c.caja_id
+             FROM acond_cajas c
+             JOIN acond_caja_items aci ON aci.caja_id = c.caja_id
+             JOIN inventario_credocubes ic2 ON ic2.rfid = aci.rfid
+            GROUP BY c.caja_id
+           HAVING bool_and(ic2.estado='Acondicionamiento' AND ic2.sub_estado IN ('Ensamblaje','Ensamblado'))
+         )
+    SELECT ic.rfid, ic.estado, ic.sub_estado, ic.lote, ic.activo, ic.sede_id, m.nombre_modelo,
+                m.litraje::text AS litraje,
+                CASE WHEN aci.rfid IS NOT NULL THEN true ELSE false END AS ya_en_caja
+           FROM inventario_credocubes ic
+           JOIN modelos m ON m.modelo_id = ic.modelo_id
+      LEFT JOIN acond_caja_items aci ON aci.rfid = ic.rfid AND aci.caja_id IN (SELECT caja_id FROM cajas_validas)
+          WHERE ic.rfid = ANY($1::text[])`, [codes]));
+    } catch (err: any) {
+      if (err?.code !== '42703') throw err;
+      rows = await withTenant(tenant, (c) => c.query(
+        `WITH cajas_validas AS (
+           SELECT c.caja_id
+             FROM acond_cajas c
+             JOIN acond_caja_items aci ON aci.caja_id = c.caja_id
+             JOIN inventario_credocubes ic2 ON ic2.rfid = aci.rfid
+            GROUP BY c.caja_id
+           HAVING bool_and(ic2.estado='Acondicionamiento' AND ic2.sub_estado IN ('Ensamblaje','Ensamblado'))
+         )
+    SELECT ic.rfid, ic.estado, ic.sub_estado, ic.lote, ic.activo, ic.sede_id, m.nombre_modelo,
+                NULL::text AS litraje,
+                CASE WHEN aci.rfid IS NOT NULL THEN true ELSE false END AS ya_en_caja
+           FROM inventario_credocubes ic
+           JOIN modelos m ON m.modelo_id = ic.modelo_id
+      LEFT JOIN acond_caja_items aci ON aci.rfid = ic.rfid AND aci.caja_id IN (SELECT caja_id FROM cajas_validas)
+          WHERE ic.rfid = ANY($1::text[])`, [codes]));
+    }
   let haveCube=false, haveVip=false, ticCount=0; const litrajes = new Set<string>();
-  const roles: { rfid:string; rol:'cube'|'vip'|'tic'; litraje?: any }[] = [];
+  let cajaLitraje: string | null = null;
+  const roles: { rfid:string; rol:'cube'|'vip'|'tic'; litraje?: string | null }[] = [];
         for (const r of rows.rows as any[]) {
       if (r.rfid.length !== 24) return res.status(400).json({ ok:false, error:`${r.rfid} longitud inválida`, message:`${r.rfid} longitud inválida` });
       if (r.ya_en_caja) return res.status(400).json({ ok:false, error:`${r.rfid} ya está en una caja`, message:`${r.rfid} ya está en una caja` });
@@ -4033,24 +4140,52 @@ export const OperacionController = {
       const enBodega = estadoNorm.includes('en bodega') || subEstadoNorm.includes('en bodega');
       const enPreAcond = estadoNorm.replace(/\s+/g,'').includes('preacondicionamiento') || estadoNorm.includes('pre acond');
       const subAtemper = subEstadoNorm.includes('atemperad');
+      const litraje = inferLitrajeFromRow(r);
+      const registerLitraje = (rfid: string, value: string | null): boolean => {
+        if (!value) {
+          res.status(400).json({ ok:false, error:'Todos los items deben tener el mismo litraje', message:`No se detecta litraje para ${rfid}` });
+          return false;
+        }
+        if (cajaLitraje && cajaLitraje !== value) {
+          res.status(400).json({ ok:false, error:'Todos los items deben tener el mismo litraje', message:`${rfid} tiene litraje ${value} y se esperaba ${cajaLitraje}` });
+          return false;
+        }
+        if (!cajaLitraje) cajaLitraje = value;
+        return true;
+      };
       if (esTic) {
         if (ticCount >= 6) return res.status(400).json({ ok:false, error:'No se permiten más de 6 TICs', message:'No se permiten más de 6 TICs' });
         if (!(enPreAcond && subAtemper)) return res.status(400).json({ ok:false, error:`TIC ${r.rfid} no Atemperado`, message:`TIC ${r.rfid} no Atemperado` });
-        ticCount++; roles.push({ rfid:r.rfid, rol:'tic', litraje: r.litraje }); litrajes.add(String(r.litraje||''));
+        if (!registerLitraje(r.rfid, litraje)) return;
+        ticCount++;
+        const matched = cajaLitraje || litraje || null;
+        roles.push({ rfid:r.rfid, rol:'tic', litraje: matched });
+        if(matched) litrajes.add(matched);
       } else if (esCube) {
         if (haveCube) return res.status(400).json({ ok:false, error:'Más de un CUBE', message:'Más de un CUBE' });
         if (!enBodega) return res.status(400).json({ ok:false, error:`CUBE ${r.rfid} no está En bodega`, message:`CUBE ${r.rfid} no está En bodega` });
-        haveCube=true; roles.push({ rfid:r.rfid, rol:'cube', litraje: r.litraje }); litrajes.add(String(r.litraje||''));
+        if (!registerLitraje(r.rfid, litraje)) return;
+        haveCube=true;
+        const matched = cajaLitraje || litraje || null;
+        roles.push({ rfid:r.rfid, rol:'cube', litraje: matched });
+        if(matched) litrajes.add(matched);
       } else if (esVip) {
         if (haveVip) return res.status(400).json({ ok:false, error:'Más de un VIP', message:'Más de un VIP' });
         if (!enBodega) return res.status(400).json({ ok:false, error:`VIP ${r.rfid} no está En bodega`, message:`VIP ${r.rfid} no está En bodega` });
-        haveVip=true; roles.push({ rfid:r.rfid, rol:'vip', litraje: r.litraje }); litrajes.add(String(r.litraje||''));
+        if (!registerLitraje(r.rfid, litraje)) return;
+        haveVip=true;
+        const matched = cajaLitraje || litraje || null;
+        roles.push({ rfid:r.rfid, rol:'vip', litraje: matched });
+        if(matched) litrajes.add(matched);
       } else {
         return res.status(400).json({ ok:false, error:`${r.rfid} modelo no permitido`, message:`${r.rfid} modelo no permitido` });
       }
     }
     if(!(haveCube && haveVip && ticCount===6)) return res.status(400).json({ ok:false, error:'Composición inválida', message:'Composición inválida (1 cube, 1 vip, 6 tics)' });
-    if(litrajes.size>1) return res.status(400).json({ ok:false, error:'Todos los items deben tener el mismo litraje', message:'Todos los items deben tener el mismo litraje' });
+    if(litrajes.size>1){
+      const values = Array.from(litrajes).join(', ');
+      return res.status(400).json({ ok:false, error:'Todos los items deben tener el mismo litraje', message:`Todos los items deben tener el mismo litraje (${values})` });
+    }
     const transferRows = (rows.rows as any[]).map((row) => ({ rfid: row.rfid, sede_id: row.sede_id }));
     const transferCheck = await ensureCrossSedeAuthorization(
       req,

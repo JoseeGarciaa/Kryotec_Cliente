@@ -1773,7 +1773,8 @@
           const code=String(v.rfid||'').toUpperCase();
           if(!code) return;
           const nombreUnidad = v.nombre_unidad || v.nombreUnidad || v.nombre_modelo || '';
-          componentMeta.set(code, { rol: v.rol, nombreUnidad });
+          const litraje = v.litraje || v.litrajeValor || null;
+          componentMeta.set(code, { rol: v.rol, nombreUnidad, litraje });
           if(v.rol==='tic') ticSet.add(code);
           else if(v.rol==='vip') vipSet.add(code);
           else if(v.rol==='cube') cubeSet.add(code);
@@ -1831,7 +1832,14 @@
         renderNegativeConsent();
         updateNegativeBadges();
         updateStatus();
-        if(msg && !invalid.length) msg.textContent='';
+        if(msg){
+          if(invalid.length){
+            const first = invalid[0] || {};
+            msg.textContent = first.reason ? `Advertencia: ${first.reason}` : 'Hay componentes inválidos.';
+          } else {
+            msg.textContent = '';
+          }
+        }
         console.debug('[Ensamblaje] Validación OK', json);
       } catch(e){ if(msg) msg.textContent = e.message||'Error'; }
     }
