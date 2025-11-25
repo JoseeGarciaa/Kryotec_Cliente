@@ -259,8 +259,8 @@
   }
 
   function normalizeCode(code){
-    const raw = (code||'').toString().toUpperCase();
-    return raw.replace(/[^A-Z0-9]/g, '').trim();
+    if(code == null) return '';
+    return code.toString().replace(/\s+/g, '').toUpperCase();
   }
 
   function escapeHtml(value){
@@ -885,31 +885,34 @@
     updateAddConfirm();
   }
 
-  let addScanPending = false;
-  let suppressEnterEcho = false;
-  let suppressEnterTimer = null;
-  function scheduleEnterSuppression(){
-    suppressEnterEcho = true;
-    if(suppressEnterTimer){ clearTimeout(suppressEnterTimer); suppressEnterTimer = null; }
-    suppressEnterTimer = setTimeout(()=>{ suppressEnterEcho = false; suppressEnterTimer = null; }, 400);
-  }
-  async function handleAddScan(options = {}){
-    const autoTriggered = !!options.auto;
-    const raw = (addScan?.value||'');
-    const code = normalizeCode(raw);
+  const addScanQueue = [];
+  let processingAddQueue = false;
+
+  function enqueueAddScan(value, opts = {}){
+    const code = normalizeCode(value);
     if(code.length !== 24){
-      addMsg && (addMsg.textContent='RFID inválido');
+      if(!opts.silent && code.length){ addMsg && (addMsg.textContent='RFID inválido'); }
       return;
     }
     if(addState.items.has(code)){
-      addMsg && (addMsg.textContent='RFID ya agregado');
-      if(addScan) addScan.value='';
+      if(!opts.silent){ addMsg && (addMsg.textContent='RFID ya agregado'); }
       return;
     }
-    if(addScanPending) return;
-    if(autoTriggered){ scheduleEnterSuppression(); }
-    addScanPending = true;
-    addMsg && (addMsg.textContent='Validando...');
+    addScanQueue.push(code);
+    if(!processingAddQueue){ processAddScanQueue(); }
+  }
+
+  async function processAddScanQueue(){
+    processingAddQueue = true;
+    while(addScanQueue.length){
+      const code = addScanQueue.shift();
+      await processSingleAddScan(code);
+    }
+    processingAddQueue = false;
+  }
+
+  async function processSingleAddScan(code){
+    addMsg && (addMsg.textContent = `Validando ${code}...`);
     try {
       const r = await fetch('/operacion/inspeccion/pending/item-info',{ method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ rfid: code })});
       const j = await r.json();
@@ -925,22 +928,27 @@
         addedAt: Date.now()
       });
       const msgRole = normalizedRol ? normalizedRol.toUpperCase() : 'PIEZA';
-      addMsg && (addMsg.textContent = `${msgRole} agregada`);
-      if(addScan) addScan.value='';
+      addMsg && (addMsg.textContent = `${msgRole} agregada (${code})`);
       renderAddItems();
     } catch(_e){
       addMsg && (addMsg.textContent='Error validando');
-    } finally {
-      addScanPending = false;
     }
+  }
+
+  function processAddInputValue(value){
+    let buffer = normalizeCode(value);
+    while(buffer.length >= 24){
+      const chunk = buffer.slice(0,24);
+      buffer = buffer.slice(24);
+      enqueueAddScan(chunk, { silent:true });
+    }
+    return buffer;
   }
 
   addScan?.addEventListener('input', ()=>{
     if(!addScan) return;
-    if(addScan.value.length>24) addScan.value = addScan.value.slice(0,24);
-    if(addScan.value.length === 24){
-      handleAddScan({ auto:true });
-    }
+    const remainder = processAddInputValue(addScan.value);
+    addScan.value = remainder;
   });
   addH?.addEventListener('input', updateAddConfirm);
   addM?.addEventListener('input', updateAddConfirm);
@@ -949,21 +957,33 @@
     if(addH) addH.value='';
     if(addM) addM.value='';
     addMsg && (addMsg.textContent='');
+    addScanQueue.length = 0;
+    processingAddQueue = false;
     addState.items.clear();
     renderAddItems();
     resetAddLocation();
     ensureAddLocation();
     addScan?.focus();
   });
+  addScan?.addEventListener('paste', (e)=>{
+    if(!e.clipboardData || !addScan) return;
+    e.preventDefault();
+    const text = e.clipboardData.getData('text');
+    const remainder = processAddInputValue(text);
+    addScan.value = remainder;
+  });
+
   addScan?.addEventListener('keydown', (e)=>{
     if(e.key==='Enter'){
       e.preventDefault();
-      if(suppressEnterEcho){
-        suppressEnterEcho = false;
-        if(suppressEnterTimer){ clearTimeout(suppressEnterTimer); suppressEnterTimer = null; }
-        return;
+      if(!addScan) return;
+      const code = normalizeCode(addScan.value);
+      if(code.length === 24){
+        addScan.value = '';
+        enqueueAddScan(code);
+      } else if(code.length){
+        addMsg && (addMsg.textContent='RFID incompleto');
       }
-      handleAddScan();
     }
   });
 
