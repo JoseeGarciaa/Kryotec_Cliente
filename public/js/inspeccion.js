@@ -73,16 +73,23 @@
   function timerDisplay(ms){ const s=Math.max(0,Math.floor(ms/1000)); const h=Math.floor(s/3600); const m=Math.floor((s%3600)/60); const sec=s%60; return `${h}:${String(m).padStart(2,'0')}:${String(sec).padStart(2,'0')}`; }
   function msRemaining(timer){ if(!timer||!timer.startsAt||!timer.durationSec) return null; const end = new Date(timer.startsAt).getTime() + timer.durationSec*1000; return end - (Date.now()+state.serverOffset); }
 
+
   function cardHTML(caja){
     const comps = caja.componentes||[];
-    const vip = comps.filter(x=>x.tipo==='vip');
-    const tics = comps.filter(x=>x.tipo==='tic');
-    const cubes = comps.filter(x=>x.tipo==='cube');
-    const compBadges = [
-      vip.length ? `<span class='badge badge-info badge-xs font-semibold' title='VIPs'>VIP × ${vip.length}</span>` : '',
-      tics.length ? `<span class='badge badge-warning badge-xs font-semibold' title='TICs'>TIC × ${tics.length}</span>` : '',
-      cubes.length ? `<span class='badge badge-accent badge-xs font-semibold' title='CUBEs'>CUBE × ${cubes.length}</span>` : ''
-    ].filter(Boolean).join(' ');
+    const compRows = comps.length
+      ? comps.map((item, idx)=>{
+          const role = (item.tipo||'').toUpperCase();
+          const roleLabel = role || 'PIEZA';
+          const badgeClass = role==='VIP' ? 'badge-info' : role==='TIC' ? 'badge-warning' : role==='CUBE' ? 'badge-accent' : 'badge-ghost';
+          const code = escapeHtml(item.codigo || `RFID ${idx+1}`);
+          const litraje = item.litraje ? `<span class='text-[9px] opacity-70'>${escapeHtml(item.litraje)}</span>` : '';
+          return `<div class='flex items-center gap-2 text-[10px] font-mono border border-base-300/40 rounded px-2 py-1 bg-base-100/10'>
+            <span class='badge ${badgeClass} badge-xs'>${roleLabel}</span>
+            <span class='truncate flex-1' title='${code}'>${code}</span>
+            ${litraje}
+          </div>`;
+        }).join('')
+      : "<div class='text-[10px] opacity-60'>Sin piezas registradas</div>";
     // Only show countdown timers (with duration). Hide forward/elapsed timers to avoid UI conflicts.
     const hasCountdown = !!(caja.timer && caja.timer.durationSec);
     const timerHtml = hasCountdown
@@ -92,9 +99,9 @@
     const displayName = caja.nombreCaja || code || '';
     const titleText = displayName && code && displayName !== code ? `${displayName} · ${code}` : displayName || code;
     return `<div class='caja-card rounded-lg border border-base-300/40 bg-base-200/10 p-3 flex flex-col gap-2' title='${titleText}'>
-      <div class='text-[10px] uppercase opacity-60 tracking-wide'>Pieza</div>
+      <div class='text-[10px] uppercase opacity-60 tracking-wide'>Conjunto</div>
       <div class='font-semibold text-xs leading-tight break-all pr-2'>${displayName}</div>
-      <div class='flex flex-wrap gap-1 text-[9px] flex-1'>${compBadges || "<span class='badge badge-ghost badge-xs'>Sin items</span>"}</div>
+      <div class='space-y-1 flex-1'>${compRows}</div>
       <div class='flex items-center justify-between text-[10px] opacity-70'>
         <span class='badge badge-outline badge-xs'>Inspección</span>
         ${timerHtml}
