@@ -848,28 +848,55 @@
       `<div class='text-[11px] opacity-80 leading-tight space-y-0.5'>${lines}</div>`;
   }
 
-  function uniqueCajaCount(){
-    const cajaIds = new Set();
+  function buildCajaKey(item){
+    if(item.caja_id != null) return `id:${item.caja_id}`;
+    if(item.lote) return `lote:${item.lote}`;
+    return `rfid:${item.rfid}`;
+  }
+
+  function computeCajaProgress(){
+    const groups = new Map();
     addState.items.forEach((item)=>{
-      if(item.caja_id != null){
-        cajaIds.add(String(item.caja_id));
-      } else if(item.lote){
-        cajaIds.add(`lote:${item.lote}`);
-      } else {
-        cajaIds.add(item.rfid);
+      const key = buildCajaKey(item);
+      if(!groups.has(key)){
+        groups.set(key, {
+          tic:0,
+          vip:0,
+          cube:0,
+          total:0,
+          label: item.lote || item.rfid || key
+        });
       }
+      const group = groups.get(key);
+      group.total++;
+      const role = (item.rol||'').toLowerCase();
+      if(role === 'tic') group.tic++;
+      else if(role === 'vip') group.vip++;
+      else if(role === 'cube') group.cube++;
     });
-    return cajaIds.size;
+    let completas = 0;
+    groups.forEach((group)=>{
+      const full = group.tic >= 6 && group.vip >= 1 && group.cube >= 1;
+      if(full) completas++;
+    });
+    const total = groups.size;
+    const incompletas = total - completas;
+    return { total, completas, incompletas: Math.max(incompletas, 0) };
   }
 
   function renderAddCounts(){
     renderRoleCard('tic', addCountTic);
     renderRoleCard('vip', addCountVip);
     renderRoleCard('cube', addCountCube);
-    const boxes = uniqueCajaCount();
-    if(addCountBoxes) addCountBoxes.textContent = String(boxes);
-    if(addConfirm) addConfirm.disabled = boxes <= 0;
-    return { boxes };
+    const { total, completas, incompletas } = computeCajaProgress();
+    if(addCountBoxes){
+      addCountBoxes.innerHTML = `<div class='text-2xl font-semibold'>${total}</div>`+
+        `<div class='text-[11px] opacity-80 leading-tight space-y-0.5'>`+
+        `Completas: ${completas}<br>Incompletas: ${incompletas}`+
+        `</div>`;
+    }
+    if(addConfirm) addConfirm.disabled = total <= 0;
+    return { total, completas, incompletas };
   }
 
   function updateAddConfirm(){
@@ -1008,8 +1035,8 @@
   addConfirm?.addEventListener('click', async ()=>{
     const rfids = Array.from(addState.items.keys());
     if(!rfids.length){ addMsg && (addMsg.textContent='Escanea al menos una pieza'); return; }
-    const { boxes } = renderAddCounts();
-    if(boxes <= 0){ addMsg && (addMsg.textContent='Identifica al menos un conjunto para continuar'); return; }
+    const { total } = renderAddCounts();
+    if(total <= 0){ addMsg && (addMsg.textContent='Identifica al menos un conjunto para continuar'); return; }
     const h = parseInt(addH?.value||'0',10)||0;
     const m = parseInt(addM?.value||'0',10)||0;
     const secRaw = h*3600 + m*60;
@@ -1040,7 +1067,7 @@
       await load();
       addState.items.clear();
       renderAddItems();
-      const cajasProcesadas = typeof payload.cajasProcesadas === 'number' ? payload.cajasProcesadas : boxes;
+      const cajasProcesadas = typeof payload.cajasProcesadas === 'number' ? payload.cajasProcesadas : total;
       addMsg && (addMsg.textContent=`Se enviaron ${cajasProcesadas} conjunto${cajasProcesadas===1?'':'s'} a Inspección.`);
       setTimeout(()=> addScan?.focus(), 200);
     } catch(e){ addMsg && (addMsg.textContent='Error'); }
