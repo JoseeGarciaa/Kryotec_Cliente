@@ -2138,6 +2138,56 @@ export const OperacionController = {
       return res.json({ ok:true, caja:{ id: cajaId, lote }, items: itemsQ.rows });
     } catch(e:any){ res.status(500).json({ ok:false, error: e.message||'Error preview' }); }
   },
+  inspeccionPendingItemInfo: async (req: Request, res: Response) => {
+    const tenant = (req as any).user?.tenant;
+    const { rfid } = req.body as any;
+    const code = typeof rfid === 'string' ? rfid.trim() : '';
+    if (code.length !== 24) return res.status(400).json({ ok:false, error:'RFID inválido' });
+    try {
+      const rowQ = await withTenant(tenant, (c)=> c.query(
+        `SELECT aci.caja_id, c.lote, ic.rfid, ic.estado, ic.sub_estado, ic.sede_id,
+                m.nombre_modelo, m.litraje
+           FROM acond_caja_items aci
+           JOIN acond_cajas c ON c.caja_id = aci.caja_id
+           JOIN inventario_credocubes ic ON ic.rfid = aci.rfid
+           JOIN modelos m ON m.modelo_id = ic.modelo_id
+          WHERE ic.rfid = $1
+          LIMIT 1`,
+        [code]
+      ));
+      if(!rowQ.rowCount) return res.status(404).json({ ok:false, error:'RFID no pertenece a ninguna caja' });
+      const row = rowQ.rows[0] as any;
+      const estadoNorm = normalizeBasic(row.estado);
+      const subEstadoNorm = normalizeBasic(row.sub_estado);
+      const pendingState = normalizeBasic('En bodega');
+      const pendingSub = new Set([normalizeBasic('Pendiente a Inspección'), normalizeBasic('Pendiente a Inspeccion')]);
+      if(estadoNorm !== pendingState || !pendingSub.has(subEstadoNorm)){
+        return res.status(400).json({ ok:false, error:'La pieza no está Pendiente a Inspección' });
+      }
+      const nombreNorm = normalizeBasic(row.nombre_modelo);
+      let rol: 'tic'|'vip'|'cube'|'otro' = 'otro';
+      if(nombreNorm.includes('tic')) rol = 'tic';
+      else if(nombreNorm.includes('vip')) rol = 'vip';
+      else if(nombreNorm.includes('cube') || nombreNorm.includes('cubo')) rol = 'cube';
+      if(rol === 'otro'){
+        return res.status(400).json({ ok:false, error:'El modelo no es válido para Inspección' });
+      }
+      const litraje = inferLitrajeFromRow(row) || parseLitrajeValue(row.litraje) || null;
+      return res.json({
+        ok:true,
+        item: {
+          rfid: row.rfid,
+          rol,
+          caja_id: row.caja_id,
+          lote: row.lote,
+          litraje,
+          sede_id: row.sede_id
+        }
+      });
+    } catch(e:any){
+      res.status(500).json({ ok:false, error: e.message || 'Error consultando pieza' });
+    }
+  },
   // 2) (Deprecated to no-op) Actualizar checklist para una TIC — ahora no persiste nada; se mantiene por compatibilidad
   inspeccionTicChecklist: async (req: Request, res: Response) => {
     const tenant = (req as any).user?.tenant;

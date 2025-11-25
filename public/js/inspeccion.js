@@ -263,6 +263,15 @@
     return raw.replace(/[^A-Z0-9]/g, '').trim();
   }
 
+  function escapeHtml(value){
+    return (value || '')
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
+  }
+
   function findBulkEntry(code){
     const target = normalizeCode(code);
     return state.bulkQueue.find(entry=> entry.code === target);
@@ -795,28 +804,55 @@
   ticScanClear?.addEventListener('click', ()=>{ if(ticScan) ticScan.value=''; state.activeTic=null; renderChecklist(); ticMsg && (ticMsg.textContent=''); ticScan?.focus(); });
 
   // Validación de inputs del modal
-  function getAddCounts(){
-    const counts = { tic:0, vip:0, cube:0 };
+  function summarizeRole(role){
+    let total = 0;
+    const groups = new Map();
     addState.items.forEach((item)=>{
-      const rol = (item.rol||'').toLowerCase();
-      if(rol==='tic') counts.tic++;
-      else if(rol==='vip') counts.vip++;
-      else if(rol==='cube') counts.cube++;
+      if((item.rol||'').toLowerCase() !== role) return;
+      total++;
+      const label = item.litraje || 'Sin litraje';
+      groups.set(label, (groups.get(label)||0)+1);
     });
-    const boxes = Math.min(Math.floor(counts.tic/6), counts.vip, counts.cube);
-    return Object.assign(counts, { boxes });
+    return { total, groups };
+  }
+
+  function renderRoleCard(role, container){
+    if(!container) return;
+    const summary = summarizeRole(role);
+    if(!summary.total){
+      container.innerHTML = "<div class='text-2xl font-semibold'>0</div><div class='text-[11px] opacity-60'>Sin piezas</div>";
+      return;
+    }
+    const lines = Array.from(summary.groups.entries())
+      .sort((a,b)=> a[0].localeCompare(b[0], 'es', { numeric:true }))
+      .map(([label,count])=> `<div>${escapeHtml(label)} × ${count}</div>`)
+      .join('');
+    container.innerHTML = `<div class='text-2xl font-semibold'>${summary.total}</div>`+
+      `<div class='text-[11px] opacity-80 leading-tight space-y-0.5'>${lines}</div>`;
+  }
+
+  function uniqueCajaCount(){
+    const cajaIds = new Set();
+    addState.items.forEach((item)=>{
+      if(item.caja_id != null){
+        cajaIds.add(String(item.caja_id));
+      } else if(item.lote){
+        cajaIds.add(`lote:${item.lote}`);
+      } else {
+        cajaIds.add(item.rfid);
+      }
+    });
+    return cajaIds.size;
   }
 
   function renderAddCounts(){
-    const counts = getAddCounts();
-    addCountTic && (addCountTic.textContent = String(counts.tic));
-    addCountVip && (addCountVip.textContent = String(counts.vip));
-    addCountCube && (addCountCube.textContent = String(counts.cube));
-    addCountBoxes && (addCountBoxes.textContent = String(Math.max(0, counts.boxes)));
-    if(addConfirm){
-      addConfirm.disabled = counts.boxes <= 0;
-    }
-    return counts;
+    renderRoleCard('tic', addCountTic);
+    renderRoleCard('vip', addCountVip);
+    renderRoleCard('cube', addCountCube);
+    const boxes = uniqueCajaCount();
+    if(addCountBoxes) addCountBoxes.textContent = String(boxes);
+    if(addConfirm) addConfirm.disabled = boxes <= 0;
+    return { boxes };
   }
 
   function updateAddConfirm(){
@@ -832,11 +868,15 @@
       addItems.innerHTML = entries.map((entry)=>{
         const rol = (entry.rol||'').toUpperCase();
         const badgeClass = rol==='VIP' ? 'badge-info' : rol==='TIC' ? 'badge-warning' : rol==='CUBE' ? 'badge-accent' : 'badge-ghost';
-        const lote = entry.lote ? `<span class='opacity-60 text-[10px]'>${entry.lote}</span>` : '';
+        const metaParts = [];
+        if(entry.lote) metaParts.push(`Caja ${escapeHtml(entry.lote)}`);
+        if(entry.litraje) metaParts.push(escapeHtml(entry.litraje));
+        const meta = metaParts.length ? `<span class='opacity-60 text-[10px]'>${metaParts.join(' · ')}</span>` : '';
+        const safeRfid = escapeHtml(entry.rfid);
         return `<div class='flex items-center justify-between gap-2 border border-base-300/60 rounded-md px-2 py-1 bg-base-100' data-add-rfid='${entry.rfid}'>
           <div class='flex flex-col text-[11px] font-mono leading-tight'>
-            <span class='flex items-center gap-2 font-semibold'><span class='badge ${badgeClass} badge-xs'>${rol||'PIEZA'}</span><span>${entry.rfid}</span></span>
-            ${lote}
+            <span class='flex items-center gap-2 font-semibold'><span class='badge ${badgeClass} badge-xs'>${rol||'PIEZA'}</span><span>${safeRfid}</span></span>
+            ${meta}
           </div>
           <button class='btn btn-ghost btn-xs text-error' data-action='add-remove-item' data-rfid='${entry.rfid}'>✕</button>
         </div>`;
@@ -875,8 +915,17 @@
       const j = await r.json();
       if(!j.ok){ addMsg && (addMsg.textContent = j.error||'No disponible'); return; }
       const item = j.item || {};
-      addState.items.set(code, { ...item, rol: (item.rol||'').toLowerCase(), addedAt: Date.now() });
-      addMsg && (addMsg.textContent = `${(item.rol||'pieza').toString().toUpperCase()} agregada`);
+      const normalizedRol = (item.rol||'').toLowerCase();
+      addState.items.set(code, {
+        rfid: code,
+        rol: normalizedRol,
+        caja_id: item.caja_id ?? null,
+        lote: item.lote || null,
+        litraje: item.litraje || null,
+        addedAt: Date.now()
+      });
+      const msgRole = normalizedRol ? normalizedRol.toUpperCase() : 'PIEZA';
+      addMsg && (addMsg.textContent = `${msgRole} agregada`);
       if(addScan) addScan.value='';
       renderAddItems();
     } catch(_e){
@@ -922,8 +971,8 @@
   addConfirm?.addEventListener('click', async ()=>{
     const rfids = Array.from(addState.items.keys());
     if(!rfids.length){ addMsg && (addMsg.textContent='Escanea al menos una pieza'); return; }
-    const counts = getAddCounts();
-    if(counts.boxes <= 0){ addMsg && (addMsg.textContent='Se requiere al menos una composición completa (6 TIC + 1 VIP + 1 CUBE)'); return; }
+    const { boxes } = renderAddCounts();
+    if(boxes <= 0){ addMsg && (addMsg.textContent='Identifica al menos una caja para continuar'); return; }
     const h = parseInt(addH?.value||'0',10)||0;
     const m = parseInt(addM?.value||'0',10)||0;
     const secRaw = h*3600 + m*60;
@@ -954,7 +1003,7 @@
       await load();
       addState.items.clear();
       renderAddItems();
-      const cajasProcesadas = typeof payload.cajasProcesadas === 'number' ? payload.cajasProcesadas : counts.boxes;
+      const cajasProcesadas = typeof payload.cajasProcesadas === 'number' ? payload.cajasProcesadas : boxes;
       addMsg && (addMsg.textContent=`Se enviaron ${cajasProcesadas} caja${cajasProcesadas===1?'':'s'} a Inspección.`);
       setTimeout(()=> addScan?.focus(), 200);
     } catch(e){ addMsg && (addMsg.textContent='Error'); }
