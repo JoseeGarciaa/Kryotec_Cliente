@@ -864,7 +864,8 @@
           vip:0,
           cube:0,
           total:0,
-          label: item.lote || item.rfid || key
+          label: item.lote || item.rfid || key,
+          litraje: item.litraje || 'Sin litraje'
         });
       }
       const group = groups.get(key);
@@ -875,24 +876,39 @@
       else if(role === 'cube') group.cube++;
     });
     let completas = 0;
+    let incompletas = 0;
+    const completasLitros = [];
+    const incompletasLitros = [];
     groups.forEach((group)=>{
       const full = group.tic >= 6 && group.vip >= 1 && group.cube >= 1;
-      if(full) completas++;
+      if(full) {
+        completas++;
+        completasLitros.push(group.litraje);
+      } else {
+        incompletas++;
+        incompletasLitros.push(group.litraje);
+      }
     });
     const total = groups.size;
-    const incompletas = total - completas;
-    return { total, completas, incompletas: Math.max(incompletas, 0) };
+    return {
+      total,
+      completas,
+      incompletas: Math.max(incompletas, 0),
+      completasLitros,
+      incompletasLitros
+    };
   }
 
   function renderAddCounts(){
     renderRoleCard('tic', addCountTic);
     renderRoleCard('vip', addCountVip);
     renderRoleCard('cube', addCountCube);
-    const { total, completas, incompletas } = computeCajaProgress();
+    const { total, completas, incompletas, completasLitros, incompletasLitros } = computeCajaProgress();
     if(addCountBoxes){
       addCountBoxes.innerHTML = `<div class='text-2xl font-semibold'>${total}</div>`+
         `<div class='text-[11px] opacity-80 leading-tight space-y-0.5'>`+
-        `Completas: ${completas}<br>Incompletas: ${incompletas}`+
+        `Completas: ${completas} ${completasLitros.length ? '('+completasLitros.join(', ')+')' : ''}<br>`+
+        `Incompletas: ${incompletas} ${incompletasLitros.length ? '('+incompletasLitros.join(', ')+')' : ''}`+
         `</div>`;
     }
     if(addConfirm) addConfirm.disabled = total <= 0;
