@@ -71,6 +71,7 @@ router.get('/inspeccion', requireAuth, OperacionController.inspeccion);
 router.get('/inspeccion/data', requireAuth, OperacionController.inspeccionData as any);
 router.post('/inspeccion/lookup', requireAuth, OperacionController.inspeccionCajaLookup as any);
 router.post('/inspeccion/pull', requireAuth, OperacionController.inspeccionPullFromPending as any);
+router.post('/inspeccion/pending/item-info', requireAuth, OperacionController.inspeccionPendingItemInfo as any);
 router.post('/inspeccion/pending/preview', requireAuth, OperacionController.inspeccionPendingPreview as any);
 router.post('/inspeccion/check', requireAuth, OperacionController.inspeccionTicChecklist as any);
 router.post('/inspeccion/complete', requireAuth, OperacionController.inspeccionCajaComplete as any);

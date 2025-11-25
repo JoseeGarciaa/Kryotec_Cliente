@@ -101,15 +101,41 @@
     <form method="dialog">
       <button class="btn btn-sm btn-circle btn-ghost absolute right-2 top-2">✕</button>
     </form>
-    <h3 class="font-bold text-lg mb-2">Agregar caja a Inspección</h3>
-    <p class="text-xs opacity-70 mb-4">Escanea un RFID de una caja en <strong>En bodega · Pendiente a Inspección</strong> y asigna un cronómetro manual (horas/minutos) para traerla.</p>
-    <label class="input input-bordered flex items-center gap-2 w-full mb-3">
+    <h3 class="font-bold text-lg mb-2">Agregar piezas a Inspección</h3>
+    <p class="text-xs opacity-70 mb-4">Escanea múltiples RFIDs de piezas en <strong>En bodega · Pendiente a Inspección</strong>. El sistema contará TIC/VIP/CUBE y estimará cuántas cajas completas (6 TIC + 1 VIP + 1 CUBE) se validarán.</p>
+    <label class="input input-bordered flex items-center gap-2 w-full mb-2">
       <span class="opacity-60 text-xs">RFID</span>
       <input id="insp-add-scan" type="text" class="grow font-mono" maxlength="24" autocomplete="off" placeholder="Listo para escanear..." />
     </label>
-    <div class="space-y-2 mb-3">
-      <div class="text-xs opacity-80">Items (Pendiente a Inspección)</div>
-      <div id="insp-add-items" class="flex flex-wrap gap-2"></div>
+    <p class="text-[11px] opacity-70 mb-3">Presiona Enter después de cada lectura o utiliza un lector que envíe Enter automáticamente.</p>
+    <div class="space-y-2 mb-4">
+      <div class="text-xs opacity-80">Conteo acumulado</div>
+      <div class="grid grid-cols-2 sm:grid-cols-4 gap-2">
+        <div class="border rounded-lg p-3 bg-base-300/10">
+          <div class="text-[10px] uppercase opacity-70 tracking-wide">TIC</div>
+          <div id="insp-add-count-tic" class="text-xl font-semibold">0</div>
+        </div>
+        <div class="border rounded-lg p-3 bg-base-300/10">
+          <div class="text-[10px] uppercase opacity-70 tracking-wide">VIP</div>
+          <div id="insp-add-count-vip" class="text-xl font-semibold">0</div>
+        </div>
+        <div class="border rounded-lg p-3 bg-base-300/10">
+          <div class="text-[10px] uppercase opacity-70 tracking-wide">CUBE</div>
+          <div id="insp-add-count-cube" class="text-xl font-semibold">0</div>
+        </div>
+        <div class="border rounded-lg p-3 bg-base-300/10">
+          <div class="text-[10px] uppercase opacity-70 tracking-wide">Cajas estimadas</div>
+          <div id="insp-add-count-boxes" class="text-xl font-semibold">0</div>
+          <div class="text-[10px] opacity-60">6 TIC + 1 VIP + 1 CUBE</div>
+        </div>
+      </div>
+    </div>
+    <div class="space-y-2 mb-4">
+      <div class="text-xs opacity-80 flex items-center justify-between">
+        <span>Piezas escaneadas</span>
+        <span class="text-[10px] opacity-60">Haz clic en ✕ para quitar</span>
+      </div>
+      <div id="insp-add-items" class="border border-dashed border-base-300 rounded-lg p-3 bg-base-300/5 min-h-[72px] max-h-48 overflow-y-auto text-xs"></div>
     </div>
     <div class="grid grid-cols-2 gap-3 mb-3">
       <label class="form-control">
@@ -135,7 +161,7 @@
       <p id="insp-add-location-hint" class="text-[11px] opacity-70 min-h-[16px]"></p>
     </div>
     <div class="flex items-center justify-between gap-4 mt-2">
-      <button type="button" id="insp-add-clear" class="btn btn-ghost btn-xs">Limpiar</button>
+      <button type="button" id="insp-add-clear" class="btn btn-ghost btn-xs">Limpiar lista</button>
       <div class="flex items-center gap-3">
         <span id="insp-add-msg" class="text-xs opacity-70"></span>
         <button id="insp-add-confirm" class="btn btn-primary btn-sm" disabled>Agregar</button>
