@@ -1,4 +1,4 @@
-// Inspección: listar cajas en estado Inspección con mismo diseño de tarjetas
+// Inspección: listar piezas en estado Inspección con diseño de tarjetas
 (function(){
   'use strict';
   const qs = (s)=> document.querySelector(s);
@@ -72,48 +72,66 @@
   function msElapsed(timer){ if(!timer||!timer.startsAt) return 0; return (Date.now()+state.serverOffset) - new Date(timer.startsAt).getTime(); }
   function timerDisplay(ms){ const s=Math.max(0,Math.floor(ms/1000)); const h=Math.floor(s/3600); const m=Math.floor((s%3600)/60); const sec=s%60; return `${h}:${String(m).padStart(2,'0')}:${String(sec).padStart(2,'0')}`; }
   function msRemaining(timer){ if(!timer||!timer.startsAt||!timer.durationSec) return null; const end = new Date(timer.startsAt).getTime() + timer.durationSec*1000; return end - (Date.now()+state.serverOffset); }
+  function escapeHtml(value){
+    return (value || '')
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
+  }
 
 
-  function cardHTML(caja){
-    const comps = caja.componentes||[];
-    const compRows = comps.length
-      ? comps.map((item, idx)=>{
-          const role = (item.tipo||'').toUpperCase();
-          const roleLabel = role || 'PIEZA';
-          const badgeClass = role==='VIP' ? 'badge-info' : role==='TIC' ? 'badge-warning' : role==='CUBE' ? 'badge-accent' : 'badge-ghost';
-          const code = escapeHtml(item.codigo || `RFID ${idx+1}`);
-          const litraje = item.litraje ? `<span class='text-[9px] opacity-70'>${escapeHtml(item.litraje)}</span>` : '';
-          return `<div class='flex items-center gap-2 text-[10px] font-mono border border-base-300/40 rounded px-2 py-1 bg-base-100/10'>
-            <span class='badge ${badgeClass} badge-xs'>${roleLabel}</span>
-            <span class='truncate flex-1' title='${code}'>${code}</span>
-            ${litraje}
-          </div>`;
-        }).join('')
-      : "<div class='text-[10px] opacity-60'>Sin piezas registradas</div>";
-    // Only show countdown timers (with duration). Hide forward/elapsed timers to avoid UI conflicts.
-    const hasCountdown = !!(caja.timer && caja.timer.durationSec);
+  function flattenInspectionPieces(){
+    const piezas = [];
+    (state.cajas||[]).forEach((caja)=>{
+      const comps = Array.isArray(caja.componentes) ? caja.componentes : [];
+      comps.forEach((comp)=>{
+        if(!comp || !comp.codigo) return;
+        piezas.push({
+          ...comp,
+          cajaId: caja.id,
+          cajaNombre: caja.nombreCaja,
+          codigoCaja: caja.codigoCaja,
+          timer: caja.timer
+        });
+      });
+    });
+    return piezas;
+  }
+
+  function pieceCardHTML(piece){
+    const role = (piece.tipo||'').toUpperCase() || 'PIEZA';
+    const badgeClass = role==='VIP' ? 'badge-info' : role==='TIC' ? 'badge-warning' : role==='CUBE' ? 'badge-accent' : 'badge-ghost';
+    const cajaLabel = escapeHtml(piece.cajaNombre || piece.codigoCaja || 'Conjunto sin nombre');
+    const rawCode = String(piece.codigo || '');
+    const safeRfid = escapeHtml(rawCode || '—');
+    const meta = piece.litraje || piece.nombreUnidad ? `<div class='text-[10px] opacity-70'>${escapeHtml(piece.litraje || piece.nombreUnidad || '')}</div>` : '';
+    const cajaKey = typeof piece.cajaId === 'number' && Number.isFinite(piece.cajaId) ? String(piece.cajaId) : '';
+    const hasCountdown = !!(piece.timer && piece.timer.durationSec);
+    const timerAttr = cajaKey ? ` data-insp-timer-caja='${cajaKey}'` : '';
+    const timerId = escapeHtml(`insp-timer-${rawCode}`);
     const timerHtml = hasCountdown
-      ? `<span class='badge badge-neutral badge-xs font-mono' data-insp-timer='${caja.id}' id='insp-timer-${caja.id}'>↓ ${timerDisplay(Math.max(0, msRemaining(caja.timer)||0))}</span>`
+      ? `<span class='badge badge-neutral badge-xs font-mono'${timerAttr} id='${timerId}'>↓ ${timerDisplay(Math.max(0, msRemaining(piece.timer)||0))}</span>`
       : `<span class='badge badge-outline badge-xs opacity-70'>Sin cronómetro</span>`;
-    const code = caja.codigoCaja || '';
-    const displayName = caja.nombreCaja || code || '';
-    const titleText = displayName && code && displayName !== code ? `${displayName} · ${code}` : displayName || code;
-    return `<div class='caja-card rounded-lg border border-base-300/40 bg-base-200/10 p-3 flex flex-col gap-2' title='${titleText}'>
-      <div class='text-[10px] uppercase opacity-60 tracking-wide'>Conjunto</div>
-      <div class='font-semibold text-xs leading-tight break-all pr-2'>${displayName}</div>
-      <div class='space-y-1 flex-1'>${compRows}</div>
-      <div class='flex items-center justify-between text-[10px] opacity-70'>
-        <span class='badge badge-outline badge-xs'>Inspección</span>
+    return `<div class='caja-card rounded-lg border border-base-300/40 bg-base-200/10 p-3 flex flex-col gap-2'>
+      <div class='flex items-center justify-between text-[10px] uppercase opacity-60 tracking-wide'>
+        <span class='truncate pr-2' title='${cajaLabel}'>${cajaLabel}</span>
         ${timerHtml}
       </div>
+      <div class='flex items-center gap-2 font-mono text-xs'>
+        <span class='badge ${badgeClass} badge-xs'>${role}</span>
+        <span class='truncate flex-1' title='${safeRfid}'>${safeRfid}</span>
+      </div>
+      ${meta}
     </div>`;
   }
 
   function render(){
     if(!grid) return;
-    const cajas = state.cajas||[];
-    if(!cajas.length){ grid.innerHTML = `<div class='col-span-full py-10 text-center text-xs opacity-60'>Sin piezas en Inspección</div>`; return; }
-    grid.innerHTML = cajas.map(cardHTML).join('');
+    const piezas = flattenInspectionPieces();
+    if(!piezas.length){ grid.innerHTML = `<div class='col-span-full py-10 text-center text-xs opacity-60'>Sin piezas en Inspección</div>`; return; }
+    grid.innerHTML = piezas.map(pieceCardHTML).join('');
   }
 
   async function load(){
@@ -156,13 +174,14 @@
   setInterval(load, 15000);
   // tick timers
   setInterval(()=>{
-    // Update only countdown timers; ignore forward/elapsed timers entirely
     (state.cajas||[]).forEach(c=>{
       if(!c.timer || !c.timer.durationSec) return;
-      const el = document.getElementById('insp-timer-'+c.id);
-      if(!el) return;
+      const cajaKey = typeof c.id === 'number' && Number.isFinite(c.id) ? String(c.id) : '';
+      if(!cajaKey) return;
       const rem = Math.max(0, msRemaining(c.timer)||0);
-      el.textContent = '↓ ' + timerDisplay(rem);
+      document.querySelectorAll(`[data-insp-timer-caja='${cajaKey}']`).forEach((el)=>{
+        el.textContent = '↓ ' + timerDisplay(rem);
+      });
     });
   }, 1000);
   // ---- Scan/Lookup caja ----
@@ -268,15 +287,6 @@
   function normalizeCode(code){
     if(code == null) return '';
     return code.toString().replace(/\s+/g, '').toUpperCase();
-  }
-
-  function escapeHtml(value){
-    return (value || '')
-      .replace(/&/g, '&amp;')
-      .replace(/</g, '&lt;')
-      .replace(/>/g, '&gt;')
-      .replace(/"/g, '&quot;')
-      .replace(/'/g, '&#39;');
   }
 
   function findBulkEntry(code){

@@ -1888,7 +1888,7 @@ export const OperacionController = {
     const durationParam = hasTimer ? (dur as number) : null;
     try {
       const lookupQ = await withTenant(tenant, (c)=> c.query(
-        `SELECT aci.caja_id, c.lote, ic.rfid, ic.sede_id,
+        `SELECT aci.caja_id, c.lote, ic.rfid, ic.sede_id, ic.estado, ic.sub_estado,
                 CASE
                   WHEN m.nombre_modelo ILIKE '%tic%' THEN 'tic'
                   WHEN m.nombre_modelo ILIKE '%vip%' THEN 'vip'
@@ -1911,18 +1911,26 @@ export const OperacionController = {
         return res.status(404).json({ ok:false, error:`${missing[0]} no pertenece a ninguna caja` });
       }
       const cajaMeta = new Map<number, { lote: string }>();
+      const pendingState = normalizeBasic('En bodega');
+      const pendingSub = new Set([normalizeBasic('Pendiente a Inspección'), normalizeBasic('Pendiente a Inspeccion')]);
       for (const row of foundMap.values()) {
         if (row.rol === 'otro') {
           return res.status(400).json({ ok:false, error:`${row.rfid} no es un modelo válido para Inspección` });
+        }
+        const estadoNorm = normalizeBasic(row.estado);
+        const subEstadoNorm = normalizeBasic(row.sub_estado);
+        if (estadoNorm !== pendingState || !pendingSub.has(subEstadoNorm)) {
+          return res.status(400).json({ ok:false, error:`${row.rfid} no está Pendiente a Inspección` });
         }
         if (!cajaMeta.has(row.caja_id)) {
           cajaMeta.set(row.caja_id, { lote: row.lote });
         }
       }
-      const cajaIds = Array.from(cajaMeta.keys());
-      if (!cajaIds.length) {
-        return res.status(400).json({ ok:false, error:'No se identificaron cajas válidas' });
-      }
+      const cajaIds = Array.from(new Set(
+        Array.from(foundMap.values())
+          .map((row) => (typeof row.caja_id === 'number' ? row.caja_id : null))
+          .filter((id): id is number => typeof id === 'number' && Number.isFinite(id) && id > 0)
+      ));
 
       const counts = { tic: 0, vip: 0, cube: 0 };
       for (const row of foundMap.values()) {
@@ -1932,42 +1940,7 @@ export const OperacionController = {
       }
       const cajasEstimadas = Math.min(Math.floor(counts.tic / 6), counts.vip, counts.cube);
 
-      const pendQ = await withTenant(tenant, (c)=> c.query(
-        `SELECT aci.caja_id,
-                COUNT(*) FILTER (
-                  WHERE LOWER(ic.estado) = LOWER('En bodega')
-                    AND ic.sub_estado IN ('Pendiente a Inspección','Pendiente a Inspeccion')
-                )::int AS pending_items,
-                COUNT(*)::int AS total_items
-           FROM acond_caja_items aci
-           JOIN inventario_credocubes ic ON ic.rfid = aci.rfid
-          WHERE aci.caja_id = ANY($1::int[])
-          GROUP BY aci.caja_id`,
-        [cajaIds]
-      ));
-      const pendMap = new Map<number, { pending: number; total: number }>();
-      for (const row of pendQ.rows as any[]) {
-        pendMap.set(row.caja_id, { pending: row.pending_items, total: row.total_items });
-      }
-      for (const cajaId of cajaIds) {
-        const stats = pendMap.get(cajaId);
-        const label = cajaMeta.get(cajaId)?.lote || `#${cajaId}`;
-        if (!stats || stats.pending <= 0) {
-          return res.status(400).json({ ok:false, error:`La caja ${label} no está Pendiente a Inspección` });
-        }
-        if (stats.pending !== stats.total) {
-          return res.status(400).json({ ok:false, error:`La caja ${label} tiene piezas fuera de Pendiente a Inspección` });
-        }
-      }
-
-      const sedeRows = await withTenant(tenant, (c)=> c.query(
-        `SELECT aci.caja_id, ic.rfid, ic.sede_id
-           FROM acond_caja_items aci
-           JOIN inventario_credocubes ic ON ic.rfid = aci.rfid
-          WHERE aci.caja_id = ANY($1::int[])`,
-        [cajaIds]
-      ));
-      const transferRows = (sedeRows.rows as any[]).map((row) => ({ rfid: row.rfid, sede_id: row.sede_id }));
+      const transferRows = Array.from(foundMap.values()).map((row) => ({ rfid: row.rfid, sede_id: row.sede_id }));
       const transferCheck = await ensureCrossSedeAuthorization(
         req,
         res,
@@ -2007,29 +1980,29 @@ export const OperacionController = {
         const targetSede = transferCheck.targetSede;
         const zonaParam = locationResult?.apply ? locationResult.zonaId : null;
         const seccionParam = locationResult?.apply ? locationResult.seccionId : null;
-        for (const cajaId of cajaIds) {
-          await c.query('BEGIN');
-          try {
-            await c.query(
-              `UPDATE inventario_credocubes ic
-                  SET estado='Inspección',
-                      sub_estado=NULL,
-                      zona_id = $3,
-                      seccion_id = $4,
-                      sede_id = COALESCE($2::int, ic.sede_id)
-                WHERE ic.rfid IN (SELECT rfid FROM acond_caja_items WHERE caja_id=$1)`,
-              [cajaId, targetSede, zonaParam, seccionParam]
-            );
-            await c.query(
-              `UPDATE inventario_credocubes ic
-                  SET validacion_limpieza = NULL,
-                      validacion_goteo = NULL,
-                      validacion_desinfeccion = NULL
-                 FROM modelos m
-                WHERE ic.rfid IN (SELECT rfid FROM acond_caja_items WHERE caja_id=$1)
-                  AND ic.modelo_id = m.modelo_id
-                  AND m.nombre_modelo ILIKE '%tic%'`, [cajaId]
-            );
+        await c.query('BEGIN');
+        try {
+          await c.query(
+            `UPDATE inventario_credocubes ic
+                SET estado='Inspección',
+                    sub_estado=NULL,
+                    zona_id = $2,
+                    seccion_id = $3,
+                    sede_id = COALESCE($4::int, ic.sede_id)
+              WHERE ic.rfid = ANY($1::text[])`,
+            [codes, zonaParam, seccionParam, targetSede]
+          );
+          await c.query(
+            `UPDATE inventario_credocubes ic
+                SET validacion_limpieza = NULL,
+                    validacion_goteo = NULL,
+                    validacion_desinfeccion = NULL
+               FROM modelos m
+              WHERE ic.rfid = ANY($1::text[])
+                AND ic.modelo_id = m.modelo_id
+                AND m.nombre_modelo ILIKE '%tic%'`, [codes]
+          );
+          for (const cajaId of cajaIds) {
             await c.query(`DELETE FROM pend_insp_caja_timers WHERE caja_id=$1`, [cajaId]);
             await c.query(
               `INSERT INTO inspeccion_caja_timers(caja_id, started_at, duration_sec, active, updated_at)
@@ -2038,9 +2011,9 @@ export const OperacionController = {
                  SET started_at = ${hasTimer ? 'NOW()' : 'NULL'}, duration_sec = EXCLUDED.duration_sec, active = $3, updated_at = NOW()`,
               [cajaId, durationParam, hasTimer]
             );
-            await c.query('COMMIT');
-          } catch(e){ await c.query('ROLLBACK'); throw e; }
-        }
+          }
+          await c.query('COMMIT');
+        } catch(e){ await c.query('ROLLBACK'); throw e; }
       }, { allowCrossSedeTransfer: transferCheck.allowCrossTransfer });
 
       const lotes = cajaIds.map((id)=> cajaMeta.get(id)?.lote).filter((value): value is string => !!value);
