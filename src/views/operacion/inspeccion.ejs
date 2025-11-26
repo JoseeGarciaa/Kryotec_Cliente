@@ -42,17 +42,20 @@
           <input id="insp-bulk-input" type="text" class="input input-sm input-bordered font-mono" placeholder="Listo para escanear en cola" autocomplete="off" />
         </div>
         <div class="flex items-center gap-2 flex-wrap">
-          <button id="insp-bulk-next" class="btn btn-sm btn-accent">Identificar siguiente</button>
           <button id="insp-bulk-clear" class="btn btn-sm">Limpiar cola</button>
         </div>
         <div id="insp-bulk-msg" class="text-xs min-h-[18px] font-mono opacity-80"></div>
+        <div id="insp-bulk-active-container" class="hidden space-y-2">
+          <div class="text-xs opacity-80">Piezas en revisión:</div>
+          <div id="insp-bulk-active-list" class="flex flex-wrap gap-2"></div>
+        </div>
       </div>
 
   <div id="insp-caja-panel" class="hidden space-y-3">
         <div class="text-xs opacity-60 uppercase tracking-wide">Pieza detectada</div>
         <div class="border rounded-lg p-3 bg-base-300/10 space-y-2">
           <div class="flex items-center justify-between text-[11px] font-mono opacity-70"><span>Pieza</span><span id="insp-caja-lote">—</span></div>
-          <div class="text-[11px] font-mono opacity-70"><span>Conteo TICs:</span> <span id="insp-caja-tic-count">0</span>/6</div>
+          <div class="text-[11px] font-mono opacity-70"><span>Conteo TICs:</span> <span id="insp-caja-tic-count">0</span></div>
         </div>
         <!-- Componentes identificados (TIC/VIP/CUBE) mostrados al escanear cualquier RFID -->
         <div class="space-y-2">

@@ -1734,7 +1734,14 @@ export const OperacionController = {
 
       const fetchTics = async () => {
         const q = await withTenant(tenant, (c)=> c.query(
-          `SELECT ic.rfid, ic.estado, ic.sub_estado, ic.validacion_limpieza, ic.validacion_goteo, ic.validacion_desinfeccion
+          `SELECT ic.rfid,
+                  ic.estado,
+                  ic.sub_estado,
+                  ic.validacion_limpieza,
+                  ic.validacion_goteo,
+                  ic.validacion_desinfeccion,
+                  ic.nombre_unidad,
+                  m.nombre_modelo
              FROM acond_caja_items aci
              JOIN inventario_credocubes ic ON ic.rfid = aci.rfid
              JOIN modelos m ON m.modelo_id = ic.modelo_id
@@ -1750,7 +1757,9 @@ export const OperacionController = {
           `SELECT ic.rfid,
                   CASE WHEN m.nombre_modelo ILIKE '%vip%' THEN 'vip'
                        WHEN (m.nombre_modelo ILIKE '%cube%' OR m.nombre_modelo ILIKE '%cubo%') THEN 'cube'
-                       ELSE 'otro' END AS rol
+                       ELSE 'otro' END AS rol,
+                  ic.nombre_unidad,
+                  m.nombre_modelo
              FROM acond_caja_items aci
              JOIN inventario_credocubes ic ON ic.rfid = aci.rfid
              JOIN modelos m ON m.modelo_id = ic.modelo_id
@@ -2242,6 +2251,94 @@ export const OperacionController = {
       // Inalcanzable normalmente: si se llega aquí, algo falló en el transaction handler
       return;
     } catch(e:any){ res.status(500).json({ ok:false, error: e.message||'Error completando inspección' }); }
+  },
+  inspeccionMassComplete: async (req: Request, res: Response) => {
+    const tenant = (req as any).user?.tenant;
+    const sedeId = getRequestSedeId(req);
+    const rawList = Array.isArray((req.body as any)?.rfids)
+      ? (req.body as any).rfids
+      : Array.isArray((req.body as any)?.confirm_rfids)
+        ? (req.body as any).confirm_rfids
+        : [];
+    const rfids = (rawList as any[])
+      .map((value) => (typeof value === 'string' ? value.trim().toUpperCase() : ''))
+      .filter((code) => code.length === 24)
+      .slice(0, 500);
+    if(!rfids.length) return res.status(400).json({ ok:false, error:'Sin RFIDs válidos' });
+    const uniqueRfids = Array.from(new Set(rfids));
+    const allowSedeTransferFlag = allowSedeTransferFromValue((req.body as any)?.allowSedeTransfer);
+    try {
+      const lookup = await withTenant(tenant, (c)=> c.query(
+        `SELECT ic.rfid, ic.sede_id, aci.caja_id
+           FROM inventario_credocubes ic
+      LEFT JOIN acond_caja_items aci ON aci.rfid = ic.rfid
+          WHERE ic.rfid = ANY($1::text[])`,
+        [uniqueRfids]
+      ));
+      if(!lookup.rowCount){
+        return res.status(404).json({ ok:false, error:'RFIDs no encontrados' });
+      }
+      const rows = lookup.rows as any[];
+      const foundSet = new Set(rows.map((row)=> row.rfid));
+      const missing = uniqueRfids.filter((code)=> !foundSet.has(code));
+      const targetRfids = Array.from(foundSet);
+      if(!targetRfids.length){
+        return res.status(404).json({ ok:false, error:'RFIDs no encontrados', missing });
+      }
+      const transferCheck = await ensureCrossSedeAuthorization(
+        req,
+        res,
+        rows.map((row)=> ({ rfid: row.rfid, sede_id: row.sede_id })),
+        sedeId,
+        allowSedeTransferFlag,
+        { fallbackRfids: targetRfids }
+      );
+      if (transferCheck.blocked) return;
+
+      const cajaIds = Array.from(new Set(
+        rows
+          .map((row)=> Number(row.caja_id))
+          .filter((id)=> Number.isInteger(id) && id > 0)
+      ));
+
+      await runWithSede(tenant, sedeId, async (c)=>{
+        const targetSede = transferCheck.targetSede;
+        await c.query('BEGIN');
+        try {
+          const updated = await c.query(
+            `UPDATE inventario_credocubes ic
+                SET estado='En bodega',
+                    sub_estado=NULL,
+                    lote=NULL,
+                    sede_id = COALESCE($2::int, ic.sede_id)
+              WHERE ic.rfid = ANY($1::text[])
+            RETURNING ic.rfid`,
+            [targetRfids, targetSede]
+          );
+          await c.query(`DELETE FROM acond_caja_items WHERE rfid = ANY($1::text[])`, [targetRfids]);
+          if(cajaIds.length){
+            await c.query(
+              `DELETE FROM acond_cajas c
+                WHERE c.caja_id = ANY($1::int[])
+                  AND NOT EXISTS (
+                    SELECT 1 FROM acond_caja_items ac WHERE ac.caja_id = c.caja_id
+                  )`,
+              [cajaIds]
+            );
+          }
+          await c.query('COMMIT');
+          return res.json({
+            ok:true,
+            devueltos: updated.rowCount || 0,
+            rfids: (updated.rows || []).map((row:any)=> row.rfid),
+            missing
+          });
+        } catch(err){
+          await c.query('ROLLBACK');
+          throw err;
+        }
+      }, { allowCrossSedeTransfer: transferCheck.allowCrossTransfer });
+    } catch(e:any){ res.status(500).json({ ok:false, error: e.message||'Error devolviendo piezas' }); }
   },
   // INSPECCIÓN: registrar novedad e inhabilitar pieza
   inspeccionNovedadInhabilitar: async (req: Request, res: Response) => {

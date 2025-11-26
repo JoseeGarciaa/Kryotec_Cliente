@@ -75,6 +75,7 @@ router.post('/inspeccion/pending/item-info', requireAuth, OperacionController.in
 router.post('/inspeccion/pending/preview', requireAuth, OperacionController.inspeccionPendingPreview as any);
 router.post('/inspeccion/check', requireAuth, OperacionController.inspeccionTicChecklist as any);
 router.post('/inspeccion/complete', requireAuth, OperacionController.inspeccionCajaComplete as any);
+router.post('/inspeccion/mass-complete', requireAuth, OperacionController.inspeccionMassComplete as any);
 router.post('/inspeccion/novedad/inhabilitar', requireAuth, OperacionController.inspeccionNovedadInhabilitar as any);
 // En bodega
 router.get('/bodega', requireAuth, OperacionController.bodega);

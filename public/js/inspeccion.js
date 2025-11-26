@@ -14,8 +14,68 @@
     inInspeccion: false,
     bulkMode: false,
     bulkQueue: [],
-    lastLookupCode: null
+    lastLookupCode: null,
+    massEntries: [],
+    massActiveKey: null
   };
+
+  const MASS_TYPE_ORDER = { tic: 0, cube: 1, vip: 2 };
+
+  function resolveNombreUnidad(item){
+    if(!item) return '';
+    const candidates = [
+      item.nombreUnidad,
+      item.nombre_unidad,
+      item.nombre_modelo,
+      item.nombreModelo,
+      item.litraje
+    ];
+    for(const candidate of candidates){
+      if(typeof candidate === 'string'){
+        const trimmed = candidate.trim();
+        if(trimmed) return trimmed;
+      }
+    }
+    return '';
+  }
+
+  function detectEntryType(entry){
+    if(!entry) return 'otro';
+    if(Array.isArray(entry.tics) && entry.tics.some((t)=> t && t.rfid)) return 'tic';
+    const comps = Array.isArray(entry.comps) ? entry.comps : [];
+    const roles = comps.map((comp)=>{
+      const raw = (comp?.tipo || comp?.rol || inferTipo(comp?.nombre_modelo || '') || '').toString().toLowerCase();
+      if(raw.includes('tic')) return 'tic';
+      if(raw.includes('cube') || raw.includes('cubo')) return 'cube';
+      if(raw.includes('vip')) return 'vip';
+      return raw || 'otro';
+    });
+    if(roles.includes('tic')) return 'tic';
+    if(roles.includes('cube')) return 'cube';
+    if(roles.includes('vip')) return 'vip';
+    return roles[0] || 'otro';
+  }
+
+  function getPrimaryType(entry){
+    if(!entry) return 'otro';
+    if(entry.primaryTipo){
+      return entry.primaryTipo;
+    }
+    const detected = detectEntryType(entry);
+    entry.primaryTipo = detected;
+    return detected;
+  }
+
+  function sortMassEntries(list){
+    return [...list].sort((a, b)=>{
+      const typeA = MASS_TYPE_ORDER[getPrimaryType(a)] ?? 99;
+      const typeB = MASS_TYPE_ORDER[getPrimaryType(b)] ?? 99;
+      if(typeA !== typeB) return typeA - typeB;
+      const nameA = (a.displayName || a.key || '').toString();
+      const nameB = (b.displayName || b.key || '').toString();
+      return nameA.localeCompare(nameB, 'es');
+    });
+  }
 
   function buildDefaultSedePrompt(payload){
     if(payload && typeof payload.confirm === 'string' && payload.confirm.trim()) return payload.confirm;
@@ -31,10 +91,12 @@
     const helper = async function postJSONWithSedeTransfer(url, body, options){
       const opts = options || {};
       const headers = Object.assign({ 'Content-Type':'application/json' }, opts.headers || {});
-      const confirmFn = typeof opts.confirmFn === 'function' ? opts.confirmFn : (message) => (typeof window !== 'undefined' && typeof window.confirm === 'function' ? window.confirm(message) : true);
+      const confirmFn = typeof opts.confirmFn === 'function'
+        ? opts.confirmFn
+        : (message)=> (typeof window !== 'undefined' && typeof window.confirm === 'function' ? window.confirm(message) : true);
       const promptBuilder = typeof opts.promptMessage === 'function' ? opts.promptMessage : buildDefaultSedePrompt;
 
-      const send = async (allowTransfer) => {
+      const send = async (allowTransfer)=>{
         const payload = allowTransfer ? Object.assign({}, body, { allowSedeTransfer: true }) : Object.assign({}, body);
         try {
           const res = await fetch(url, { method:'POST', headers, body: JSON.stringify(payload) });
@@ -69,9 +131,25 @@
     return helper;
   })();
 
-  function msElapsed(timer){ if(!timer||!timer.startsAt) return 0; return (Date.now()+state.serverOffset) - new Date(timer.startsAt).getTime(); }
-  function timerDisplay(ms){ const s=Math.max(0,Math.floor(ms/1000)); const h=Math.floor(s/3600); const m=Math.floor((s%3600)/60); const sec=s%60; return `${h}:${String(m).padStart(2,'0')}:${String(sec).padStart(2,'0')}`; }
-  function msRemaining(timer){ if(!timer||!timer.startsAt||!timer.durationSec) return null; const end = new Date(timer.startsAt).getTime() + timer.durationSec*1000; return end - (Date.now()+state.serverOffset); }
+  function msElapsed(timer){
+    if(!timer || !timer.startsAt) return 0;
+    return (Date.now() + state.serverOffset) - new Date(timer.startsAt).getTime();
+  }
+
+  function timerDisplay(ms){
+    const s = Math.max(0, Math.floor(ms / 1000));
+    const h = Math.floor(s / 3600);
+    const m = Math.floor((s % 3600) / 60);
+    const sec = s % 60;
+    return `${h}:${String(m).padStart(2,'0')}:${String(sec).padStart(2,'0')}`;
+  }
+
+  function msRemaining(timer){
+    if(!timer || !timer.startsAt || !timer.durationSec) return 0;
+    const end = new Date(timer.startsAt).getTime() + timer.durationSec * 1000;
+    return end - (Date.now() + state.serverOffset);
+  }
+
   function escapeHtml(value){
     return (value || '')
       .replace(/&/g, '&amp;')
@@ -80,7 +158,6 @@
       .replace(/"/g, '&quot;')
       .replace(/'/g, '&#39;');
   }
-
 
   function flattenInspectionPieces(){
     const piezas = [];
@@ -130,7 +207,10 @@
   function render(){
     if(!grid) return;
     const piezas = flattenInspectionPieces();
-    if(!piezas.length){ grid.innerHTML = `<div class='col-span-full py-10 text-center text-xs opacity-60'>Sin piezas en Inspección</div>`; return; }
+    if(!piezas.length){
+      grid.innerHTML = `<div class='col-span-full py-10 text-center text-xs opacity-60'>Sin piezas en Inspección</div>`;
+      return;
+    }
     grid.innerHTML = piezas.map(pieceCardHTML).join('');
   }
 
@@ -160,21 +240,27 @@
         throw new Error(`Unexpected response content-type: ${contentType||'unknown'}`);
       }
       state.cajas = j.ok ? (j.cajas||[]) : [];
-      if(j.ok && j.serverNow){ state.serverOffset = new Date(j.serverNow).getTime() - Date.now(); }
+      if(j.ok && j.serverNow){
+        state.serverOffset = new Date(j.serverNow).getTime() - Date.now();
+      }
       render();
     } catch(e){
       console.error('[Inspección] load error', e);
       state.cajas = [];
-      if(grid){ grid.innerHTML = `<div class='col-span-full py-10 text-center text-xs text-error'>Error al cargar datos de Inspección. Reintenta en unos segundos.</div>`; }
+      if(grid){
+        grid.innerHTML = `<div class='col-span-full py-10 text-center text-xs text-error'>Error al cargar datos de Inspección. Reintenta en unos segundos.</div>`;
+      }
     }
-    finally { spin?.classList.add('hidden'); }
+    finally {
+      spin?.classList.add('hidden');
+    }
   }
 
   load();
   setInterval(load, 15000);
   // tick timers
   setInterval(()=>{
-    (state.cajas||[]).forEach(c=>{
+    (state.cajas||[]).forEach((c)=>{
       if(!c.timer || !c.timer.durationSec) return;
       const cajaKey = typeof c.id === 'number' && Number.isFinite(c.id) ? String(c.id) : '';
       if(!cajaKey) return;
@@ -190,10 +276,11 @@
   const singleSection = qs('#insp-single-section');
   const bulkSection = qs('#insp-bulk-section');
   const bulkInput = qs('#insp-bulk-input');
-  const bulkNextBtn = qs('#insp-bulk-next');
   const bulkClearBtn = qs('#insp-bulk-clear');
   const bulkMsg = qs('#insp-bulk-msg');
   const bulkList = qs('#insp-bulk-list');
+  const bulkActiveContainer = qs('#insp-bulk-active-container');
+  const bulkActiveList = qs('#insp-bulk-active-list');
 
   const scanInput = qs('#insp-scan');
   const scanBtn = qs('#insp-scan-btn');
@@ -347,15 +434,291 @@
     return { added, total: codes.length };
   }
 
-  function clearBulkQueue(){ state.bulkQueue = []; renderBulkQueue(); setBulkMessage(''); }
+  function clearBulkQueue(){ state.bulkQueue = []; renderBulkQueue(); setBulkMessage(''); clearMassEntries(); }
 
-  function clearBulkActiveExcept(code){
-    const target = normalizeCode(code);
-    state.bulkQueue.forEach(entry=>{
-      if(entry.code !== target && entry.status === 'active'){
-        entry.status = entry.status === 'done' ? 'done' : 'queued';
-      }
+  function clearMassEntries(){
+    state.massEntries = [];
+    state.massActiveKey = null;
+    state.tics = [];
+    state.ticChecks = new Map();
+    state.cajaSel = null;
+    if(bulkActiveList) bulkActiveList.innerHTML = '';
+    bulkActiveContainer?.classList.add('hidden');
+  }
+
+  function renderMassChecklist(){
+    if(!list) return;
+    const entries = state.massEntries || [];
+    if(!entries.length){
+      list.innerHTML = "<div class='text-xs opacity-60'>Sin piezas activas.</div>";
+      if(compList) compList.innerHTML = "<div class='text-xs opacity-60'>No hay piezas VIP/CUBE activas.</div>";
+      return;
+    }
+
+    const activeKey = state.massActiveKey;
+    const orderedEntries = sortMassEntries(entries);
+
+    list.innerHTML = orderedEntries.map((entry)=>{
+      const isActive = entry.key === activeKey;
+      const entryChecks = ensureEntryChecks(entry);
+      const tics = Array.isArray(entry.tics) ? entry.tics : [];
+      const rawComps = Array.isArray(entry.comps) ? entry.comps : [];
+      const comps = rawComps.map((comp)=>{
+        const code = comp?.rfid || comp?.codigo;
+        if(!code) return null;
+        const rawRole = (comp?.rol || inferTipo(comp?.nombre_modelo || '') || '').toLowerCase();
+        let tipo = 'otro';
+        if(rawRole.includes('vip')) tipo = 'vip';
+        else if(rawRole.includes('cube') || rawRole.includes('cubo')) tipo = 'cube';
+        else if(rawRole.includes('tic')) tipo = 'tic';
+        return Object.assign({}, comp, { codigo: code, tipo, nombreUnidad: resolveNombreUnidad(comp) });
+      }).filter(Boolean);
+
+      const combinedMap = new Map();
+      tics.forEach((t)=>{
+        const code = t?.rfid;
+        if(!code) return;
+        combinedMap.set(code, {
+          tipo: 'tic',
+          codigo: code,
+          nombreUnidad: resolveNombreUnidad(t)
+        });
+      });
+      comps.forEach((comp)=>{
+        const code = comp.codigo;
+        if(!code) return;
+        const tipo = (comp.tipo || 'otro').toLowerCase();
+        const existing = combinedMap.get(code);
+        const nombreUnidad = comp.nombreUnidad || resolveNombreUnidad(comp);
+        if(existing){
+          if(existing.tipo !== 'tic') existing.tipo = tipo;
+          if(!existing.nombreUnidad && nombreUnidad) existing.nombreUnidad = nombreUnidad;
+        } else {
+          combinedMap.set(code, {
+            tipo,
+            codigo: code,
+            nombreUnidad
+          });
+        }
+      });
+
+      const combined = Array.from(combinedMap.values()).sort((a,b)=>{
+        const oa = MASS_TYPE_ORDER[a.tipo] ?? 99;
+        const ob = MASS_TYPE_ORDER[b.tipo] ?? 99;
+        if(oa !== ob) return oa - ob;
+        return a.codigo.localeCompare(b.codigo);
+      });
+
+      const header = escapeHtml(entry.displayName || entry.title || entry.key);
+      const rows = combined.length ? combined.map((item)=>{
+        const code = item.codigo;
+        const tipo = (item.tipo || 'otro').toLowerCase();
+        const label = (tipo || 'comp').toUpperCase();
+        const checks = entryChecks.get(code) || { limpieza:false, goteo:false, desinfeccion:false };
+        const isTicRow = tipo === 'tic';
+        const isActiveTic = isTicRow && isActive && state.activeTic === code;
+        let chipCls = 'badge-ghost';
+        if(tipo === 'vip') chipCls = 'badge-info';
+        else if(tipo === 'cube') chipCls = 'badge-accent';
+        else if(tipo === 'tic') chipCls = 'badge-warning';
+        const statusBadge = isActiveTic ? "<span class='badge badge-primary badge-xs'>ACTIVA</span>" : '';
+        const unitName = item.nombreUnidad ? `<div class='text-[11px] opacity-60 mt-1 font-normal'>${escapeHtml(item.nombreUnidad)}</div>` : '';
+        const rowCls = isActiveTic ? 'border-primary bg-primary/10 shadow' : 'bg-base-100 border-base-300/40';
+        const rowAttr = isTicRow ? `data-tic-row='${code}'` : `data-comp-row='${code}'`;
+        return `<div class='border rounded-md p-2 ${rowCls}' ${rowAttr} data-mass-section='${entry.key}'>
+          <div class='flex items-center justify-between text-[11px] font-mono opacity-70'>
+            <span class='inline-flex items-center gap-1'>
+              <span class='badge ${chipCls} badge-xs'>${label}</span>
+              ${statusBadge}
+            </span>
+            <span class='flex items-center gap-2'>
+              <button class='btn btn-xs btn-error' data-action='tic-inhabilitar' data-rfid='${code}' title='Inhabilitar y registrar novedad'>Inhabilitar</button>
+              <span>${code}</span>
+            </span>
+          </div>
+          ${unitName}
+          <div class='flex gap-3 mt-2 text-xs'>
+            <label class='flex items-center gap-1 cursor-pointer'>
+              <input type='checkbox' data-chk='limpieza' data-rfid='${code}' data-mass-key='${entry.key}' ${checks.limpieza?'checked':''}/> Limpieza
+            </label>
+            <label class='flex items-center gap-1 cursor-pointer'>
+              <input type='checkbox' data-chk='goteo' data-rfid='${code}' data-mass-key='${entry.key}' ${checks.goteo?'checked':''}/> Goteo
+            </label>
+            <label class='flex items-center gap-1 cursor-pointer'>
+              <input type='checkbox' data-chk='desinfeccion' data-rfid='${code}' data-mass-key='${entry.key}' ${checks.desinfeccion?'checked':''}/> Desinfección
+            </label>
+          </div>
+        </div>`;
+      }).join('') : "<div class='text-xs opacity-60'>La pieza no está en Inspección.</div>";
+
+      const borderCls = isActive ? 'border-primary bg-primary/10 shadow' : 'border-base-300/40 bg-base-200/10';
+      return `<section class='border rounded-lg p-3 space-y-2 ${borderCls}' data-mass-key-section='${entry.key}'>
+        <div class='flex items-center justify-between text-xs font-semibold uppercase opacity-80'>
+          <span>${header}</span>
+          <button type='button' class='btn btn-xs btn-ghost' data-action='mass-select' data-mass-key='${entry.key}'>Enfocar</button>
+        </div>
+        ${rows}
+      </section>`;
+    }).join('');
+
+    if(compList){
+      compList.innerHTML = "<div class='text-xs opacity-60'>Los VIP/CUBE se muestran junto a cada RFID escaneado.</div>";
+    }
+  }
+
+  function renderMassEntries(){
+    if(!bulkActiveList) return;
+    if(!state.massEntries.length){
+      bulkActiveList.innerHTML = '';
+      bulkActiveContainer?.classList.add('hidden');
+      return;
+    }
+    bulkActiveContainer?.classList.remove('hidden');
+    const orderedEntries = sortMassEntries(state.massEntries);
+    bulkActiveList.innerHTML = orderedEntries.map((entry)=>{
+      const active = entry.key === state.massActiveKey;
+      const btnCls = active ? 'btn btn-xs btn-primary' : 'btn btn-xs btn-ghost';
+      const label = escapeHtml(entry.displayName || entry.key);
+      return `<span class='inline-flex items-center gap-1'>
+        <button type='button' class='${btnCls}' data-action='mass-select' data-mass-key='${entry.key}'>${label}</button>
+        <button type='button' class='btn btn-xs btn-ghost text-error' data-action='mass-remove' data-mass-key='${entry.key}' title='Quitar'>✕</button>
+      </span>`;
+    }).join('');
+  }
+
+  function cloneChecksMap(source){
+    const map = new Map();
+    if(!source) return map;
+    const assign = (key, value)=>{
+      if(!key) return;
+      const target = value || {};
+      map.set(key, {
+        limpieza: !!target.limpieza,
+        goteo: !!target.goteo,
+        desinfeccion: !!target.desinfeccion
+      });
+    };
+    if(source instanceof Map){
+      source.forEach((value, key)=> assign(key, value));
+    } else if(typeof source === 'object'){
+      Object.keys(source).forEach((key)=> assign(key, source[key]));
+    }
+    return map;
+  }
+
+  function ensureEntryChecks(entry){
+    if(!entry) return new Map();
+    if(entry.checks instanceof Map) return entry.checks;
+    const cloned = cloneChecksMap(entry.checks);
+    entry.checks = cloned;
+    return cloned;
+  }
+
+  function setAllChecksForEntry(entry, checked){
+    if(!entry) return;
+    const entryChecks = ensureEntryChecks(entry);
+    const mark = (code)=>{
+      if(!code) return;
+      entryChecks.set(code, {
+        limpieza: !!checked,
+        goteo: !!checked,
+        desinfeccion: !!checked
+      });
+    };
+    const tics = Array.isArray(entry.tics) ? entry.tics : [];
+    tics.forEach((tic)=>{
+      const code = tic?.rfid || tic?.codigo;
+      if(code) mark(code);
     });
+    const comps = Array.isArray(entry.comps) ? entry.comps : [];
+    comps.forEach((comp)=>{
+      const code = comp?.rfid || comp?.codigo;
+      if(code) mark(code);
+    });
+    entry.checks = entryChecks;
+  }
+
+  function collectEntryCodes(entry){
+    const codes = new Set();
+    if(!entry) return [];
+    const allow = new Set(['tic','vip','cube']);
+    const push = (value)=>{
+      const normalized = normalizeCode(value||'');
+      if(normalized.length === 24){
+        codes.add(normalized);
+      }
+    };
+    const tics = Array.isArray(entry.tics) ? entry.tics : [];
+    tics.forEach((tic)=> push(tic?.rfid || tic?.codigo));
+    const comps = Array.isArray(entry.comps) ? entry.comps : [];
+    comps.forEach((comp)=>{
+      const tipo = (comp?.tipo || comp?.rol || '').toString().toLowerCase();
+      if(allow.has(tipo)) push(comp?.rfid || comp?.codigo);
+    });
+    return Array.from(codes);
+  }
+
+  function persistActiveMassChecks(){
+    if(!state.massActiveKey) return;
+    const entry = state.massEntries.find((item)=> item.key === state.massActiveKey);
+    if(!entry) return;
+    entry.checks = cloneChecksMap(state.ticChecks);
+  }
+
+  function upsertMassEntry(entry){
+    const idx = state.massEntries.findIndex((item)=> item.key === entry.key);
+    const existing = idx >= 0 ? state.massEntries[idx] : null;
+    const checks = existing?.checks ? cloneChecksMap(existing.checks) : cloneChecksMap(entry.checks);
+    const next = existing ? Object.assign({}, existing, entry) : Object.assign({}, entry);
+    next.checks = checks;
+    next.primaryTipo = getPrimaryType(next);
+    if(idx >= 0){ state.massEntries[idx] = next; }
+    else { state.massEntries.push(next); }
+    renderMassEntries();
+  }
+
+  function applyMassSelection(key){
+    persistActiveMassChecks();
+    const entry = state.massEntries.find((item)=> item.key === key);
+    if(!entry) return false;
+    state.massActiveKey = key;
+    const cajaBase = entry.caja || {};
+    state.cajaSel = {
+      id: cajaBase.id ?? null,
+      lote: cajaBase.lote || null,
+      nombreCaja: entry.displayName || cajaBase.nombreCaja || cajaBase.lote || entry.key,
+      componentes: []
+    };
+    state.tics = Array.isArray(entry.tics) ? [...entry.tics] : [];
+    const entryChecks = ensureEntryChecks(entry);
+    state.ticChecks = cloneChecksMap(entryChecks);
+    state.activeTic = null;
+    state.inInspeccion = true;
+    const compMap = new Map();
+    state.tics.forEach((t)=>{
+      if(!t?.rfid) return;
+      const code = t.rfid;
+      compMap.set(code, {
+        codigo: code,
+        tipo: 'tic',
+        nombreUnidad: resolveNombreUnidad(t)
+      });
+    });
+    const comps = Array.isArray(entry.comps) ? entry.comps : [];
+    comps.forEach((it)=>{
+      const code = it?.rfid || it?.codigo;
+      if(!code) return;
+      const role = ((it.rol || inferTipo(it.nombre_modelo || '')) || '').toLowerCase();
+      compMap.set(code, {
+        codigo: code,
+        tipo: role || 'otro',
+        nombreUnidad: resolveNombreUnidad(it)
+      });
+    });
+    state.cajaSel.componentes = Array.from(compMap.values());
+    renderChecklist();
+    renderMassEntries();
+    return true;
   }
 
   function setMode(mode){
@@ -367,6 +730,9 @@
     modeBulkBtn?.classList.toggle('btn-ghost', !bulk);
     singleSection?.classList.toggle('hidden', bulk);
     bulkSection?.classList.toggle('hidden', !bulk);
+    if(!bulk){
+      clearMassEntries();
+    }
     setTimeout(()=> (bulk ? bulkInput : scanInput)?.focus(), 120);
   }
 
@@ -382,8 +748,6 @@
   modeIndividualBtn?.addEventListener('click', ()=> setMode('individual'));
   modeBulkBtn?.addEventListener('click', ()=> setMode('bulk'));
 
-  function hasActiveBulk(){ return state.bulkQueue.some(entry=> entry.status==='active' || entry.status==='loading'); }
-
   function processBulkBuffer(raw){
     let value = (raw || '').toUpperCase();
     value = value.replace(/[^A-Z0-9]/g, '');
@@ -398,7 +762,7 @@
     }
     if(addedTotal>0){
       setBulkMessage(`Piezas añadidas: ${addedTotal}`);
-      if(!hasActiveBulk()){ loadNextBulkCode(); }
+      loadNextBulkCode();
     } else if(duplicateCount>0){
       setBulkMessage('Sin códigos nuevos.');
     }
@@ -436,10 +800,15 @@
     }
   });
   bulkClearBtn?.addEventListener('click', ()=>{ clearBulkQueue(); if(bulkInput) bulkInput.value=''; setBulkMessage(''); });
-  bulkNextBtn?.addEventListener('click', ()=> loadNextBulkCode());
 
   function renderChecklist(){
     if(!panel||!list) return;
+    if(!state.cajaSel && !(state.bulkMode && (state.massEntries||[]).length)){
+      panel.classList.add('hidden');
+      list.innerHTML = '';
+      if(compList) compList.innerHTML = '';
+      return;
+    }
     panel.classList.remove('hidden');
       panelLote && (panelLote.textContent = state.cajaSel?.nombreCaja || state.cajaSel?.lote || '—');
     panelCount && (panelCount.textContent = String(state.tics.length||0));
@@ -459,8 +828,16 @@
     // siempre que existan VIP/CUBE para inspeccionar.
     if(checklistArea){
       const hasVipCube = (state.cajaSel?.componentes||[]).some(it=> (it.tipo==='vip' || it.tipo==='cube'));
-      const show = !!state.inInspeccion && (((state.tics||[]).length > 0) || hasVipCube);
+      const usingMass = state.bulkMode && (state.massEntries||[]).length > 0;
+      const show = usingMass || (!!state.inInspeccion && (((state.tics||[]).length > 0) || hasVipCube));
       checklistArea.classList.toggle('hidden', !show);
+    }
+
+    if(state.bulkMode && (state.massEntries||[]).length){
+      renderMassChecklist();
+      renderMassEntries();
+      updateCompleteBtn();
+      return;
     }
     const active = state.activeTic;
     list.innerHTML = (state.tics||[]).map(t=>{
@@ -565,7 +942,6 @@
     if(!fromBulk && scanInput) scanInput.value = code;
     if(targetMsg) targetMsg.textContent = 'Buscando...';
     if(fromBulk){
-      clearBulkActiveExcept(code);
       updateBulkEntry(code, { status:'loading', message:'' });
       renderBulkQueue();
     }
@@ -576,31 +952,54 @@
       if(j.ok){
         const upperCode = code.toUpperCase();
         const baseCaja = j.caja ? { ...j.caja } : {};
-        state.cajaSel = baseCaja;
-        state.tics = Array.isArray(j.tics) ? [...j.tics] : [];
-        if(individualMode){
-          state.tics = state.tics.filter((t)=> ((t?.rfid)||'').toUpperCase() === upperCode);
-        }
-        state.ticChecks = new Map();
-        state.activeTic = null;
-        state.inInspeccion = true;
+        const fullTics = Array.isArray(j.tics) ? [...j.tics] : [];
         const rawComps = Array.isArray(j.comps) ? j.comps : [];
-        const compsList = individualMode
-          ? rawComps.filter((it)=> ((it?.rfid)||'').toUpperCase() === upperCode)
-          : rawComps;
-        const compMap = new Map();
-        state.tics.forEach((t)=>{
-          if(t?.rfid){ compMap.set(t.rfid, { codigo: t.rfid, tipo: 'tic' }); }
-        });
-        compsList.forEach((it)=>{
-          if(!it?.rfid) return;
-          const role = ((it.rol || inferTipo(it.nombre_modelo || '')) || '').toLowerCase();
-          compMap.set(it.rfid, { codigo: it.rfid, tipo: role || 'otro' });
-        });
-        state.cajaSel = { ...state.cajaSel, componentes: Array.from(compMap.values()) };
-        renderChecklist();
+        if(individualMode){
+          state.cajaSel = baseCaja;
+          state.tics = fullTics.filter((t)=> ((t?.rfid)||'').toUpperCase() === upperCode);
+          state.ticChecks = new Map();
+          state.activeTic = null;
+          state.inInspeccion = true;
+          const compsList = rawComps.filter((it)=> ((it?.rfid)||'').toUpperCase() === upperCode);
+          const compMap = new Map();
+          state.tics.forEach((t)=>{
+            if(t?.rfid){ compMap.set(t.rfid, { codigo: t.rfid, tipo: 'tic' }); }
+          });
+          compsList.forEach((it)=>{
+            if(!it?.rfid) return;
+            const role = ((it.rol || inferTipo(it.nombre_modelo || '')) || '').toLowerCase();
+            compMap.set(it.rfid, { codigo: it.rfid, tipo: role || 'otro' });
+          });
+          state.cajaSel = { ...state.cajaSel, componentes: Array.from(compMap.values()) };
+          renderChecklist();
+        } else {
+          const entryKey = upperCode;
+          const baseLabel = baseCaja?.lote || baseCaja?.nombreCaja || 'Sin lote';
+          const filteredTics = fullTics.filter((t)=> normalizeCode(t?.rfid || '') === upperCode);
+          const filteredComps = rawComps.filter((c)=> normalizeCode(c?.rfid || c?.codigo || '') === upperCode);
+          const unitName = resolveNombreUnidad(filteredTics[0]) || resolveNombreUnidad(filteredComps[0]);
+          const existingEntry = state.massEntries.find((item)=> item.key === entryKey);
+          const displayParts = [upperCode, baseLabel];
+          if(unitName) displayParts.push(unitName);
+          const displayName = displayParts.join(' · ');
+          const entry = {
+            key: entryKey,
+            caja: baseCaja,
+            displayName,
+            tics: filteredTics,
+            comps: filteredComps,
+            checks: existingEntry?.checks
+          };
+          entry.primaryTipo = existingEntry?.primaryTipo || getPrimaryType(entry);
+          upsertMassEntry(entry);
+          applyMassSelection(entryKey);
+        }
         if(targetMsg) targetMsg.textContent = fromBulk ? `Pieza lista (${code})` : '';
-        if(fromBulk){ updateBulkEntry(code, { status:'active', message:'Pieza cargada para Inspección' }); renderBulkQueue(); }
+        if(fromBulk){
+          updateBulkEntry(code, { status:'active', message:'Pieza cargada para Inspección' });
+          renderBulkQueue();
+          setTimeout(()=> loadNextBulkCode(), 20);
+        }
         return;
       }
       lastError = j.error || lastError;
@@ -622,7 +1021,11 @@
       lastError = 'Error';
     }
     if(targetMsg) targetMsg.textContent = lastError;
-    if(fromBulk){ updateBulkEntry(code, { status:'error', message: lastError }); renderBulkQueue(); }
+    if(fromBulk){
+      updateBulkEntry(code, { status:'error', message: lastError });
+      renderBulkQueue();
+      setTimeout(()=> loadNextBulkCode(), 20);
+    }
   }
 
   // Inferir tipo simple por nombre de modelo (fallback)
@@ -635,26 +1038,87 @@
       const v = state.ticChecks.get(t.rfid) || { limpieza:false, goteo:false, desinfeccion:false };
       return v.limpieza && v.goteo && v.desinfeccion;
     });
-    const comps = (state.cajaSel?.componentes||[]).filter(it=> (it.tipo==='vip' || it.tipo==='cube'));
+    const comps = (state.cajaSel?.componentes||[]).filter((it)=>{
+      const tipo = (it?.tipo || '').toString().toLowerCase();
+      return tipo === 'vip' || tipo === 'cube';
+    });
     const compsOk = comps.every(it=>{
       const v = state.ticChecks.get(it.codigo) || { limpieza:false, goteo:false, desinfeccion:false };
       return v.limpieza && v.goteo && v.desinfeccion;
     });
-    const all = !!state.cajaSel?.id && allTicsChecked && compsOk;
-    if(completeBtn) completeBtn.disabled = !all;
+    const hasCajaId = !!state.cajaSel?.id;
+    const hasMassContext = state.bulkMode && !!state.massActiveKey;
+    const hasTargets = (tics.length > 0) || (comps.length > 0);
+    const allowCompletion = (hasCajaId || (hasMassContext && hasTargets)) && allTicsChecked && compsOk;
+    if(completeBtn) completeBtn.disabled = !allowCompletion;
   }
 
   // Bulk actions: mark/unmark all checks for all TICs
+  function setChecksForCurrentSelection(checked){
+    const targetValue = {
+      limpieza: !!checked,
+      goteo: !!checked,
+      desinfeccion: !!checked
+    };
+    (state.tics||[]).forEach((t)=>{
+      if(t?.rfid){
+        state.ticChecks.set(t.rfid, Object.assign({}, targetValue));
+      }
+    });
+    (state.cajaSel?.componentes||[]).forEach((comp)=>{
+      const tipo = (comp?.tipo||'').toLowerCase();
+      if(tipo==='vip' || tipo==='cube' || tipo==='tic'){
+        const code = comp?.codigo || comp?.rfid;
+        if(code){
+          state.ticChecks.set(code, Object.assign({}, targetValue));
+        }
+      }
+    });
+  }
+
+  function setCompletionStatus(message){
+    if(state.bulkMode){
+      setBulkMessage(message || '');
+    } else if(scanMsg){
+      scanMsg.textContent = message || '';
+    }
+  }
+
   checkAllBtn?.addEventListener('click', ()=>{
-    (state.tics||[]).forEach(t=>{ state.ticChecks.set(t.rfid, { limpieza:true, goteo:true, desinfeccion:true }); });
-    const comps = (state.cajaSel?.componentes||[]).filter(it=> (it.tipo==='vip' || it.tipo==='cube'));
-    comps.forEach(it=>{ state.ticChecks.set(it.codigo, { limpieza:true, goteo:true, desinfeccion:true }); });
+    if(state.bulkMode){
+      state.massEntries.forEach((entry)=> setAllChecksForEntry(entry, true));
+      if(state.massActiveKey){
+        const activeEntry = state.massEntries.find((item)=> item.key === state.massActiveKey);
+        if(activeEntry){
+          state.ticChecks = cloneChecksMap(activeEntry.checks);
+        }
+      }
+    } else {
+      setChecksForCurrentSelection(true);
+    }
+    persistActiveMassChecks();
+    updateCompleteBtn();
     renderChecklist();
   });
+
   uncheckAllBtn?.addEventListener('click', ()=>{
-    (state.tics||[]).forEach(t=>{ state.ticChecks.set(t.rfid, { limpieza:false, goteo:false, desinfeccion:false }); });
-    const comps = (state.cajaSel?.componentes||[]).filter(it=> (it.tipo==='vip' || it.tipo==='cube'));
-    comps.forEach(it=>{ state.ticChecks.set(it.codigo, { limpieza:false, goteo:false, desinfeccion:false }); });
+    if(state.bulkMode){
+      state.massEntries.forEach((entry)=> setAllChecksForEntry(entry, false));
+      if(state.massActiveKey){
+        const activeEntry = state.massEntries.find((item)=> item.key === state.massActiveKey);
+        if(activeEntry){
+          state.ticChecks = cloneChecksMap(activeEntry.checks);
+        } else {
+          state.ticChecks = new Map();
+        }
+      } else {
+        state.ticChecks = new Map();
+      }
+    } else {
+      setChecksForCurrentSelection(false);
+    }
+    persistActiveMassChecks();
+    updateCompleteBtn();
     renderChecklist();
   });
 
@@ -664,8 +1128,26 @@
     const fld = t.getAttribute('data-chk');
     const rfid = t.getAttribute('data-rfid');
     if(!fld || !rfid) return;
+    if(state.bulkMode){
+      const massKey = t.getAttribute('data-mass-key') || state.massActiveKey;
+      if(!massKey) return;
+      const entry = state.massEntries.find((item)=> item.key === massKey);
+      if(!entry) return;
+      const entryChecks = ensureEntryChecks(entry);
+      const current = entryChecks.get(rfid) || { limpieza:false, goteo:false, desinfeccion:false };
+      current[fld] = !!t.checked;
+      entryChecks.set(rfid, current);
+      entry.checks = entryChecks;
+      if(massKey === state.massActiveKey){
+        state.ticChecks.set(rfid, { limpieza: current.limpieza, goteo: current.goteo, desinfeccion: current.desinfeccion });
+        updateCompleteBtn();
+        persistActiveMassChecks();
+      }
+      return;
+    }
     const cur = state.ticChecks.get(rfid) || { limpieza:false, goteo:false, desinfeccion:false };
     cur[fld] = !!t.checked; state.ticChecks.set(rfid, cur); updateCompleteBtn();
+    persistActiveMassChecks();
   });
 
   // Open novedad modal
@@ -684,6 +1166,35 @@
     if(t.matches('[data-action="bulk-open"]')){
       const code = t.getAttribute('data-code')||'';
       if(code){ lookupCaja(code, { fromBulk:true }); }
+      return;
+    }
+    if(t.matches('[data-action="mass-select"]')){
+      const key = t.getAttribute('data-mass-key')||'';
+      if(key){ applyMassSelection(key); }
+      return;
+    }
+    if(t.matches('[data-action="mass-remove"]')){
+      const key = t.getAttribute('data-mass-key')||'';
+      if(key){
+        state.massEntries = state.massEntries.filter((item)=> item.key !== key);
+        if(state.massActiveKey === key){
+          const next = state.massEntries[0];
+          if(next){
+            applyMassSelection(next.key);
+          } else {
+            state.massActiveKey = null;
+            state.cajaSel = null;
+            state.tics = [];
+            state.ticChecks.clear();
+            state.inInspeccion = false;
+            renderMassEntries();
+            renderChecklist();
+          }
+        } else {
+          renderMassEntries();
+          renderChecklist();
+        }
+      }
       return;
     }
     if(t.matches('[data-action="bulk-remove"]')){
@@ -736,6 +1247,7 @@
       }
       state.ticChecks.delete(code);
       renderChecklist();
+      persistActiveMassChecks();
       // If caja auto-retired or cleared (no items remain in Inspección), clear panel and refresh grid immediately
       if((j.auto_returned || j.cleared) && state.cajaSel){
         try{ novDlg.close(); }catch{ novDlg.classList.add('hidden'); }
@@ -753,18 +1265,100 @@
   });
 
   completeBtn?.addEventListener('click', async ()=>{
+    const isMassMode = state.bulkMode && !!state.massActiveKey;
+    if(isMassMode){
+      completeBtn.disabled = true;
+      try {
+        persistActiveMassChecks();
+        const entry = state.massEntries.find((item)=> item.key === state.massActiveKey);
+        if(!entry){
+          setCompletionStatus('Selecciona una pieza en la lista.');
+          completeBtn.disabled = false;
+          return;
+        }
+        const validCodes = collectEntryCodes(entry);
+        if(!validCodes.length){
+          setCompletionStatus('La pieza seleccionada no tiene RFIDs para devolver.');
+          completeBtn.disabled = false;
+          return;
+        }
+        const entryChecks = ensureEntryChecks(entry);
+        const missing = validCodes.filter((code)=>{
+          const v = entryChecks.get(code) || state.ticChecks.get(code) || { limpieza:false, goteo:false, desinfeccion:false };
+          return !(v.limpieza && v.goteo && v.desinfeccion);
+        });
+        if(missing.length){
+          setCompletionStatus(`Faltan checks en ${missing.length} componente(s).`);
+          completeBtn.disabled = false;
+          return;
+        }
+        const attempt = await postJSONWithSedeTransfer('/operacion/inspeccion/mass-complete', { rfids: validCodes }, {
+          promptMessage: (payload) => payload?.confirm || payload?.error || `Enviar ${validCodes.length} pieza(s) a Bodega sin lote. ¿Continuar?`
+        });
+        if(attempt.cancelled){
+          setCompletionStatus('Operación cancelada.');
+          completeBtn.disabled = false;
+          return;
+        }
+        const payload = attempt.data || {};
+        if(!attempt.httpOk || payload.ok === false){
+          const message = payload.error || payload.message || `Error (${attempt.status || 0})`;
+          setCompletionStatus(message);
+          completeBtn.disabled = false;
+          return;
+        }
+        const returnedCount = Array.isArray(payload.rfids) ? payload.rfids.length : validCodes.length;
+        const missingList = Array.isArray(payload.missing) ? payload.missing.filter((item)=> typeof item === 'string') : [];
+        const outcomeParts = [`Devueltos a Bodega: ${returnedCount}`];
+        if(missingList.length){ outcomeParts.push(`No encontrados: ${missingList.length}`); }
+        setCompletionStatus(outcomeParts.join(' · '));
+        if(state.lastLookupCode){
+          updateBulkEntry(state.lastLookupCode, { status:'done', message:'Inspección completada' });
+          renderBulkQueue();
+          const hasPending = state.bulkQueue.some((item)=> item.status==='queued' || item.status==='error');
+          state.lastLookupCode = null;
+          if(hasPending){ setTimeout(()=> loadNextBulkCode(), 200); }
+        }
+        const currentKey = entry.key;
+        const currentIndex = state.massEntries.findIndex((item)=> item.key === currentKey);
+        state.massEntries = state.massEntries.filter((item)=> item.key !== currentKey);
+        renderMassEntries();
+        const nextEntry = state.massEntries.length ? state.massEntries[Math.min(Math.max(currentIndex, 0), state.massEntries.length-1)] : null;
+        if(nextEntry){
+          applyMassSelection(nextEntry.key);
+        } else {
+          state.massActiveKey = null;
+          state.cajaSel = null;
+          state.tics = [];
+          state.ticChecks.clear();
+          state.activeTic = null;
+          renderChecklist();
+        }
+        scanInput && (scanInput.value='');
+        await load();
+      } catch(err){
+        console.error('[Inspección] mass complete error', err);
+        setCompletionStatus('Error devolviendo piezas a Bodega.');
+      } finally {
+        updateCompleteBtn();
+        if(!state.massActiveKey){
+          completeBtn.disabled = true;
+        }
+      }
+      return;
+    }
+
     if(!state.cajaSel?.id) return;
     completeBtn.disabled = true;
     try {
-      // Gather the TIC RFIDs that have all 3 checks; must match the number of TICs currently presentes (0..6)
       const tics = state.tics||[];
-      const confirm = tics.filter(t=>{
-        const v = state.ticChecks.get(t.rfid)||{limpieza:false,goteo:false,desinfeccion:false};
-        return v.limpieza&&v.goteo&&v.desinfeccion;
-      }).map(t=>t.rfid);
+      const confirm = tics.filter((t)=>{
+        const v = state.ticChecks.get(t.rfid) || { limpieza:false, goteo:false, desinfeccion:false };
+        return v.limpieza && v.goteo && v.desinfeccion;
+      }).map((t)=> t.rfid);
       if(confirm.length !== tics.length){
-        completeBtn.disabled=false;
-        scanMsg && (scanMsg.textContent='Faltan checks en las TICs presentes');
+        setCompletionStatus('Faltan checks en las TICs presentes');
+        completeBtn.disabled = false;
         return;
       }
       const attempt = await postJSONWithSedeTransfer('/operacion/inspeccion/complete', { caja_id: state.cajaSel.id, confirm_rfids: confirm }, {
@@ -774,30 +1368,59 @@
         }
       });
       if(attempt.cancelled){
-        completeBtn.disabled=false;
-        scanMsg && (scanMsg.textContent='Operación cancelada.');
+        setCompletionStatus('Operación cancelada.');
+        completeBtn.disabled = false;
         return;
       }
       const payload = attempt.data || {};
       if(!attempt.httpOk || payload.ok === false){
         const message = payload.error || payload.message || `Error (${attempt.status || 0})`;
-        scanMsg && (scanMsg.textContent = message);
-        completeBtn.disabled=false;
+        setCompletionStatus(message);
+        completeBtn.disabled = false;
         return;
       }
-      // Reset panel and reload list
       if(state.lastLookupCode){
         const entry = updateBulkEntry(state.lastLookupCode, { status:'done', message:'Inspección completada' });
         renderBulkQueue();
-        const hasPending = state.bulkQueue.some(it=> it.status==='queued' || it.status==='error');
+        const hasPending = state.bulkQueue.some((item)=> item.status==='queued' || item.status==='error');
         state.lastLookupCode = null;
         if(hasPending){ setTimeout(()=> loadNextBulkCode(), 200); }
       }
-      panel.classList.add('hidden'); state.cajaSel=null; state.tics=[]; state.ticChecks.clear(); state.activeTic=null;
+
+      let nextMassKey = null;
+      if(state.massActiveKey){
+        const currentKey = state.massActiveKey;
+        const currentEntry = state.massEntries.find((item)=> item.key === currentKey);
+        if(currentEntry){
+          const cleanupCodes = [];
+          (Array.isArray(currentEntry.tics) ? currentEntry.tics : []).forEach((t)=>{ if(t?.rfid){ cleanupCodes.push(t.rfid); } });
+          (Array.isArray(currentEntry.comps) ? currentEntry.comps : []).forEach((c)=>{ if(c?.rfid){ cleanupCodes.push(c.rfid); } });
+          cleanupCodes.forEach((rfid)=> state.ticChecks.delete(rfid));
+        }
+        state.massEntries = state.massEntries.filter((item)=> item.key !== currentKey);
+        renderMassEntries();
+        if(state.massEntries.length){
+          nextMassKey = state.massEntries[0].key;
+        } else {
+          state.massActiveKey = null;
+        }
+      }
+
+      if(nextMassKey){
+        applyMassSelection(nextMassKey);
+      } else {
+        panel.classList.add('hidden');
+        state.cajaSel=null; state.tics=[]; state.ticChecks.clear(); state.activeTic=null;
+      }
+
       scanInput && (scanInput.value='');
       await load();
-      if(scanMsg) scanMsg.textContent = '';
-    } catch(e){ completeBtn.disabled=false; scanMsg && (scanMsg.textContent='Error'); }
+      setCompletionStatus('');
+    } catch(err){
+      console.error('[Inspección] completar error', err);
+      setCompletionStatus('Error completando inspección.');
+      completeBtn.disabled = false;
+    }
   });
 
   scanBtn?.addEventListener('click', lookupCaja);
@@ -814,12 +1437,22 @@
   // ---- TIC scan/activation ----
   function activateTic(rfid){
     if(!rfid) return;
+    if(state.bulkMode){
+      const holder = state.massEntries.find((entry)=>{
+        const hasTic = Array.isArray(entry.tics) && entry.tics.some((t)=> t?.rfid === rfid);
+        const hasComp = Array.isArray(entry.comps) && entry.comps.some((c)=> (c?.rfid || c?.codigo) === rfid);
+        return hasTic || hasComp;
+      });
+      if(holder && holder.key !== state.massActiveKey){
+        applyMassSelection(holder.key);
+      }
+    }
     const exists = (state.tics||[]).some(t=>t.rfid===rfid);
     if(!exists){ ticMsg && (ticMsg.textContent='TIC no pertenece al conjunto activo'); return; }
     state.activeTic = rfid; ticMsg && (ticMsg.textContent=''); renderChecklist();
-  const row = document.querySelector(`[data-tic-row='${rfid}']`);
-  row?.scrollIntoView({ behavior:'smooth', block:'center' });
-  if(row){ row.classList.add('animate-pulse'); setTimeout(()=> row.classList.remove('animate-pulse'), 600); }
+    const row = document.querySelector(`[data-tic-row='${rfid}']`);
+    row?.scrollIntoView({ behavior:'smooth', block:'center' });
+    if(row){ row.classList.add('animate-pulse'); setTimeout(()=> row.classList.remove('animate-pulse'), 600); }
   }
   async function handleTicScan(){
     const code = (ticScan?.value||'').trim();
