@@ -376,6 +376,17 @@
     return code.toString().replace(/\s+/g, '').toUpperCase();
   }
 
+  function clearIndividualSelection(){
+    // Reset current selection so the scanner can continue without stale state.
+    persistActiveMassChecks();
+    state.cajaSel = null;
+    state.tics = [];
+    state.ticChecks.clear();
+    state.activeTic = null;
+    state.inInspeccion = false;
+    renderChecklist();
+  }
+
   function findBulkEntry(code){
     const target = normalizeCode(code);
     return state.bulkQueue.find(entry=> entry.code === target);
@@ -403,8 +414,15 @@
       if(status==='loading'){ badge = "<span class='badge badge-info badge-xs gap-1'><span class='loading loading-xs'></span>Buscando</span>"; }
       else if(status==='active'){ badge = "<span class='badge badge-primary badge-xs'>En inspección</span>"; }
       else if(status==='done'){ badge = "<span class='badge badge-success badge-xs'>Completada</span>"; }
+      else if(status==='missing'){ badge = "<span class='badge badge-warning badge-xs'>Fuera de Inspección</span>"; }
       else if(status==='error'){ badge = "<span class='badge badge-error badge-xs'>Error</span>"; }
-      const rowCls = status==='active' ? 'border-primary bg-primary/10 shadow-sm' : status==='done' ? 'border-success bg-success/10 text-success-content' : 'border-base-300/40 bg-base-100';
+      const rowCls = status==='active'
+        ? 'border-primary bg-primary/10 shadow-sm'
+        : status==='done'
+          ? 'border-success bg-success/10 text-success-content'
+          : status==='missing'
+            ? 'border-warning bg-warning/10 text-warning-content'
+            : 'border-base-300/40 bg-base-100';
       const showIdentify = status!=='done';
       return `<div class='border rounded-md p-2 space-y-1 ${rowCls}' data-bulk-code='${entry.code}'>
         <div class='flex items-center gap-2'>
@@ -658,6 +676,42 @@
     return Array.from(codes);
   }
 
+  function removeCodesFromEntry(entry, codes){
+    if(!entry || !Array.isArray(codes) || !codes.length) return;
+    const targets = new Set(codes.map((code)=> normalizeCode(code)));
+    entry.tics = Array.isArray(entry.tics)
+      ? entry.tics.filter((tic)=> !targets.has(normalizeCode(tic?.rfid || tic?.codigo)))
+      : [];
+    entry.comps = Array.isArray(entry.comps)
+      ? entry.comps.filter((comp)=> !targets.has(normalizeCode(comp?.rfid || comp?.codigo)))
+      : [];
+    const entryChecks = ensureEntryChecks(entry);
+    entryChecks.forEach((_, key)=>{
+      if(targets.has(normalizeCode(key))) entryChecks.delete(key);
+    });
+    entry.checks = entryChecks;
+  }
+
+  function getEntryCheckStatus(entry){
+    const ready = [];
+    const pending = [];
+    if(!entry) return { ready, pending };
+    const entryChecks = ensureEntryChecks(entry);
+    const codes = collectEntryCodes(entry);
+    codes.forEach((code)=>{
+      const norm = normalizeCode(code);
+      const entryValue = entryChecks.get(code) || entryChecks.get(norm);
+      const stateValue = state.ticChecks.get(code) || state.ticChecks.get(norm);
+      const value = entryValue || stateValue || { limpieza:false, goteo:false, desinfeccion:false };
+      if(value.limpieza && value.goteo && value.desinfeccion){
+        ready.push(norm);
+      } else {
+        pending.push(norm);
+      }
+    });
+    return { ready, pending };
+  }
+
   function persistActiveMassChecks(){
     if(!state.massActiveKey) return;
     const entry = state.massEntries.find((item)=> item.key === state.massActiveKey);
@@ -737,7 +791,7 @@
   }
 
   function loadNextBulkCode(){
-    const next = state.bulkQueue.find(entry=> entry.status==='queued' || entry.status==='error');
+    const next = state.bulkQueue.find(entry=> entry.status==='queued');
     if(next){ lookupCaja(next.code, { fromBulk:true }); }
     else { setBulkMessage('No hay piezas pendientes en la cola.'); }
   }
@@ -1007,13 +1061,16 @@
         const r2 = await fetch('/operacion/caja/lookup',{ method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ code })});
         const j2 = await r2.json();
         if(j2.ok){
-          const comps = (j2.caja?.items||[]).map(it=>({ codigo: it.rfid, tipo: (it.rol||inferTipo(it.nombre_modelo||'')) }));
-          state.cajaSel = { id: j2.caja.id, lote: j2.caja.lote, componentes: comps };
-          state.tics = []; state.ticChecks = new Map(); state.activeTic = null; state.inInspeccion = false;
-          renderChecklist();
+          if(!fromBulk){ clearIndividualSelection(); }
           const msg = 'La pieza no está en Inspección. Usa "Agregar piezas a Inspección" para traerla.';
           if(targetMsg) targetMsg.textContent = msg;
-          if(fromBulk){ updateBulkEntry(code, { status:'error', message: msg }); renderBulkQueue(); }
+          if(fromBulk){
+            updateBulkEntry(code, { status:'missing', message: msg });
+            renderBulkQueue();
+            if(state.lastLookupCode === code){ state.lastLookupCode = null; }
+            setTimeout(()=> loadNextBulkCode(), 20);
+          }
+          if(!fromBulk && scanInput){ scanInput.value=''; }
           return;
         }
       } catch(_e){}
@@ -1033,6 +1090,11 @@
 
   function updateCompleteBtn(){
     // Enable completion when: (a) all present TICs (0..6) have all three checks, and (b) VIP/CUBE checks (if present) are all done.
+    if(state.bulkMode){
+      const hasReady = state.massEntries.some((entry)=> getEntryCheckStatus(entry).ready.length > 0);
+      if(completeBtn) completeBtn.disabled = !hasReady;
+      return;
+    }
     const tics = state.tics||[];
     const allTicsChecked = tics.every(t=>{
       const v = state.ticChecks.get(t.rfid) || { limpieza:false, goteo:false, desinfeccion:false };
@@ -1047,9 +1109,8 @@
       return v.limpieza && v.goteo && v.desinfeccion;
     });
     const hasCajaId = !!state.cajaSel?.id;
-    const hasMassContext = state.bulkMode && !!state.massActiveKey;
     const hasTargets = (tics.length > 0) || (comps.length > 0);
-    const allowCompletion = (hasCajaId || (hasMassContext && hasTargets)) && allTicsChecked && compsOk;
+    const allowCompletion = hasCajaId && hasTargets && allTicsChecked && compsOk;
     if(completeBtn) completeBtn.disabled = !allowCompletion;
   }
 
@@ -1265,35 +1326,33 @@
   });
 
   completeBtn?.addEventListener('click', async ()=>{
-    const isMassMode = state.bulkMode && !!state.massActiveKey;
+    const isMassMode = state.bulkMode;
     if(isMassMode){
       completeBtn.disabled = true;
       try {
         persistActiveMassChecks();
-        const entry = state.massEntries.find((item)=> item.key === state.massActiveKey);
-        if(!entry){
-          setCompletionStatus('Selecciona una pieza en la lista.');
+        if(!state.massEntries.length){
+          setCompletionStatus('No hay piezas en la cola de Inspección.');
           completeBtn.disabled = false;
           return;
         }
-        const validCodes = collectEntryCodes(entry);
-        if(!validCodes.length){
-          setCompletionStatus('La pieza seleccionada no tiene RFIDs para devolver.');
-          completeBtn.disabled = false;
-          return;
-        }
-        const entryChecks = ensureEntryChecks(entry);
-        const missing = validCodes.filter((code)=>{
-          const v = entryChecks.get(code) || state.ticChecks.get(code) || { limpieza:false, goteo:false, desinfeccion:false };
-          return !(v.limpieza && v.goteo && v.desinfeccion);
+        const readiness = new Map();
+        const readySet = new Set();
+        state.massEntries.forEach((entry)=>{
+          const status = getEntryCheckStatus(entry);
+          if(status.ready.length){
+            readiness.set(entry.key, status);
+            status.ready.forEach((code)=> readySet.add(code));
+          }
         });
-        if(missing.length){
-          setCompletionStatus(`Faltan checks en ${missing.length} componente(s).`);
+        if(!readySet.size){
+          setCompletionStatus('No hay piezas con los tres checks marcados.');
           completeBtn.disabled = false;
           return;
         }
-        const attempt = await postJSONWithSedeTransfer('/operacion/inspeccion/mass-complete', { rfids: validCodes }, {
-          promptMessage: (payload) => payload?.confirm || payload?.error || `Enviar ${validCodes.length} pieza(s) a Bodega sin lote. ¿Continuar?`
+        const readyCodes = Array.from(readySet);
+        const attempt = await postJSONWithSedeTransfer('/operacion/inspeccion/mass-complete', { rfids: readyCodes }, {
+          promptMessage: (payload) => payload?.confirm || payload?.error || `Enviar ${readyCodes.length} pieza(s) a Bodega sin lote. ¿Continuar?`
         });
         if(attempt.cancelled){
           setCompletionStatus('Operación cancelada.');
@@ -1307,11 +1366,41 @@
           completeBtn.disabled = false;
           return;
         }
-        const returnedCount = Array.isArray(payload.rfids) ? payload.rfids.length : validCodes.length;
+        const returnedCount = Array.isArray(payload.rfids) ? payload.rfids.length : readyCodes.length;
         const missingList = Array.isArray(payload.missing) ? payload.missing.filter((item)=> typeof item === 'string') : [];
-        const outcomeParts = [`Devueltos a Bodega: ${returnedCount}`];
-        if(missingList.length){ outcomeParts.push(`No encontrados: ${missingList.length}`); }
-        setCompletionStatus(outcomeParts.join(' · '));
+        readyCodes.forEach((code)=>{
+          const normalized = normalizeCode(code);
+          state.ticChecks.delete(code);
+          state.ticChecks.delete(normalized);
+        });
+        const updatedEntries = [];
+        let nextKey = state.massActiveKey;
+        state.massEntries.forEach((entry)=>{
+          const status = readiness.get(entry.key);
+          if(status){
+            removeCodesFromEntry(entry, status.ready);
+            entry.primaryTipo = getPrimaryType(entry);
+            const remainingCodes = collectEntryCodes(entry);
+            if(!remainingCodes.length){
+              if(nextKey === entry.key) nextKey = null;
+              return;
+            }
+          }
+          updatedEntries.push(entry);
+        });
+        state.massEntries = updatedEntries;
+        let remainingReady = 0;
+        let remainingPending = 0;
+        state.massEntries.forEach((entry)=>{
+          const status = getEntryCheckStatus(entry);
+          remainingReady += status.ready.length;
+          remainingPending += status.pending.length;
+        });
+        const summaryParts = [`Devueltos a Bodega: ${returnedCount}`];
+        if(missingList.length){ summaryParts.push(`No encontrados: ${missingList.length}`); }
+        if(remainingPending > 0){ summaryParts.push(`Pendientes sin checks: ${remainingPending}`); }
+        if(remainingReady > 0){ summaryParts.push(`Pendientes listos: ${remainingReady}`); }
+        setCompletionStatus(summaryParts.join(' · '));
         if(state.lastLookupCode){
           updateBulkEntry(state.lastLookupCode, { status:'done', message:'Inspección completada' });
           renderBulkQueue();
@@ -1319,19 +1408,18 @@
           state.lastLookupCode = null;
           if(hasPending){ setTimeout(()=> loadNextBulkCode(), 200); }
         }
-        const currentKey = entry.key;
-        const currentIndex = state.massEntries.findIndex((item)=> item.key === currentKey);
-        state.massEntries = state.massEntries.filter((item)=> item.key !== currentKey);
-        renderMassEntries();
-        const nextEntry = state.massEntries.length ? state.massEntries[Math.min(Math.max(currentIndex, 0), state.massEntries.length-1)] : null;
-        if(nextEntry){
-          applyMassSelection(nextEntry.key);
+        if(state.massEntries.length){
+          if(!nextKey || !state.massEntries.some((entry)=> entry.key === nextKey)){
+            nextKey = state.massEntries[0].key;
+          }
+          applyMassSelection(nextKey);
         } else {
           state.massActiveKey = null;
           state.cajaSel = null;
           state.tics = [];
           state.ticChecks.clear();
           state.activeTic = null;
+          renderMassEntries();
           renderChecklist();
         }
         scanInput && (scanInput.value='');
@@ -1341,7 +1429,7 @@
         setCompletionStatus('Error devolviendo piezas a Bodega.');
       } finally {
         updateCompleteBtn();
-        if(!state.massActiveKey){
+        if(!state.massEntries.length){
           completeBtn.disabled = true;
         }
       }

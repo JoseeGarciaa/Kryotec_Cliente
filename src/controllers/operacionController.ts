@@ -1848,7 +1848,7 @@ export const OperacionController = {
         }
 
         if(!tics.length && !comps.length){
-          return res.status(400).json({ ok:false, error:'Caja no está en Inspección ni Pendiente a Inspección' });
+          return res.json({ ok:false, error:'Caja no está en Inspección ni Pendiente a Inspección', code:'NOT_IN_INSPECCION' });
         }
       }
 
