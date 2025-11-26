@@ -12,6 +12,19 @@
         <% if (typeof dups !== 'undefined' && dups && dups.length) { %>
           <div class="text-xs mt-1 opacity-80">Duplicados: <%= dups.join(', ') %></div>
         <% } %>
+        <% if (Array.isArray(foreignConflicts) && foreignConflicts.length) { %>
+          <div class="text-xs mt-1 opacity-80">
+            Pertenecen a otra sede:
+            <%= foreignConflicts.map(function(fc){
+              return fc.sedeNombre ? fc.rfid + ' (' + fc.sedeNombre + ')' : fc.rfid;
+            }).join(', ') %>
+          </div>
+        <% } %>
+      </div>
+    <% } %>
+    <% if (typeof success !== 'undefined' && success) { %>
+      <div class="alert alert-success mb-2">
+        <span><%= success %></span>
       </div>
     <% } %>
     <div class="flex items-center gap-2 mb-2">
@@ -74,5 +87,5 @@
 </div>
 
 <!-- Datos para JS externo (evita inline scripts por CSP) -->
-<div id="registro-data" data-modelos='<%- JSON.stringify(modelosByTipo || {}) %>' data-rfids='<%- JSON.stringify(typeof rfids !== "undefined" ? rfids : []) %>' data-selected-tipo='<%- (typeof selectedTipo !== "undefined" ? selectedTipo : "") %>' data-selected-modelo='<%- (typeof selectedModelo !== "undefined" ? selectedModelo : "") %>' data-dups='<%- JSON.stringify(typeof dups !== "undefined" ? dups : []) %>'></div>
+<div id="registro-data" data-modelos='<%- JSON.stringify(modelosByTipo || {}) %>' data-rfids='<%- JSON.stringify(typeof rfids !== "undefined" ? rfids : []) %>' data-selected-tipo='<%- (typeof selectedTipo !== "undefined" ? selectedTipo : "") %>' data-selected-modelo='<%- (typeof selectedModelo !== "undefined" ? selectedModelo : "") %>' data-dups='<%- JSON.stringify(typeof dups !== "undefined" ? dups : []) %>' data-foreign='<%- JSON.stringify((typeof foreignConflicts !== "undefined" && Array.isArray(foreignConflicts)) ? foreignConflicts : []) %>'></div>
 <script src="/static/js/registro.js?v=<%= assetVersion %>" defer></script>

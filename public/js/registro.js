@@ -11,9 +11,13 @@
   try { initialRfids = JSON.parse(dataEl.dataset.rfids || '[]'); } catch { initialRfids = []; }
   initialTipo = dataEl.dataset.selectedTipo || '';
   initialModelo = dataEl.dataset.selectedModelo || '';
-  let dupRfids = [];
-  try { dupRfids = JSON.parse(dataEl.dataset.dups || '[]'); } catch { dupRfids = []; }
-  let validationDone = dupRfids.length > 0; // legacy: but los vamos a filtrar
+  let initialDupRfids = [];
+  try { initialDupRfids = JSON.parse(dataEl.dataset.dups || '[]'); } catch { initialDupRfids = []; }
+  let initialForeignConflicts = [];
+  try { initialForeignConflicts = JSON.parse(dataEl.dataset.foreign || '[]'); } catch { initialForeignConflicts = []; }
+  let lastDuplicates = [];
+  let lastForeign = [];
+  let validationDone = false;
 
   const tipoEl = document.getElementById('tipo');
   const litrajeEl = document.getElementById('litraje');
@@ -28,9 +32,46 @@
   // Only allow submit when user taps the button explicitly
   let allowExplicitSubmit = false;
 
-  let rfids = Array.isArray(initialRfids) ? initialRfids : [];
+  const normalizeRfid = (value)=> String(value || '').trim().toUpperCase();
 
-  function resetRFIDs(){ rfids = []; renderRFIDs(); }
+  let rfids = Array.isArray(initialRfids)
+    ? initialRfids.map(normalizeRfid).filter((r)=> r.length === 24)
+    : [];
+
+  function parseForeignEntries(raw){
+    if(!Array.isArray(raw)) return [];
+    return raw.map((entry)=>{
+      if(!entry) return null;
+      if(typeof entry === 'string'){ return { rfid: normalizeRfid(entry), sedeNombre: '' }; }
+      const rfid = normalizeRfid(entry.rfid || entry.RFID || entry.code);
+      if(!rfid) return null;
+      const sedeNombre = entry.sedeNombre || entry.sede_nombre || entry.sede || '';
+      return { rfid, sedeNombre };
+    }).filter(Boolean);
+  }
+
+  initialDupRfids = Array.isArray(initialDupRfids) ? initialDupRfids.map(normalizeRfid) : [];
+  initialForeignConflicts = parseForeignEntries(initialForeignConflicts);
+
+  function setValidationFeedback(duplicates, foreign){
+    lastDuplicates = (duplicates||[]).map(normalizeRfid);
+    lastForeign = parseForeignEntries(foreign || []);
+    if(!dupMsg) return;
+    const chunks = [];
+    if(lastDuplicates.length){ chunks.push(`Duplicados: ${lastDuplicates.join(', ')}`); }
+    if(lastForeign.length){
+      const formatted = lastForeign.map((item)=> item.sedeNombre ? `${item.rfid} (${item.sedeNombre})` : item.rfid);
+      chunks.push(`Asignados a otra sede: ${formatted.join(', ')}`);
+    }
+    dupMsg.textContent = chunks.join(' · ');
+  }
+
+  function resetRFIDs(){
+    rfids = [];
+    validationDone = false;
+    setValidationFeedback([], []);
+    renderRFIDs();
+  }
 
   function renderRFIDs(){
     // Update count and submit button
@@ -47,7 +88,7 @@
     // Visual chips list with remove buttons
     if(rfidList){
       rfidList.innerHTML = rfids.map((r,i)=>{
-        const status = validationDone ? '<span class="text-[10px] text-success mt-1">ok</span>' : '';
+        const status = (validationDone && lastDuplicates.length === 0 && lastForeign.length === 0) ? '<span class="text-[10px] text-success mt-1">ok</span>' : '';
         return `<div class="inline-flex flex-col items-center">
                   <span class="badge badge-outline gap-2">${r}<button type="button" class="btn btn-ghost btn-xs" data-remove="${i}">✕</button></span>
                   ${status}
@@ -59,9 +100,9 @@
   // Live validation against server: checks duplicates and updates UI
   async function validateRfids(){
     if(rfids.length === 0){
-      dupRfids = [];
       validationDone = false;
       renderRFIDs();
+      setValidationFeedback([], []);
       return;
     }
     try{
@@ -71,15 +112,20 @@
         body: JSON.stringify({ rfids })
       });
       const data = await res.json();
-      dupRfids = Array.isArray(data.dups) ? data.dups : [];
-      if(dupRfids.length){
-        // Filtrar repetidos automáticamente
-        rfids = rfids.filter(r => !dupRfids.includes(r));
+      const rawDuplicates = Array.isArray(data.dups) ? data.dups : [];
+      const normalizedDuplicates = rawDuplicates.map(normalizeRfid);
+      if(normalizedDuplicates.length){
+        const dupSet = new Set(normalizedDuplicates);
+        rfids = rfids.filter((r)=> !dupSet.has(r));
+      }
+      const foreignEntries = parseForeignEntries(data.foreign);
+      if(foreignEntries.length){
+        const foreignSet = new Set(foreignEntries.map((item)=> item.rfid));
+        rfids = rfids.filter((r)=> !foreignSet.has(r));
       }
       validationDone = true;
-      // limpiar estado de dups (ya removidos)
-      dupRfids = [];
       renderRFIDs();
+      setValidationFeedback(rawDuplicates, foreignEntries);
     }catch{
       // keep previous state on error
     }
@@ -105,7 +151,7 @@
 
   // Valida contra servidor y solo agrega si NO existe
   async function handleScannedCode(rawCode){
-    const code = String(rawCode || '').toUpperCase();
+    const code = normalizeRfid(rawCode);
     if(!(code && code.length === 24)) return false;
     if(rfids.includes(code)) return false;
     try{
@@ -114,12 +160,20 @@
         body: JSON.stringify({ rfids: [code] })
       });
       const data = await res.json();
-      const isDup = Array.isArray(data.dups) && data.dups.map(String).map(s=>s.toUpperCase()).includes(code);
-      if(!isDup){
-        rfids.push(code);
-        renderRFIDs();
-        return true;
+      const rawDuplicates = Array.isArray(data.dups) ? data.dups : [];
+      const normalizedDuplicates = rawDuplicates.map(normalizeRfid);
+      const foreignEntries = parseForeignEntries(data.foreign);
+      const isDup = normalizedDuplicates.includes(code);
+      const isForeign = foreignEntries.some((item)=> item.rfid === code);
+      if(isDup || isForeign){
+        setValidationFeedback(rawDuplicates, foreignEntries);
+        return false;
       }
+      rfids.push(code);
+      validationDone = false;
+      renderRFIDs();
+      setValidationFeedback([], []);
+      return true;
     }catch{}
     return false;
   }
@@ -160,9 +214,6 @@
     scanEl.placeholder = selectedId ? 'Listo para escanear...' : 'Complete tipo y litraje primero...';
     if(selectedId){ scanEl.focus(); }
     resetRFIDs();
-  // reset validation state
-  dupRfids = [];
-  validationDone = false;
   });
 
   // Handle scanner input: process every 24-char chunk; support paste and fast scans
@@ -245,13 +296,21 @@
       scanEl.placeholder = 'Listo para escanear...';
     }
 
-  // Si el servidor envió duplicados detectados, filtrarlos desde el inicio
-  if(dupRfids.length){
-    rfids = rfids.filter(r => !dupRfids.includes(r));
-    dupRfids = [];
+  // Si el servidor envió duplicados o conflictos de sede, mostrar mensaje inicial
+  if(initialDupRfids.length || initialForeignConflicts.length){
+    const dupSet = new Set(initialDupRfids);
+    const foreignSet = new Set(initialForeignConflicts.map((item)=> item.rfid));
+    if(dupSet.size || foreignSet.size){
+      rfids = rfids.filter((r)=> !dupSet.has(normalizeRfid(r)) && !foreignSet.has(normalizeRfid(r)));
+    }
   }
   renderRFIDs();
-  if(rfids.length){ validateRfids(); }
+  if(initialDupRfids.length || initialForeignConflicts.length){
+    setValidationFeedback(initialDupRfids, initialForeignConflicts);
+    if(rfids.length){ validateRfids(); }
+  } else if(rfids.length){
+    validateRfids();
+  }
     tipoEl.focus();
   }
 })();

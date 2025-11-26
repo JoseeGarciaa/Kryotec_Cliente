@@ -15,24 +15,27 @@ function normTipo(tipo: string | null): 'TIC' | 'VIP' | 'Cube' | 'Otros' {
   return 'Otros';
 }
 
+async function loadModelosByTipo(tenant: string): Promise<Record<string, Array<{ id: number; name: string }>>> {
+  const modelosRes = await withTenant(tenant, (c) => c.query<ModeloRow>('SELECT modelo_id, nombre_modelo, tipo FROM modelos ORDER BY nombre_modelo'));
+  const modelos = modelosRes.rows;
+  const byTipo: Record<string, Array<{ id: number; name: string }>> = { TIC: [], VIP: [], Cube: [], Otros: [] } as any;
+  for (const m of modelos) {
+    const key = normTipo(m.tipo);
+    (byTipo[key] = byTipo[key] || []).push({ id: m.modelo_id, name: m.nombre_modelo });
+  }
+  return byTipo;
+}
+
 export const RegistroController = {
   index: async (req: Request, res: Response) => {
   const t = (req as any).user?.tenant || resolveTenant(req);
   if (!t) return res.status(400).send('Tenant no especificado');
   const tenant = String(t).startsWith('tenant_') ? String(t) : `tenant_${t}`;
-  const modelosRes = await withTenant(tenant, (c) => c.query<ModeloRow>('SELECT modelo_id, nombre_modelo, tipo FROM modelos ORDER BY nombre_modelo'));
-    const modelos = modelosRes.rows;
-
-    // Build a simple data structure { category: [{id, name}, ...] }
-    const byTipo: Record<string, Array<{ id: number; name: string }>> = { TIC: [], VIP: [], Cube: [], Otros: [] } as any;
-    for (const m of modelos) {
-      const key = normTipo(m.tipo);
-      (byTipo[key] = byTipo[key] || []).push({ id: m.modelo_id, name: m.nombre_modelo });
-    }
+  const modelosByTipo = await loadModelosByTipo(tenant);
 
     res.render('registro/index', {
       title: 'Registro de Items',
-      modelosByTipo: byTipo,
+      modelosByTipo,
     });
   },
 
@@ -53,21 +56,14 @@ export const RegistroController = {
     const rfidsArr = Array.from(new Set(
       rawList.map((r) => String(r || '').trim().toUpperCase()).filter((r) => r.length === 24)
     ));
+    const modelosByTipo = await loadModelosByTipo(tenant);
+
     if (!modeloIdNum || rfidsArr.length === 0) {
-      // Rebuild modelosByTipo for re-render
-      const modelosRes = await withTenant(tenant, (c) => c.query<ModeloRow>('SELECT modelo_id, nombre_modelo, tipo FROM modelos ORDER BY nombre_modelo'));
-      const byTipo: Record<string, Array<{ id: number; name: string }>> = { TIC: [], VIP: [], Cube: [], Otros: [] } as any;
-      for (const m of modelosRes.rows) {
-        const key = normTipo(m.tipo);
-        (byTipo[key] = byTipo[key] || []).push({ id: m.modelo_id, name: m.nombre_modelo });
-      }
-  return res.status(200).render('registro/index', { title: 'Registro de Items', error: 'Complete tipo, litraje y escanee al menos un RFID', modelosByTipo: byTipo, rfids: rfidsArr, selectedModelo: modeloIdNum });
+  return res.status(200).render('registro/index', { title: 'Registro de Items', error: 'Complete tipo, litraje y escanee al menos un RFID', modelosByTipo, rfids: rfidsArr, selectedModelo: modeloIdNum });
     }
 
     try {
-      let selectedTipo: string = 'Otros';
-      let insertedCount = 0;
-      await withTenant(tenant, async (c) => {
+      const result = await withTenant(tenant, async (c) => {
         let sedeToUse: number | null = sedeId ?? null;
         if (sedeToUse !== null) {
           const sedeExists = await SedesModel.findById(c, sedeToUse);
@@ -82,7 +78,27 @@ export const RegistroController = {
         );
         if (!meta.rowCount) throw new Error('Modelo no encontrado');
         const nombre = meta.rows[0].nombre_modelo;
-        selectedTipo = normTipo(meta.rows[0].tipo) as string;
+        const selectedTipo = normTipo(meta.rows[0].tipo) as string;
+
+        const existingQ = await c.query<{ rfid: string; sede_id: number | null; sede_nombre: string | null }>(
+          `SELECT ic.rfid, ic.sede_id, s.nombre AS sede_nombre
+             FROM inventario_credocubes ic
+        LEFT JOIN sedes s ON s.sede_id = ic.sede_id
+            WHERE ic.rfid = ANY($1::text[])`,
+          [rfidsArr]
+        );
+        const existingMap = new Map(existingQ.rows.map((row) => [row.rfid, row]));
+        const foreignConflicts: Array<{ rfid: string; sedeNombre: string | null }> = [];
+        const duplicateRfids: string[] = [];
+        for (const row of existingQ.rows) {
+          const rfid = (row.rfid || '').toUpperCase();
+          if (rfid.length !== 24) continue;
+          if (sedeId !== null && row.sede_id !== null && row.sede_id !== sedeId) {
+            foreignConflicts.push({ rfid, sedeNombre: row.sede_nombre || null });
+          } else {
+            duplicateRfids.push(rfid);
+          }
+        }
 
         // Asegurar índice único para ON CONFLICT (rfid)
         await c.query(`DO $$
@@ -93,8 +109,9 @@ export const RegistroController = {
           END;
         END$$;`);
 
-        // Insertar con ON CONFLICT DO NOTHING para evitar 23505 y permitir éxito parcial
+        let insertedCount = 0;
         for (const rfid of rfidsArr) {
+          if (existingMap.has(rfid)) continue;
           const r = await c.query(
             `INSERT INTO inventario_credocubes 
                (modelo_id, nombre_unidad, rfid, lote, estado, sub_estado, sede_id)
@@ -105,29 +122,46 @@ export const RegistroController = {
           );
           if (r.rowCount) insertedCount += r.rowCount;
         }
+
+        return { insertedCount, selectedTipo, foreignConflicts, duplicateRfids };
       });
-      // Crear alerta de registro si se insertó al menos un item
-      if (insertedCount > 0) {
-        const desc = `${insertedCount} item${insertedCount>1 ? 's' : ''} registrado${insertedCount>1 ? 's' : ''} (${selectedTipo})`;
+
+      if (result.insertedCount > 0) {
+        const desc = `${result.insertedCount} item${result.insertedCount>1 ? 's' : ''} registrado${result.insertedCount>1 ? 's' : ''} (${result.selectedTipo})`;
         await withTenant(tenant, (c) => AlertsModel.create(c, { tipo_alerta: 'inventario:registro', descripcion: desc }));
       }
-      return res.redirect('/inventario');
+
+      const successMessage = result.insertedCount > 0
+        ? `${result.insertedCount} item${result.insertedCount>1 ? 's' : ''} registrado${result.insertedCount>1 ? 's' : ''} correctamente.`
+        : '';
+
+      const hasConflicts = result.foreignConflicts.length > 0 || result.duplicateRfids.length > 0;
+      const errorMessage = !result.insertedCount && hasConflicts
+        ? 'No se registraron items. Revisa los avisos de duplicados o piezas asignadas a otra sede.'
+        : '';
+
+      return res.status(200).render('registro/index', {
+        title: 'Registro de Items',
+        modelosByTipo,
+        success: successMessage,
+        error: errorMessage,
+        dups: result.duplicateRfids,
+        foreignConflicts: result.foreignConflicts,
+        rfids: [],
+        selectedModelo: modeloIdNum,
+        selectedTipo: result.selectedTipo,
+      });
     } catch (e: any) {
       console.error(e);
       // Fallback: mostrar mensaje amable sin bloquear si algo menor falló
-      const modelosRes = await withTenant(tenant, (c) => c.query<ModeloRow>('SELECT modelo_id, nombre_modelo, tipo FROM modelos ORDER BY nombre_modelo'));
-      const byTipo: Record<string, Array<{ id: number; name: string }>> = { TIC: [], VIP: [], Cube: [], Otros: [] } as any;
-      for (const m of modelosRes.rows) {
-        const key = normTipo(m.tipo);
-        (byTipo[key] = byTipo[key] || []).push({ id: m.modelo_id, name: m.nombre_modelo });
-      }
-      return res.status(200).render('registro/index', { title: 'Registro de Items', error: 'Error registrando items', modelosByTipo: byTipo, rfids: [], selectedModelo: modeloIdNum });
+      return res.status(200).render('registro/index', { title: 'Registro de Items', error: 'Error registrando items', modelosByTipo, rfids: [], selectedModelo: modeloIdNum });
     }
   },
   validate: async (req: Request, res: Response) => {
     try {
       const tenant = (req as any).user?.tenant || resolveTenant(req);
-      if (!tenant) return res.json({ dups: [] });
+      if (!tenant) return res.json({ dups: [], foreign: [] });
+      const tenantKey = String(tenant).startsWith('tenant_') ? String(tenant) : `tenant_${tenant}`;
       const sedeId = getRequestSedeId(req);
       const body = req.body as any;
       const rawList: string[] = Array.isArray(body.rfids)
@@ -135,18 +169,31 @@ export const RegistroController = {
         : (body.rfids && typeof body.rfids === 'object')
           ? Object.values(body.rfids)
           : [];
-      const rfids = Array.from(new Set(rawList.map((r: any) => String(r || '').trim()).filter((r: string) => r.length === 24)));
-      if (rfids.length === 0) return res.json({ dups: [] });
-      let sql = 'SELECT rfid FROM inventario_credocubes WHERE rfid = ANY($1::text[])';
-      const params: any[] = [rfids];
-      if (sedeId !== null) {
-        params.push(sedeId);
-        sql += ' AND (sede_id = $2 OR sede_id IS NULL)';
+      const rfids = Array.from(new Set(rawList.map((r: any) => String(r || '').trim().toUpperCase()).filter((r: string) => r.length === 24)));
+      if (rfids.length === 0) return res.json({ dups: [], foreign: [] });
+
+      const found = await withTenant(tenantKey, (c) => c.query<{ rfid: string; sede_id: number | null; sede_nombre: string | null }>(
+        `SELECT ic.rfid, ic.sede_id, s.nombre AS sede_nombre
+           FROM inventario_credocubes ic
+      LEFT JOIN sedes s ON s.sede_id = ic.sede_id
+          WHERE ic.rfid = ANY($1::text[])`,
+        [rfids]
+      ));
+
+      const duplicates: string[] = [];
+      const foreign: Array<{ rfid: string; sede_nombre: string | null }> = [];
+      for (const row of found.rows) {
+        const rfid = (row.rfid || '').toUpperCase();
+        if (rfid.length !== 24) continue;
+        if (sedeId !== null && row.sede_id !== null && row.sede_id !== sedeId) {
+          foreign.push({ rfid, sede_nombre: row.sede_nombre || null });
+        } else {
+          duplicates.push(rfid);
+        }
       }
-      const found = await withTenant(String(tenant).startsWith('tenant_') ? String(tenant) : `tenant_${tenant}`, (c) => c.query<{ rfid: string }>(sql, params));
-      return res.json({ dups: found.rows.map((r) => r.rfid) });
+      return res.json({ dups: duplicates, foreign });
     } catch (e) {
-      return res.json({ dups: [] });
+      return res.json({ dups: [], foreign: [] });
     }
   },
 };
