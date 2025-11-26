@@ -796,7 +796,7 @@
       panel.classList.add('hidden'); state.cajaSel=null; state.tics=[]; state.ticChecks.clear(); state.activeTic=null;
       scanInput && (scanInput.value='');
       await load();
-      scanMsg && (scanMsg.textContent='Inspección finalizada: pieza devuelta a Bodega');
+      if(scanMsg) scanMsg.textContent = '';
     } catch(e){ completeBtn.disabled=false; scanMsg && (scanMsg.textContent='Error'); }
   });
 
