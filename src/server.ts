@@ -24,6 +24,7 @@ import { resolveTenant } from './middleware/tenant';
 import { withTenant } from './db/pool';
 import { UsersModel } from './models/User';
 import { AlertsModel } from './models/Alerts';
+import { startPreacondTimerSweeper } from './services/preacondTimerSweeper';
 import fs from 'fs';
 import zlib from 'zlib';
 import sharp from 'sharp';
@@ -265,6 +266,7 @@ app.get('/robots.txt', (_req, res) => {
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log(`Server running on http://localhost:${PORT}`));
+startPreacondTimerSweeper();
 
 // Theme toggle
 app.post('/ui/theme-toggle', (req, res) => {
