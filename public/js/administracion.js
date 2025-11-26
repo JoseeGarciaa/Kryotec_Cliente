@@ -61,9 +61,13 @@
       formEdit.telefono.value = ds.telefono || '';
   let rol = ds.rol || '';
   if(['Admin','Administrador','admin'].includes(rol)) rol = 'admin';
+  if(['SuperAdmin','superadmin','Super Admin','super admin','super_admin','Super-Admin','super-admin'].includes(rol)) rol = 'super_admin';
   formEdit.rol.value = rol || 'Acondicionador';
       if(formEdit.sede_id){
         formEdit.sede_id.value = ds.sede || '';
+        if(!ds.sede){
+          formEdit.sede_id.value = '';
+        }
       }
       if (formEdit.sesion_ttl_minutos) {
         const ttl = ds.ttl ? Number(ds.ttl) : '';

@@ -4,9 +4,25 @@ import crypto from 'crypto';
 import { withTenant } from '../db/pool';
 import { UsersModel } from '../models/User';
 import { SedesModel } from '../models/Sede';
-import { ALLOWED_ROLES } from '../middleware/roles';
+import { ALLOWED_ROLES, normalizeRoleName, resolveEffectiveRole } from '../middleware/roles';
 import { normalizeSessionTtl, PASSWORD_POLICY_MESSAGE, validatePasswordStrength } from '../utils/passwordPolicy';
 import { config } from '../config';
+
+function coerceSedeId(value: unknown): number | null {
+  if (value === null || value === undefined) return null;
+  if (typeof value === 'string') {
+    const trimmed = value.trim().toLowerCase();
+    if (trimmed === '' || trimmed === 'null' || trimmed === 'undefined' || trimmed === 'sin sede' || trimmed === 'todas las sedes') {
+      return null;
+    }
+    const parsed = Number(trimmed);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+  if (typeof value === 'number') {
+    return Number.isFinite(value) ? value : null;
+  }
+  return null;
+}
 
 function generateTemporalPassword(): string {
   const upper = 'ABCDEFGHJKLMNPQRSTUVWXYZ';
@@ -91,10 +107,10 @@ export const AdminController = {
       const rolFinal = (() => {
         let r = (rol || 'Acondicionador').trim();
         if (['Administrador','Admin','admin'].includes(r)) r = 'admin';
+        if (['SuperAdmin','superadmin','Super Admin','super admin','super_admin','Super-Admin','super-admin'].includes(r)) r = 'super_admin';
         return ALLOWED_ROLES.includes(r) ? r : 'Acondicionador';
       })();
-      const rawSedeId = sede_id !== undefined && sede_id !== '' ? Number(sede_id) : null;
-      const normalizedSedeId = typeof rawSedeId === 'number' && Number.isFinite(rawSedeId) ? rawSedeId : null;
+      const normalizedSedeId = coerceSedeId(sede_id);
       await withTenant(tenant, (client) => UsersModel.create(client, {
         nombre: nombre.trim(),
         correo: correoNorm,
@@ -177,13 +193,17 @@ export const AdminController = {
       const rolFinal = (() => {
         let r = (rol || 'Acondicionador').trim();
         if (['Administrador','Admin','admin'].includes(r)) r = 'admin';
+        if (['SuperAdmin','superadmin','Super Admin','super admin','super_admin','Super-Admin','super-admin'].includes(r)) r = 'super_admin';
         return ALLOWED_ROLES.includes(r) ? r : 'Acondicionador';
       })();
       const nuevoActivo = activo === 'true' || activo === true;
+      const normalizedSedeId = coerceSedeId(sede_id);
 
       // Validar: no permitir que el último admin quede sin admin (desactivado o cambio de rol)
-  const isCurrentlyAdmin = ['admin','administrador'].includes((currentUser.rol || '').toLowerCase());
-  const willBeAdmin = ['admin'].includes((rolFinal || '').toLowerCase());
+      const currentRoleNorm = resolveEffectiveRole(currentUser);
+      const nextRoleNorm = resolveEffectiveRole({ rol: rolFinal, sede_id: normalizedSedeId });
+      const isCurrentlyAdmin = ['admin','super_admin'].includes(currentRoleNorm);
+      const willBeAdmin = ['admin','super_admin'].includes(nextRoleNorm);
       if (isCurrentlyAdmin && (!willBeAdmin || !nuevoActivo)) {
         const lastAdminCount = await withTenant(tenant, (client) => UsersModel.countActiveAdmins(client));
         // Si solo hay un admin activo y este cambio lo elimina como admin (por rol o activo=false), bloquear
@@ -192,8 +212,6 @@ export const AdminController = {
         }
       }
 
-      const rawSedeId = sede_id !== undefined && sede_id !== '' ? Number(sede_id) : null;
-      const normalizedSedeId = typeof rawSedeId === 'number' && Number.isFinite(rawSedeId) ? rawSedeId : null;
       const sessionTtl = sesion_ttl_minutos !== undefined && sesion_ttl_minutos !== ''
         ? normalizeSessionTtl(sesion_ttl_minutos)
         : null;
@@ -236,7 +254,7 @@ export const AdminController = {
         const isLastAdmin = await withTenant(tenant, async (client) => {
           const user = await UsersModel.findById(client, id);
           if (!user) return false; // si no existe respondemos luego
-          const isAdmin = ['admin','administrador'].includes((user.rol || '').toLowerCase());
+          const isAdmin = ['admin','super_admin'].includes(resolveEffectiveRole(user));
           if (!isAdmin) return false; // no es admin, se puede desactivar
           const count = await UsersModel.countActiveAdmins(client);
             return count === 1; // último
@@ -262,7 +280,7 @@ export const AdminController = {
       const canDelete = await withTenant(tenant, async (client) => {
         const user = await UsersModel.findById(client, id);
         if (!user) return { proceed: true };
-        const isAdmin = ['admin','administrador'].includes((user.rol || '').toLowerCase());
+        const isAdmin = ['admin','super_admin'].includes(resolveEffectiveRole(user));
         if (!isAdmin) return { proceed: true };
         const count = await UsersModel.countActiveAdmins(client);
         if (count === 1 && user.activo) {

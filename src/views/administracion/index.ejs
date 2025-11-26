@@ -99,11 +99,27 @@
                 </td>
                 <td class="text-xs"><%= u.telefono || '-' %></td>
                 <td>
-                  <% const roleMap = { 'Preacond': 'Acondicionador', 'Operacion': 'Operador', 'Bodega': 'Bodeguero', 'Inspeccion': 'Inspeccionador', 'Administrador': 'admin', 'Admin': 'admin', 'admin': 'admin' }; %>
-                  <% const displayRole = roleMap[u.rol] || u.rol; %>
-                  <span class="badge badge-outline <%= ['Admin','Administrador','admin'].includes(u.rol)?'badge-primary':'' %>"><%= displayRole %></span>
+                  <% const roleMap = {
+                    'Preacond': 'Acondicionador',
+                    'Operacion': 'Operador',
+                    'Bodega': 'Bodeguero',
+                    'Inspeccion': 'Inspeccionador',
+                    'Administrador': 'Admin',
+                    'Admin': 'Admin',
+                    'admin': 'Admin',
+                    'super_admin': 'Super Admin',
+                    'SuperAdmin': 'Super Admin',
+                    'superadmin': 'Super Admin',
+                    'super-admin': 'Super Admin'
+                  }; %>
+                  <% const isGlobal = u.sede_id === null || u.sede_id === undefined || u.sede_id === ''; %>
+                  <% const displayRole = isGlobal ? 'Super Admin' : (roleMap[u.rol] || u.rol); %>
+                  <span class="badge badge-outline <%= isGlobal || ['Admin','Administrador','admin','SuperAdmin','superadmin','super_admin','super-admin'].includes(u.rol)?'badge-primary':'' %>"><%= displayRole %></span>
                 </td>
-                <td><span class="badge badge-ghost text-xs"><%= u.sede_nombre || (u.sede_id ? ('ID '+u.sede_id) : 'Sin sede') %></span></td>
+                <td>
+                  <% const hasSede = !(u.sede_id === null || u.sede_id === undefined || u.sede_id === ''); %>
+                  <span class="badge badge-ghost text-xs"><%= hasSede ? (u.sede_nombre || ('ID '+u.sede_id)) : 'Todas las sedes' %></span>
+                </td>
                 <td class="text-xs"><%= u.sesion_ttl_minutos || sessionTtlDefault %></td>
                 <td>
                   <button
@@ -174,7 +190,8 @@
         <option value="Operador">Operador</option>
         <option value="Bodeguero">Bodeguero</option>
         <option value="Inspeccionador">Inspeccionador</option>
-  <option value="admin">admin</option>
+        <option value="admin">Admin</option>
+        <option value="super_admin">Super admin</option>
       </select>
       <select name="sede_id" class="select select-sm select-bordered w-full">
         <option value="">Sin sede</option>
@@ -207,7 +224,8 @@
         <option value="Operador">Operador</option>
         <option value="Bodeguero">Bodeguero</option>
         <option value="Inspeccionador">Inspeccionador</option>
-  <option value="admin">admin</option>
+        <option value="admin">Admin</option>
+        <option value="super_admin">Super admin</option>
       </select>
       <select name="sede_id" class="select select-sm select-bordered w-full">
         <option value="">Sin sede</option>

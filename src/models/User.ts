@@ -191,7 +191,7 @@ export const UsersModel = {
   /** Cuenta el total de usuarios cuyo rol es admin/administrador (case-insensitive) */
   async countAdmins(client: PoolClient): Promise<number> {
     const { rows } = await client.query<{ count: string }>(
-      `SELECT COUNT(*)::text AS count FROM usuarios WHERE LOWER(rol) IN ('admin','administrador')`
+      `SELECT COUNT(*)::text AS count FROM usuarios WHERE LOWER(rol) IN ('admin','administrador','super_admin','superadmin','super administrador','super admin') OR sede_id IS NULL`
     );
     return parseInt(rows[0]?.count || '0', 10);
   },
@@ -199,7 +199,7 @@ export const UsersModel = {
   /** Cuenta administradores activos */
   async countActiveAdmins(client: PoolClient): Promise<number> {
     const { rows } = await client.query<{ count: string }>(
-      `SELECT COUNT(*)::text AS count FROM usuarios WHERE activo = true AND LOWER(rol) IN ('admin','administrador')`
+      `SELECT COUNT(*)::text AS count FROM usuarios WHERE activo = true AND (LOWER(rol) IN ('admin','administrador','super_admin','superadmin','super administrador','super admin') OR sede_id IS NULL)`
     );
     return parseInt(rows[0]?.count || '0', 10);
   },

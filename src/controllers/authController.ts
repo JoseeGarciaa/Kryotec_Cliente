@@ -8,6 +8,7 @@ import { resolveTenant } from '../middleware/tenant';
 import { findUserInAnyTenant } from '../services/tenantDiscovery';
 import { ensureSecurityArtifacts } from '../services/securityBootstrap';
 import { normalizeSessionTtl } from '../utils/passwordPolicy';
+import { resolveEffectiveRole } from '../middleware/roles';
 
 export const AuthController = {
   loginView: (req: Request, res: Response) => {
@@ -137,12 +138,11 @@ export const AuthController = {
 
   // Redirección según rol
   const rolLower = (user.rol || '').toLowerCase();
-  // Normalización a nuevos nombres
-  const legacyMap: Record<string,string> = { preacond:'acondicionador', operacion:'operador', bodega:'bodeguero', inspeccion:'inspeccionador', admin:'administrador' };
-  const roleKey = legacyMap[rolLower] || rolLower;
+  const roleKey = resolveEffectiveRole(user) || rolLower;
   if (mustChangePassword) {
     return res.redirect('/cuenta?mustChange=1');
   }
+  if (roleKey === 'super_admin') return res.redirect('/dashboard');
   if (roleKey === 'acondicionador') return res.redirect('/operacion/preacond');
   if (roleKey === 'operador') return res.redirect('/operacion/operacion');
   if (roleKey === 'bodeguero') return res.redirect('/operacion/bodega');
@@ -224,11 +224,11 @@ export const AuthController = {
               maxAge: sessionTtlMinutes * 60 * 1000,
             });
             const rolLower = (user.rol || '').toLowerCase();
-            const legacyMap: Record<string,string> = { preacond:'acondicionador', operacion:'operador', bodega:'bodeguero', inspeccion:'inspeccionador', admin:'administrador' };
-            const roleKey = legacyMap[rolLower] || rolLower;
+            const roleKey = resolveEffectiveRole(user) || rolLower;
             if (mustChangePassword) {
               return res.redirect('/cuenta?mustChange=1');
             }
+            if (roleKey === 'super_admin') return res.redirect('/dashboard');
             if (roleKey === 'acondicionador') return res.redirect('/operacion/preacond');
             if (roleKey === 'operador') return res.redirect('/operacion/operacion');
             if (roleKey === 'bodeguero') return res.redirect('/operacion/bodega');
