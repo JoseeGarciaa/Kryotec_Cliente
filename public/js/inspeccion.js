@@ -553,6 +553,7 @@
       inputCode = undefined;
     }
     const fromBulk = !!opts.fromBulk;
+    const individualMode = !state.bulkMode;
     const code = normalizeCode(inputCode ?? (scanInput?.value||''));
     const targetMsg = fromBulk ? bulkMsg : scanMsg;
     if(code.length!==24){
@@ -570,24 +571,33 @@
     }
     let lastError = 'Pieza no encontrada';
     try {
-      const r = await fetch('/operacion/inspeccion/lookup',{ method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ rfid: code })});
+      const r = await fetch('/operacion/inspeccion/lookup',{ method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ rfid: code, individual: individualMode })});
       const j = await r.json();
       if(j.ok){
-        state.cajaSel = j.caja; state.tics = j.tics||[]; state.ticChecks = new Map(); state.activeTic = null; state.inInspeccion = true;
-        try{
-          const r2 = await fetch('/operacion/caja/lookup',{ method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ code })});
-          const j2 = await r2.json();
-          if(j2.ok){
-            const comps = (j2.caja?.items||[]).map(it=>({ codigo: it.rfid, tipo: (it.rol||inferTipo(it.nombre_modelo||'')) }));
-            state.cajaSel = { ...state.cajaSel, componentes: comps };
-          } else if(Array.isArray(j.comps)){
-            state.cajaSel = { ...state.cajaSel, componentes: (j.comps||[]).map(it=> ({ codigo: it.rfid, tipo: it.rol })) };
-          }
-        }catch(_e){
-          if(Array.isArray(j.comps)){
-            state.cajaSel = { ...state.cajaSel, componentes: (j.comps||[]).map(it=> ({ codigo: it.rfid, tipo: it.rol })) };
-          }
+        const upperCode = code.toUpperCase();
+        const baseCaja = j.caja ? { ...j.caja } : {};
+        state.cajaSel = baseCaja;
+        state.tics = Array.isArray(j.tics) ? [...j.tics] : [];
+        if(individualMode){
+          state.tics = state.tics.filter((t)=> ((t?.rfid)||'').toUpperCase() === upperCode);
         }
+        state.ticChecks = new Map();
+        state.activeTic = null;
+        state.inInspeccion = true;
+        const rawComps = Array.isArray(j.comps) ? j.comps : [];
+        const compsList = individualMode
+          ? rawComps.filter((it)=> ((it?.rfid)||'').toUpperCase() === upperCode)
+          : rawComps;
+        const compMap = new Map();
+        state.tics.forEach((t)=>{
+          if(t?.rfid){ compMap.set(t.rfid, { codigo: t.rfid, tipo: 'tic' }); }
+        });
+        compsList.forEach((it)=>{
+          if(!it?.rfid) return;
+          const role = ((it.rol || inferTipo(it.nombre_modelo || '')) || '').toLowerCase();
+          compMap.set(it.rfid, { codigo: it.rfid, tipo: role || 'otro' });
+        });
+        state.cajaSel = { ...state.cajaSel, componentes: Array.from(compMap.values()) };
         renderChecklist();
         if(targetMsg) targetMsg.textContent = fromBulk ? `Pieza lista (${code})` : '';
         if(fromBulk){ updateBulkEntry(code, { status:'active', message:'Pieza cargada para Inspección' }); renderBulkQueue(); }
@@ -911,12 +921,19 @@
         `Incompletas: ${incompletas} ${incompletasLitros.length ? '('+incompletasLitros.join(', ')+')' : ''}`+
         `</div>`;
     }
-    if(addConfirm) addConfirm.disabled = total <= 0;
     return { total, completas, incompletas };
   }
 
+  function computeAddTimerSeconds(){
+    const hours = parseInt(addH?.value||'0',10)||0;
+    const minutes = parseInt(addM?.value||'0',10)||0;
+    return (hours*3600) + (minutes*60);
+  }
+
   function updateAddConfirm(){
-    renderAddCounts();
+    const { total } = renderAddCounts();
+    const seconds = computeAddTimerSeconds();
+    if(addConfirm) addConfirm.disabled = total <= 0 || seconds <= 0;
   }
 
   function renderAddItems(){
@@ -1053,16 +1070,18 @@
     if(!rfids.length){ addMsg && (addMsg.textContent='Escanea al menos una pieza'); return; }
     const { total } = renderAddCounts();
     if(total <= 0){ addMsg && (addMsg.textContent='Identifica al menos un conjunto para continuar'); return; }
-    const h = parseInt(addH?.value||'0',10)||0;
-    const m = parseInt(addM?.value||'0',10)||0;
-    const secRaw = h*3600 + m*60;
-    const sec = Math.max(0, secRaw);
+    const sec = computeAddTimerSeconds();
+    if(sec <= 0){
+      addMsg && (addMsg.textContent='Configura un cronómetro mayor a 0.');
+      updateAddConfirm();
+      return;
+    }
     addMsg && (addMsg.textContent='Agregando...');
     try {
       const locationPayload = captureAddLocation();
       const attempt = await postJSONWithSedeTransfer('/operacion/inspeccion/pull', {
         rfids,
-        durationSec: sec > 0 ? sec : null,
+        durationSec: sec,
         zona_id: locationPayload.zona_id,
         seccion_id: locationPayload.seccion_id
       }, {

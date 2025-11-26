@@ -1648,6 +1648,8 @@ export const OperacionController = {
     const tenant = (req as any).user?.tenant;
     const sedeId = getRequestSedeId(req);
     const { rfid } = req.body as any;
+    const individualRaw = (req.body as any)?.individual ?? (req.body as any)?.individualMode;
+    const individualMode = individualRaw === true || individualRaw === 'true' || individualRaw === 1 || individualRaw === '1';
     const code = typeof rfid === 'string' ? rfid.trim() : '';
     const allowSedeTransferFlag = allowSedeTransferFromValue(req.body?.allowSedeTransfer);
     if(code.length !== 24) return res.status(400).json({ ok:false, error:'RFID inválido' });
@@ -1845,6 +1847,12 @@ export const OperacionController = {
         comps = await fetchVipCube();
       }
 
+      if(individualMode){
+        const normalizedCode = code.toUpperCase();
+        tics = (tics || []).filter((t: any)=> ((t?.rfid)||'').toUpperCase() === normalizedCode);
+        comps = (comps || []).filter((c: any)=> ((c?.rfid)||'').toUpperCase() === normalizedCode);
+      }
+
       return res.json({ ok:true, caja:{ id: cajaIdNum, lote: loteVal }, tics, comps, reactivated });
     } catch(e:any){ res.status(500).json({ ok:false, error: e.message||'Error lookup caja inspección' }); }
   },
@@ -1873,19 +1881,17 @@ export const OperacionController = {
     if (!codes.length) {
       return res.status(400).json({ ok:false, error:'Debes escanear al menos un RFID válido' });
     }
-    const { durationSec } = req.body as any;
-    let dur: number | null = null;
-    if (durationSec !== undefined && durationSec !== null && durationSec !== '') {
-      const parsed = Number(durationSec);
-      if (!Number.isFinite(parsed) || parsed < 0) {
-        return res.status(400).json({ ok:false, error:'Duración inválida' });
-      }
-      if (parsed > 0) {
-        dur = Math.floor(parsed);
-      }
+    const durationRaw = (req.body as any)?.durationSec;
+    if (durationRaw === undefined || durationRaw === null || durationRaw === '') {
+      return res.status(400).json({ ok:false, error:'Debes asignar un cronómetro para iniciar la Inspección.' });
     }
-    const hasTimer = dur !== null;
-    const durationParam = hasTimer ? (dur as number) : null;
+    const durationParsed = Number(durationRaw);
+    if (!Number.isFinite(durationParsed) || durationParsed <= 0) {
+      return res.status(400).json({ ok:false, error:'Duración inválida. Usa un cronómetro mayor a 0 segundos.' });
+    }
+    const dur = Math.floor(durationParsed);
+    const hasTimer = true;
+    const durationParam = dur;
     try {
       const lookupQ = await withTenant(tenant, (c)=> c.query(
         `SELECT aci.caja_id, c.lote, ic.rfid, ic.sede_id, ic.estado, ic.sub_estado,
