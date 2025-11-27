@@ -17,8 +17,13 @@
   const fSeccion = document.getElementById('inv-edit-seccion');
   const locationHint = document.getElementById('inv-edit-location-hint');
   const limitSelect = document.getElementById('inv-limit-select');
+  const fFechaIngreso = document.getElementById('inv-edit-fecha-ingreso');
+  const fUltima = document.getElementById('inv-edit-ultima');
+  const fActivoToggle = document.getElementById('inv-edit-activo-toggle');
+  const fActivoHidden = document.getElementById('inv-edit-activo');
+  const fActivoLabel = document.getElementById('inv-edit-activo-label');
 
-  const COLSPAN = 11;
+  const COLSPAN = 13;
   let rfids = [];
   let remainder = '';
   let debounceTimer = 0;
@@ -37,6 +42,31 @@
 
   function escapeAttr(value) {
     return escapeHtml(value ?? '');
+  }
+
+  function formatDateTime(value) {
+    if (!value) return '-';
+    const date = value instanceof Date ? value : new Date(value);
+    if (Number.isNaN(date.getTime())) return '-';
+    try {
+      return date.toLocaleString('es-CO');
+    } catch {
+      return date.toLocaleString();
+    }
+  }
+
+  function setActivoState(isActive) {
+    if (fActivoToggle instanceof HTMLInputElement) {
+      fActivoToggle.checked = !!isActive;
+    }
+    if (fActivoHidden instanceof HTMLInputElement) {
+      fActivoHidden.value = isActive ? '1' : '0';
+    }
+    if (fActivoLabel) {
+      fActivoLabel.textContent = isActive ? 'Habilitado' : 'Inhabilitado';
+      fActivoLabel.classList.toggle('text-success', !!isActive);
+      fActivoLabel.classList.toggle('text-error', !isActive);
+    }
   }
 
   function updateCount() {
@@ -244,13 +274,19 @@
         return;
       }
       const rendered = rows.map((i) => {
-        const fechaRef = i.ultima_actualizacion || i.fecha_ingreso;
-        const fecha = fechaRef ? new Date(fechaRef).toLocaleString() : '-';
+        const fechaIngreso = formatDateTime(i.fecha_ingreso);
+        const fechaActual = formatDateTime(i.ultima_actualizacion || i.fecha_ingreso);
+        const fechaIngresoIso = i.fecha_ingreso ? new Date(i.fecha_ingreso).toISOString() : '';
+        const fechaActualIso = i.ultima_actualizacion ? new Date(i.ultima_actualizacion).toISOString() : (i.fecha_ingreso ? new Date(i.fecha_ingreso).toISOString() : '');
         const sub = i.sub_estado
           ? `<div class="badge badge-outline whitespace-nowrap">${escapeHtml(i.sub_estado)}</div>`
           : '<span class="opacity-60">—</span>';
         const zonaCell = i.zona_nombre ? escapeHtml(i.zona_nombre) : '<span class="opacity-60">—</span>';
         const seccionCell = i.seccion_nombre ? escapeHtml(i.seccion_nombre) : '<span class="opacity-60">—</span>';
+        const activo = i.activo === false ? '0' : '1';
+        const activoBadge = i.activo === false
+          ? '<span class="badge badge-outline badge-error">Inhabilitado</span>'
+          : '<span class="badge badge-outline badge-success">Habilitado</span>';
         return `<tr>
           <td>${escapeHtml(i.nombre_unidad || '')}</td>
           <td>${escapeHtml(i.modelo_id || '')}</td>
@@ -261,8 +297,10 @@
           <td class="whitespace-nowrap">${zonaCell}</td>
           <td class="whitespace-nowrap">${seccionCell}</td>
           <td>${escapeHtml(i.categoria || '')}</td>
-          <td>${fecha}</td>
-          <td class="whitespace-nowrap"><button type="button" class="btn btn-ghost btn-xs" data-action="inv-edit" data-id="${escapeAttr(i.id)}" data-modelo_id="${escapeAttr(i.modelo_id)}" data-rfid="${escapeAttr(i.rfid)}" data-nombre="${escapeAttr(i.nombre_unidad)}" data-lote="${escapeAttr(i.lote)}" data-estado="${escapeAttr(i.estado)}" data-sub="${escapeAttr(i.sub_estado)}" data-zona-id="${escapeAttr(i.zona_id ?? '')}" data-seccion-id="${escapeAttr(i.seccion_id ?? '')}">✎</button></td>
+          <td>${fechaIngreso}</td>
+          <td>${fechaActual}</td>
+          <td>${activoBadge}</td>
+          <td class="whitespace-nowrap"><button type="button" class="btn btn-ghost btn-xs" data-action="inv-edit" data-id="${escapeAttr(i.id)}" data-modelo_id="${escapeAttr(i.modelo_id)}" data-rfid="${escapeAttr(i.rfid)}" data-nombre="${escapeAttr(i.nombre_unidad)}" data-lote="${escapeAttr(i.lote)}" data-estado="${escapeAttr(i.estado)}" data-sub="${escapeAttr(i.sub_estado)}" data-zona-id="${escapeAttr(i.zona_id ?? '')}" data-seccion-id="${escapeAttr(i.seccion_id ?? '')}" data-fecha-ingreso="${escapeAttr(fechaIngresoIso)}" data-ultima-actualizacion="${escapeAttr(fechaActualIso)}" data-activo="${escapeAttr(activo)}">✎</button></td>
         </tr>`;
       }).join('');
       tbody.innerHTML = rendered;
@@ -352,6 +390,9 @@
       const subEstado = target.getAttribute('data-sub') || '';
       const zonaIdAttr = target.getAttribute('data-zona-id') || '';
       const seccionIdAttr = target.getAttribute('data-seccion-id') || '';
+      const fechaIngresoAttr = target.getAttribute('data-fecha-ingreso') || '';
+      const ultimaAttr = target.getAttribute('data-ultima-actualizacion') || '';
+      const activoAttr = target.getAttribute('data-activo') || '1';
 
       if (formEdit) formEdit.action = `/inventario/${id}/update`;
       if (fModeloId) fModeloId.value = modeloId;
@@ -360,6 +401,9 @@
       if (fLote) fLote.value = lote;
       if (fEstado) fEstado.value = estado;
       if (fSub) fSub.value = subEstado;
+      if (fFechaIngreso) fFechaIngreso.value = fechaIngresoAttr ? formatDateTime(fechaIngresoAttr) : '-';
+      if (fUltima) fUltima.value = ultimaAttr ? formatDateTime(ultimaAttr) : '-';
+      setActivoState(!(activoAttr === '0' || activoAttr === 'false'));
 
       const zonaValue = zonaIdAttr ? Number(zonaIdAttr) : null;
       const seccionValue = seccionIdAttr ? Number(seccionIdAttr) : null;
@@ -391,6 +435,9 @@
         fSeccion.innerHTML = '<option value="">Sin sección</option>';
         fSeccion.disabled = false;
       }
+      if (fFechaIngreso) fFechaIngreso.value = '';
+      if (fUltima) fUltima.value = '';
+      setActivoState(true);
       updateLocationHint('');
     });
   }
@@ -402,11 +449,20 @@
     });
   }
 
+  if (fActivoToggle instanceof HTMLInputElement) {
+    fActivoToggle.addEventListener('change', () => {
+      setActivoState(!!fActivoToggle.checked);
+    });
+  }
+
   if (formEdit) {
     formEdit.addEventListener('submit', () => {
       if (fZona && fSeccion && fZona.disabled) {
         fZona.disabled = false;
         fSeccion.disabled = false;
+      }
+      if (fActivoHidden instanceof HTMLInputElement && fActivoToggle instanceof HTMLInputElement) {
+        fActivoHidden.value = fActivoToggle.checked ? '1' : '0';
       }
     });
   }

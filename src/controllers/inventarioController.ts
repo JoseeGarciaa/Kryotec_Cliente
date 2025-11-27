@@ -117,10 +117,12 @@ export const InventarioController = {
      ic.sub_estado,
      ic.zona_id,
      ic.seccion_id,
+     ic.fecha_ingreso,
+     ic.ultima_actualizacion,
+     ic.activo,
      z.nombre AS zona_nombre,
      sc.nombre AS seccion_nombre,
-     ${catExpr} AS categoria,
-     COALESCE(ic.fecha_ingreso, NOW()) AS ultima_actualizacion`;
+     ${catExpr} AS categoria`;
 
     const baseFromClause = `
       FROM inventario_credocubes ic
@@ -294,8 +296,8 @@ ${selectClause}
     try {
       if(isSingleRfid){
         const params: any[] = [q];
-  let sql = `SELECT ic.id, ic.nombre_unidad, ic.modelo_id, ic.rfid, ic.lote, ic.estado, ic.sub_estado, ic.fecha_ingreso,
-        ic.zona_id, ic.seccion_id, z.nombre AS zona_nombre, sc.nombre AS seccion_nombre
+    let sql = `SELECT ic.id, ic.nombre_unidad, ic.modelo_id, ic.rfid, ic.lote, ic.estado, ic.sub_estado, ic.fecha_ingreso, ic.ultima_actualizacion,
+      ic.activo, ic.zona_id, ic.seccion_id, z.nombre AS zona_nombre, sc.nombre AS seccion_nombre
          FROM inventario_credocubes ic
          LEFT JOIN zonas z ON z.zona_id = ic.zona_id
          LEFT JOIN secciones sc ON sc.seccion_id = ic.seccion_id
@@ -310,8 +312,8 @@ ${selectClause}
       if(scanned.length>0){
         // Multi: traer todos esos RFIDs
         const placeholders = scanned.map((_,i)=>'$'+(i+1));
-  let sql = `SELECT ic.id, ic.nombre_unidad, ic.modelo_id, ic.rfid, ic.lote, ic.estado, ic.sub_estado, ic.fecha_ingreso,
-        ic.zona_id, ic.seccion_id, z.nombre AS zona_nombre, sc.nombre AS seccion_nombre
+    let sql = `SELECT ic.id, ic.nombre_unidad, ic.modelo_id, ic.rfid, ic.lote, ic.estado, ic.sub_estado, ic.fecha_ingreso, ic.ultima_actualizacion,
+      ic.activo, ic.zona_id, ic.seccion_id, z.nombre AS zona_nombre, sc.nombre AS seccion_nombre
          FROM inventario_credocubes ic
          LEFT JOIN zonas z ON z.zona_id = ic.zona_id
          LEFT JOIN secciones sc ON sc.seccion_id = ic.seccion_id
@@ -335,8 +337,8 @@ ${selectClause}
         }
         params.push(limit);
         const limitIndex = params.length;
-  const sql = `SELECT ic.id, ic.nombre_unidad, ic.modelo_id, ic.rfid, ic.lote, ic.estado, ic.sub_estado, ic.fecha_ingreso,
-          ic.zona_id, ic.seccion_id, z.nombre AS zona_nombre, sc.nombre AS seccion_nombre
+    const sql = `SELECT ic.id, ic.nombre_unidad, ic.modelo_id, ic.rfid, ic.lote, ic.estado, ic.sub_estado, ic.fecha_ingreso, ic.ultima_actualizacion,
+      ic.activo, ic.zona_id, ic.seccion_id, z.nombre AS zona_nombre, sc.nombre AS seccion_nombre
          FROM inventario_credocubes ic
          LEFT JOIN zonas z ON z.zona_id = ic.zona_id
          LEFT JOIN secciones sc ON sc.seccion_id = ic.seccion_id
@@ -347,8 +349,8 @@ ${selectClause}
       }
       if (sedeId !== null) {
         const rows = await withTenant(tenant, c=>c.query(
-          `SELECT ic.id, ic.nombre_unidad, ic.modelo_id, ic.rfid, ic.lote, ic.estado, ic.sub_estado, ic.fecha_ingreso,
-                  ic.zona_id, ic.seccion_id, z.nombre AS zona_nombre, sc.nombre AS seccion_nombre
+            `SELECT ic.id, ic.nombre_unidad, ic.modelo_id, ic.rfid, ic.lote, ic.estado, ic.sub_estado, ic.fecha_ingreso, ic.ultima_actualizacion,
+              ic.activo, ic.zona_id, ic.seccion_id, z.nombre AS zona_nombre, sc.nombre AS seccion_nombre
              FROM inventario_credocubes ic
              LEFT JOIN zonas z ON z.zona_id = ic.zona_id
              LEFT JOIN secciones sc ON sc.seccion_id = ic.seccion_id
@@ -371,7 +373,7 @@ ${selectClause}
     const sedeId = getRequestSedeId(req);
     const id = Number((req.params as any).id);
     if(!Number.isFinite(id) || id<=0) return res.status(400).json({ ok:false, error:'id inválido' });
-    const { nombre_unidad, lote, estado, sub_estado, zona_id, seccion_id } = req.body as any;
+    const { nombre_unidad, lote, zona_id, seccion_id, activo: activoRaw } = req.body as any;
 
     const parseOptionalNumber = (value: unknown): number | null => {
       if (value === undefined || value === null || value === '') return null;
@@ -379,8 +381,17 @@ ${selectClause}
       return Number.isFinite(num) ? num : null;
     };
 
+    const parseOptionalBoolean = (value: unknown): boolean | null => {
+      if (value === undefined || value === null || value === '') return null;
+      const normalized = String(value).trim().toLowerCase();
+      if (['1', 'true', 'on', 'yes', 'habilitado', 'activo'].includes(normalized)) return true;
+      if (['0', 'false', 'off', 'no', 'inhabilitado', 'inactivo'].includes(normalized)) return false;
+      return null;
+    };
+
     let zonaId = parseOptionalNumber(zona_id);
     let seccionId = parseOptionalNumber(seccion_id);
+    const activoFlag = parseOptionalBoolean(activoRaw);
 
     try {
       const validation = await withTenant(tenant, async (client) => {
@@ -443,25 +454,23 @@ ${selectClause}
       const params: any[] = [
         nombre_unidad || null,
         (lote || '') ? lote : null,
-        estado || null,
-        (sub_estado || '') ? sub_estado : null,
         sedeId ?? null,
         zonaId,
         seccionId,
+        activoFlag,
         id,
       ];
       let sql = `UPDATE inventario_credocubes ic SET 
            nombre_unidad = COALESCE($1, ic.nombre_unidad),
            lote = $2,
-           estado = COALESCE($3, ic.estado),
-           sub_estado = $4,
-           sede_id = $5,
-           zona_id = $6,
-           seccion_id = $7
-         WHERE ic.id = $8`;
+           sede_id = COALESCE($3, ic.sede_id),
+           zona_id = $4,
+           seccion_id = $5,
+           activo = COALESCE($6, ic.activo)
+         WHERE ic.id = $7`;
       if (sedeId !== null) {
         params.push(sedeId);
-        sql += ' AND (ic.sede_id = $9 OR ic.sede_id IS NULL)';
+        sql += ' AND (ic.sede_id = $8 OR ic.sede_id IS NULL)';
       }
       const updated = await withTenant(tenant, (c) => c.query(sql, params));
       if ((updated as any).rowCount === 0) {
@@ -479,13 +488,21 @@ ${selectClause}
       } else if (seccionId !== null) {
         locationBits.push(`seccion ${seccionId}`);
       }
-      const locationText = locationBits.length ? ` / ${locationBits.join(' - ')}` : '';
+      const locationText = locationBits.length ? locationBits.join(' - ') : '';
+      const changeParts: string[] = [];
+      if (typeof activoFlag === 'boolean') {
+        changeParts.push(activoFlag ? 'habilitado' : 'inhabilitado');
+      }
+      if (locationText) {
+        changeParts.push(locationText);
+      }
+      const changeText = changeParts.join(' / ');
 
       await withTenant(tenant, (c) =>
         AlertsModel.create(c, {
           inventario_id: id,
           tipo_alerta: 'inventario:actualizado',
-          descripcion: `Item ${id} actualizado${estado ? ' - estado: ' + estado : ''}${sub_estado ? ' / ' + sub_estado : ''}${locationText}`,
+          descripcion: `Item ${id} actualizado${changeText ? ' - ' + changeText : ''}`,
         })
       );
       return res.redirect('/inventario');
