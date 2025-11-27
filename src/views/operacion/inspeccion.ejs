@@ -45,6 +45,36 @@
           <button id="insp-bulk-clear" class="btn btn-sm">Limpiar cola</button>
         </div>
         <div id="insp-bulk-msg" class="text-xs min-h-[18px] font-mono opacity-80"></div>
+        <div id="insp-bulk-summary" class="hidden grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-4">
+          <div class="rounded-lg border border-base-300/60 bg-base-200/20 p-3 space-y-1">
+            <div class="text-[10px] uppercase opacity-70 tracking-wide">TIC</div>
+            <div class="space-y-1">
+              <div id="insp-bulk-count-tic" class="text-2xl font-semibold">0</div>
+              <div id="insp-bulk-status-tic" class="text-[11px] opacity-60">Sin piezas</div>
+            </div>
+          </div>
+          <div class="rounded-lg border border-base-300/60 bg-base-200/20 p-3 space-y-1">
+            <div class="text-[10px] uppercase opacity-70 tracking-wide">VIP</div>
+            <div class="space-y-1">
+              <div id="insp-bulk-count-vip" class="text-2xl font-semibold">0</div>
+              <div id="insp-bulk-status-vip" class="text-[11px] opacity-60">Sin piezas</div>
+            </div>
+          </div>
+          <div class="rounded-lg border border-base-300/60 bg-base-200/20 p-3 space-y-1">
+            <div class="text-[10px] uppercase opacity-70 tracking-wide">CUBE</div>
+            <div class="space-y-1">
+              <div id="insp-bulk-count-cube" class="text-2xl font-semibold">0</div>
+              <div id="insp-bulk-status-cube" class="text-[11px] opacity-60">Sin piezas</div>
+            </div>
+          </div>
+          <div class="rounded-lg border border-base-300/60 bg-base-200/20 p-3 space-y-1">
+            <div class="text-[10px] uppercase opacity-70 tracking-wide">Checklist</div>
+            <div class="space-y-1">
+              <div id="insp-bulk-count-total" class="text-2xl font-semibold">0</div>
+              <div id="insp-bulk-status-total" class="text-[11px] opacity-60">Sin piezas en cola</div>
+            </div>
+          </div>
+        </div>
         <div id="insp-bulk-active-container" class="hidden space-y-2">
           <div class="text-xs opacity-80">Piezas en revisión:</div>
           <div id="insp-bulk-active-list" class="flex flex-wrap gap-2"></div>

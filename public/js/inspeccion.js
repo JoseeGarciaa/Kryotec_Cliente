@@ -281,6 +281,15 @@
   const bulkList = qs('#insp-bulk-list');
   const bulkActiveContainer = qs('#insp-bulk-active-container');
   const bulkActiveList = qs('#insp-bulk-active-list');
+  const bulkSummaryWrap = qs('#insp-bulk-summary');
+  const bulkSummaryTicCount = qs('#insp-bulk-count-tic');
+  const bulkSummaryTicStatus = qs('#insp-bulk-status-tic');
+  const bulkSummaryVipCount = qs('#insp-bulk-count-vip');
+  const bulkSummaryVipStatus = qs('#insp-bulk-status-vip');
+  const bulkSummaryCubeCount = qs('#insp-bulk-count-cube');
+  const bulkSummaryCubeStatus = qs('#insp-bulk-status-cube');
+  const bulkSummaryTotalCount = qs('#insp-bulk-count-total');
+  const bulkSummaryTotalStatus = qs('#insp-bulk-status-total');
 
   const scanInput = qs('#insp-scan');
   const scanBtn = qs('#insp-scan-btn');
@@ -462,6 +471,116 @@
     state.cajaSel = null;
     if(bulkActiveList) bulkActiveList.innerHTML = '';
     bulkActiveContainer?.classList.add('hidden');
+    updateMassSummary();
+  }
+
+  function classifyMassRole(comp){
+    const raw = (comp?.tipo || comp?.rol || '').toString().toLowerCase();
+    if(raw.includes('vip')) return 'vip';
+    if(raw.includes('cube') || raw.includes('cubo')) return 'cube';
+    if(raw.includes('tic')) return 'tic';
+    const fallback = inferTipo(comp?.nombre_modelo || comp?.nombreUnidad || '');
+    return (fallback === 'vip' || fallback === 'cube' || fallback === 'tic') ? fallback : 'otro';
+  }
+
+  function resolveMassChecks(entry, code){
+    const entryChecks = ensureEntryChecks(entry);
+    const norm = normalizeCode(code);
+    const base = { limpieza:false, goteo:false, desinfeccion:false };
+    const stored = entryChecks.get(code) || entryChecks.get(norm);
+    if(stored){
+      base.limpieza = !!stored.limpieza;
+      base.goteo = !!stored.goteo;
+      base.desinfeccion = !!stored.desinfeccion;
+    }
+    if(entry && entry.key === state.massActiveKey){
+      const live = state.ticChecks.get(code) || state.ticChecks.get(norm);
+      if(live){
+        base.limpieza = !!live.limpieza;
+        base.goteo = !!live.goteo;
+        base.desinfeccion = !!live.desinfeccion;
+      }
+    }
+    return base;
+  }
+
+  function gatherMassItems(entry){
+    const items = [];
+    if(!entry) return items;
+    const seen = new Set();
+    const pushItem = (code, tipo)=>{
+      const norm = normalizeCode(code);
+      if(norm.length !== 24) return;
+      if(seen.has(norm)) return;
+      if(tipo !== 'tic' && tipo !== 'vip' && tipo !== 'cube') return;
+      const checks = resolveMassChecks(entry, norm);
+      items.push({
+        tipo,
+        complete: !!(checks.limpieza && checks.goteo && checks.desinfeccion)
+      });
+      seen.add(norm);
+    };
+    const tics = Array.isArray(entry.tics) ? entry.tics : [];
+    tics.forEach((tic)=> pushItem(tic?.rfid || tic?.codigo, 'tic'));
+    const comps = Array.isArray(entry.comps) ? entry.comps : [];
+    comps.forEach((comp)=> pushItem(comp?.rfid || comp?.codigo, classifyMassRole(comp)));
+    return items;
+  }
+
+  function setSummaryCard(kind, stats){
+    const data = stats || { total:0, ready:0 };
+    const pending = Math.max(0, (data.total || 0) - (data.ready || 0));
+    const map = {
+      tic: { count: bulkSummaryTicCount, status: bulkSummaryTicStatus, empty: 'Sin TICs en la cola' },
+      vip: { count: bulkSummaryVipCount, status: bulkSummaryVipStatus, empty: 'Sin VIP en la cola' },
+      cube: { count: bulkSummaryCubeCount, status: bulkSummaryCubeStatus, empty: 'Sin CUBEs en la cola' },
+      total: { count: bulkSummaryTotalCount, status: bulkSummaryTotalStatus, empty: 'Sin piezas en la cola' }
+    };
+    const target = map[kind];
+    if(!target) return;
+    if(target.count) target.count.textContent = String(data.total || 0);
+    if(target.status){
+      if(data.total){
+        target.status.textContent = `${data.ready || 0} completas · ${pending} pendientes`;
+      } else {
+        target.status.textContent = target.empty;
+      }
+    }
+  }
+
+  function updateMassSummary(){
+    if(!bulkSummaryWrap) return;
+    const entries = Array.isArray(state.massEntries) ? state.massEntries : [];
+    if(!entries.length){
+      bulkSummaryWrap.classList.add('hidden');
+      setSummaryCard('tic', { total:0, ready:0 });
+      setSummaryCard('vip', { total:0, ready:0 });
+      setSummaryCard('cube', { total:0, ready:0 });
+      setSummaryCard('total', { total:0, ready:0 });
+      return;
+    }
+    bulkSummaryWrap.classList.remove('hidden');
+    const stats = {
+      tic: { total:0, ready:0 },
+      vip: { total:0, ready:0 },
+      cube: { total:0, ready:0 }
+    };
+    entries.forEach((entry)=>{
+      gatherMassItems(entry).forEach((item)=>{
+        const bucket = stats[item.tipo];
+        if(!bucket) return;
+        bucket.total += 1;
+        if(item.complete) bucket.ready += 1;
+      });
+    });
+    const overall = { total:0, ready:0 };
+    Object.keys(stats).forEach((key)=>{
+      const stat = stats[key];
+      overall.total += stat.total;
+      overall.ready += stat.ready;
+      setSummaryCard(key, stat);
+    });
+    setSummaryCard('total', overall);
   }
 
   function renderMassChecklist(){
@@ -589,6 +708,7 @@
     if(!state.massEntries.length){
       bulkActiveList.innerHTML = '';
       bulkActiveContainer?.classList.add('hidden');
+      updateMassSummary();
       return;
     }
     bulkActiveContainer?.classList.remove('hidden');
@@ -598,10 +718,11 @@
       const btnCls = active ? 'btn btn-xs btn-primary' : 'btn btn-xs btn-ghost';
       const label = escapeHtml(entry.displayName || entry.key);
       return `<span class='inline-flex items-center gap-1'>
-        <button type='button' class='${btnCls}' data-action='mass-select' data-mass-key='${entry.key}'>${label}</button>
-        <button type='button' class='btn btn-xs btn-ghost text-error' data-action='mass-remove' data-mass-key='${entry.key}' title='Quitar'>✕</button>
+        <button type='button' class='${btnCls} btn-wide max-w-full justify-start whitespace-normal' data-action='mass-select' data-mass-key='${entry.key}'>${label}</button>
+        <button type='button' class='btn btn-xs btn-ghost text-error shrink-0' data-action='mass-remove' data-mass-key='${entry.key}' title='Quitar'>✕</button>
       </span>`;
     }).join('');
+    updateMassSummary();
   }
 
   function cloneChecksMap(source){
@@ -861,6 +982,7 @@
       panel.classList.add('hidden');
       list.innerHTML = '';
       if(compList) compList.innerHTML = '';
+      updateMassSummary();
       return;
     }
     panel.classList.remove('hidden');
@@ -952,6 +1074,7 @@
       }).join('') : "<div class='text-xs opacity-60'>No hay VIP/CUBE asociados</div>";
     }
     updateCompleteBtn();
+    updateMassSummary();
   }
   // Novedad modal
   const novDlg = document.getElementById('insp-nov-modal');
@@ -1204,6 +1327,7 @@
         updateCompleteBtn();
         persistActiveMassChecks();
       }
+      updateMassSummary();
       return;
     }
     const cur = state.ticChecks.get(rfid) || { limpieza:false, goteo:false, desinfeccion:false };
