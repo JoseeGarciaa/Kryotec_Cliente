@@ -9,8 +9,6 @@ const REPORT_KEYS: ReportKey[] = [
   'trazabilidad',
   'actividad-operario',
   'actividad-sede',
-  'ordenes-estado',
-  'ordenes-culminadas',
   'auditorias',
   'registro-inventario',
   'usuarios-sede',
@@ -37,10 +35,24 @@ function parseDate(value: unknown): Date | null {
   return Number.isNaN(d.getTime()) ? null : d;
 }
 
+function normalizeToUtcEndOfDay(date: Date): Date {
+  const normalized = new Date(date);
+  if (
+    normalized.getUTCHours() === 0 &&
+    normalized.getUTCMinutes() === 0 &&
+    normalized.getUTCSeconds() === 0 &&
+    normalized.getUTCMilliseconds() === 0
+  ) {
+    normalized.setUTCHours(23, 59, 59, 999);
+  }
+  return normalized;
+}
+
 function parseFilters(req: Request): ReportFilters {
   const { query } = req;
   const from = parseDate(query.from);
-  const to = parseDate(query.to);
+  const toRaw = parseDate(query.to);
+  const to = toRaw ? normalizeToUtcEndOfDay(toRaw) : null;
   const sedeId = parseNumber(query.sedeId ?? query.sede_id);
   const zonaId = parseNumber(query.zonaId ?? query.zona_id);
   const seccionId = parseNumber(query.seccionId ?? query.seccion_id);

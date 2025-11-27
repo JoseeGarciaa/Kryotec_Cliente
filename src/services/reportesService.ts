@@ -6,8 +6,6 @@ export type ReportKey =
   | 'trazabilidad'
   | 'actividad-operario'
   | 'actividad-sede'
-  | 'ordenes-estado'
-  | 'ordenes-culminadas'
   | 'auditorias'
   | 'registro-inventario'
   | 'usuarios-sede';
@@ -63,10 +61,6 @@ export async function runReport(key: ReportKey, ctx: ReportContext): Promise<Rep
       return actividadPorOperario(ctx);
     case 'actividad-sede':
       return actividadPorSede(ctx);
-    case 'ordenes-estado':
-      return ordenesPorEstado(ctx);
-    case 'ordenes-culminadas':
-      return ordenesCulminadas(ctx);
     case 'auditorias':
       return auditoriasBitacora(ctx);
     case 'registro-inventario':
@@ -693,158 +687,6 @@ async function actividadPorSede(ctx: ReportContext): Promise<ReportDataset> {
       page: pagination.page,
       pages,
       pageSize,
-    },
-  };
-}
-
-async function ordenesPorEstado(ctx: ReportContext): Promise<ReportDataset> {
-  const { tenant, filters, pagination } = ctx;
-  const pageSize = pagination.pageSize;
-  const offset = (pagination.page - 1) * pageSize;
-  const { whereClause, params } = buildHistFilters(filters);
-
-  const orderConditions: string[] = [];
-  if (typeof filters.orderId === 'number' && Number.isFinite(filters.orderId)) {
-    params.push(filters.orderId);
-    orderConditions.push(`o.id = $${params.length}`);
-  }
-  const ordersWhere = orderConditions.length ? `WHERE ${orderConditions.join(' AND ')}` : '';
-
-  const sql = `
-    WITH hist_base AS (
-      SELECT
-        hist.order_id,
-        hist.fase_id,
-        hist.happened_at
-      FROM hist_trazabilidad hist
-      WHERE hist.order_id IS NOT NULL
-      ${whereClause ? `AND ${whereClause}` : ''}
-    ),
-    per_order AS (
-      SELECT
-        order_id,
-        MIN(happened_at) AS inicio,
-        MAX(happened_at) AS fin,
-        COUNT(*)::int AS eventos
-      FROM hist_base
-      GROUP BY order_id
-    ),
-    fase_spans AS (
-      SELECT
-        order_id,
-        fase_id,
-        MIN(happened_at) AS min_time,
-        MAX(happened_at) AS max_time
-      FROM hist_base
-      WHERE fase_id IS NOT NULL
-      GROUP BY order_id, fase_id
-    ),
-    fase_data AS (
-      SELECT
-        spans.order_id,
-        spans.fase_id,
-        COUNT(*)::int AS acciones,
-        AVG(EXTRACT(EPOCH FROM (spans.max_time - spans.min_time)) / 60.0) AS minutos_promedio
-      FROM fase_spans spans
-      GROUP BY spans.order_id, spans.fase_id
-    ),
-    fase_json AS (
-      SELECT
-        order_id,
-        json_agg(json_build_object(
-          'fase_id', fase_id,
-          'acciones', acciones,
-          'minutos_promedio', COALESCE(minutos_promedio, 0)
-        ) ORDER BY acciones DESC) AS fases
-      FROM fase_data
-      GROUP BY order_id
-    ),
-    final AS (
-      SELECT
-        o.id,
-        o.numero_orden,
-        o.codigo_producto,
-        o.cantidad,
-        o.cliente,
-        o.ciudad_destino,
-        o.ubicacion_destino,
-        o.fecha_generacion,
-        o.estado_orden,
-        o.habilitada,
-        p.inicio,
-        p.fin,
-        p.eventos,
-        CASE
-          WHEN p.fin IS NOT NULL AND p.inicio IS NOT NULL
-            THEN EXTRACT(EPOCH FROM (p.fin - p.inicio)) / 60.0
-          ELSE NULL
-        END AS tat_minutos,
-        COALESCE(f.fases, '[]'::json) AS fases
-      FROM ordenes o
-      JOIN per_order p ON p.order_id = o.id
-      LEFT JOIN fase_json f ON f.order_id = o.id
-      ${ordersWhere}
-    )
-  SELECT final.*, COUNT(*) OVER() AS total_count
-  FROM final
-  ORDER BY COALESCE(final.inicio, final.fecha_generacion) ASC,
-       COALESCE(final.fin, final.fecha_generacion) ASC,
-       final.id ASC
-    LIMIT $${params.length + 1} OFFSET $${params.length + 2};
-  `;
-
-  const result = await withTenant(tenant, (client) => client.query(sql, [...params, pageSize, offset]));
-  const totalRows = result.rows.length ? Number(result.rows[0].total_count || 0) : 0;
-  const pages = Math.max(1, Math.ceil(totalRows / pageSize));
-
-  const rows = result.rows.map((row) => ({
-    numero_orden: row.numero_orden || `#${row.id}`,
-    codigo_producto: row.codigo_producto || '',
-    cliente: row.cliente || '',
-    cantidad: typeof row.cantidad === 'number' ? Number(row.cantidad) : (row.cantidad ? Number(row.cantidad) : 0),
-    ciudad_destino: row.ciudad_destino || '',
-    tat_minutos: row.tat_minutos !== null && row.tat_minutos !== undefined ? Number(row.tat_minutos) : 0,
-    eventos: Number(row.eventos) || 0,
-    inicio: row.inicio,
-    fin: row.fin,
-    fases: Array.isArray(row.fases)
-      ? row.fases.map((f: any) => `Fase ${f.fase_id ?? 'N/A'}: ${f.acciones} (${Number(f.minutos_promedio || 0).toFixed(1)} min)`).join('; ')
-      : '',
-  }));
-
-  return {
-    columns: [
-      { key: 'numero_orden', label: 'Orden', format: 'text' },
-      { key: 'cliente', label: 'Cliente', format: 'text' },
-      { key: 'codigo_producto', label: 'Producto', format: 'text' },
-      { key: 'cantidad', label: 'Cantidad', format: 'number' },
-      { key: 'ciudad_destino', label: 'Ciudad destino', format: 'text' },
-      { key: 'tat_minutos', label: 'TAT (min)', format: 'duration' },
-      { key: 'eventos', label: 'Eventos', format: 'number' },
-      { key: 'inicio', label: 'Inicio', format: 'datetime' },
-      { key: 'fin', label: 'Fin', format: 'datetime' },
-      { key: 'fases', label: 'Detalle por fase', format: 'text' },
-    ],
-    rows,
-    meta: {
-      total: totalRows,
-      page: pagination.page,
-      pages,
-      pageSize,
-    },
-  };
-}
-
-async function ordenesCulminadas(ctx: ReportContext): Promise<ReportDataset> {
-  const base = await ordenesPorEstado(ctx);
-  const rows = base.rows.filter((row: any) => row.fin !== null);
-  return {
-    ...base,
-    rows,
-    meta: {
-      ...base.meta,
-      total: rows.length,
-      pages: Math.max(1, Math.ceil(rows.length / base.meta.pageSize)),
     },
   };
 }

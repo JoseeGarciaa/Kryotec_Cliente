@@ -88,53 +88,43 @@
       <div class="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
         <label class="flex items-center gap-2 cursor-pointer">
           <input type="checkbox" name="report-toggle" data-report="inventario-sede" class="checkbox checkbox-sm" checked />
-          <span class="text-sm">5.1 Inventario por sede y estado</span>
+          <span class="text-sm">Inventario por sede y estado</span>
         </label>
         <label class="flex items-center gap-2 cursor-pointer">
           <input type="checkbox" name="report-toggle" data-report="trazabilidad" class="checkbox checkbox-sm" checked />
-          <span class="text-sm">5.2 Historial de trazabilidad</span>
+          <span class="text-sm">Historial de trazabilidad</span>
         </label>
         <label class="flex items-center gap-2 cursor-pointer">
           <input type="checkbox" name="report-toggle" data-report="actividad-operario" class="checkbox checkbox-sm" checked />
-          <span class="text-sm">5.3 Actividad por operario</span>
+          <span class="text-sm">Actividad por operario</span>
         </label>
         <label class="flex items-center gap-2 cursor-pointer">
           <input type="checkbox" name="report-toggle" data-report="actividad-sede" class="checkbox checkbox-sm" />
-          <span class="text-sm">5.4 Actividad por sede</span>
-        </label>
-        <label class="flex items-center gap-2 cursor-pointer">
-          <input type="checkbox" name="report-toggle" data-report="ordenes-estado" class="checkbox checkbox-sm" />
-          <span class="text-sm">5.5 Órdenes por estado y tiempos</span>
-        </label>
-        <label class="flex items-center gap-2 cursor-pointer">
-          <input type="checkbox" name="report-toggle" data-report="ordenes-culminadas" class="checkbox checkbox-sm" />
-          <span class="text-sm">5.6 Órdenes culminadas</span>
+          <span class="text-sm">Actividad por sede</span>
         </label>
         <label class="flex items-center gap-2 cursor-pointer">
           <input type="checkbox" name="report-toggle" data-report="auditorias" class="checkbox checkbox-sm" />
-          <span class="text-sm">5.7 Auditorías registradas</span>
+          <span class="text-sm">Auditorías registradas</span>
         </label>
         <label class="flex items-center gap-2 cursor-pointer">
           <input type="checkbox" name="report-toggle" data-report="registro-inventario" class="checkbox checkbox-sm" />
-          <span class="text-sm">5.8 Movimientos de inventario</span>
+          <span class="text-sm">Movimientos de inventario</span>
         </label>
         <label class="flex items-center gap-2 cursor-pointer">
           <input type="checkbox" name="report-toggle" data-report="usuarios-sede" class="checkbox checkbox-sm" />
-          <span class="text-sm">5.9 Gestión de usuarios por sede</span>
+          <span class="text-sm">Gestión de usuarios por sede</span>
         </label>
       </div>
     </div>
   </section>
 
-  <%- include('../partials/report-card', { code: 'inventario-sede', title: '5.1 Inventario por sede y estado', subtitle: 'Conteo consolidado de piezas activas con último estado registrado.' }) %>
-  <%- include('../partials/report-card', { code: 'trazabilidad', title: '5.2 Historial de trazabilidad', subtitle: 'Bitácora completa de movimientos por pieza y orden.' }) %>
-  <%- include('../partials/report-card', { code: 'actividad-operario', title: '5.3 Actividad por operario', subtitle: 'Acciones por fase, órdenes atendidas y tiempos promedio.' }) %>
-  <%- include('../partials/report-card', { code: 'actividad-sede', title: '5.4 Actividad por sede', subtitle: 'Traslados, órdenes y tiempos medios consolidados por sede.', hidden: true }) %>
-  <%- include('../partials/report-card', { code: 'ordenes-estado', title: '5.5 Órdenes por estado y tiempos', subtitle: 'Duraciones por orden y fase con cálculo de TAT.', hidden: true }) %>
-  <%- include('../partials/report-card', { code: 'ordenes-culminadas', title: '5.6 Órdenes culminadas', subtitle: 'Detalle de órdenes cerradas, TAT y fases críticas.', hidden: true }) %>
-  <%- include('../partials/report-card', { code: 'auditorias', title: '5.7 Auditorías registradas', subtitle: 'Bitácora de auditorías con campos antes/después.', hidden: true }) %>
-  <%- include('../partials/report-card', { code: 'registro-inventario', title: '5.8 Movimientos de inventario', subtitle: 'Entradas, salidas y movimientos por zona y sección.', hidden: true }) %>
-  <%- include('../partials/report-card', { code: 'usuarios-sede', title: '5.9 Gestión de usuarios por sede', subtitle: 'Altas, bajas y actividad administrativa por sede.', hidden: true }) %>
+  <%- include('../partials/report-card', { code: 'inventario-sede', title: 'Inventario por sede y estado', subtitle: 'Conteo consolidado de piezas activas con último estado registrado.' }) %>
+  <%- include('../partials/report-card', { code: 'trazabilidad', title: 'Historial de trazabilidad', subtitle: 'Bitácora completa de movimientos por pieza y orden.' }) %>
+  <%- include('../partials/report-card', { code: 'actividad-operario', title: 'Actividad por operario', subtitle: 'Acciones por fase, órdenes atendidas y tiempos promedio.' }) %>
+  <%- include('../partials/report-card', { code: 'actividad-sede', title: 'Actividad por sede', subtitle: 'Traslados, órdenes y tiempos medios consolidados por sede.', hidden: true }) %>
+  <%- include('../partials/report-card', { code: 'auditorias', title: 'Auditorías registradas', subtitle: 'Bitácora de auditorías con campos antes/después.', hidden: true }) %>
+  <%- include('../partials/report-card', { code: 'registro-inventario', title: 'Movimientos de inventario', subtitle: 'Entradas, salidas y movimientos por zona y sección.', hidden: true }) %>
+  <%- include('../partials/report-card', { code: 'usuarios-sede', title: 'Gestión de usuarios por sede', subtitle: 'Altas, bajas y actividad administrativa por sede.', hidden: true }) %>
 </div>
 
 <div id="reportes-config" data-combos='<%- JSON.stringify(combos || {}) %>' data-initial='<%- JSON.stringify(initial || {}) %>'></div>
