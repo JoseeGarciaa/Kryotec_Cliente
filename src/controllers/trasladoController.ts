@@ -66,6 +66,130 @@ export const TrasladoController = {
     });
   },
 
+  lookup: async (req: Request, res: Response) => {
+    const tenant = (req as any).user?.tenant;
+    if (!tenant) {
+      return res
+        .status(400)
+        .json({ ok: false, error: 'Sesión inválida: tenant no disponible.' });
+    }
+
+    const rawInput = (() => {
+      const list = req.body?.rfids;
+      if (Array.isArray(list)) return list;
+      if (typeof list === 'string') return list.split(/[,;\s]+/);
+      if (typeof req.body?.codes === 'string') return req.body.codes.split(/[,;\s]+/);
+      return [];
+    })();
+
+    const seen = new Set<string>();
+    const duplicates: string[] = [];
+    const rfids: string[] = [];
+    for (const item of rawInput) {
+      const normalized = String(item || '')
+        .toUpperCase()
+        .replace(/[^A-Z0-9]/g, '');
+      if (normalized.length !== 24) continue;
+      if (seen.has(normalized)) {
+        duplicates.push(normalized);
+        continue;
+      }
+      seen.add(normalized);
+      rfids.push(normalized);
+      if (rfids.length >= 300) break;
+    }
+
+    if (!rfids.length) {
+      return res
+        .status(400)
+        .json({ ok: false, error: 'Proporciona al menos un RFID válido (24 caracteres).' });
+    }
+
+    try {
+      const result = await withTenant(tenant, (client) =>
+        client.query(
+          `SELECT DISTINCT ON (ic.rfid)
+                  ic.rfid,
+                  ic.nombre_unidad,
+                  ic.estado,
+                  ic.sub_estado,
+                  ic.sede_id,
+                  ic.lote,
+                  ic.numero_orden,
+                  ic.zona_id,
+                  ic.seccion_id,
+                  ic.activo,
+                  m.nombre_modelo,
+                  s.nombre AS sede_nombre,
+                  aci.caja_id
+             FROM inventario_credocubes ic
+             JOIN modelos m ON m.modelo_id = ic.modelo_id
+        LEFT JOIN sedes s ON s.sede_id = ic.sede_id
+        LEFT JOIN acond_caja_items aci ON aci.rfid = ic.rfid
+            WHERE ic.rfid = ANY($1::text[])
+         ORDER BY ic.rfid, aci.caja_id NULLS LAST`,
+          [rfids]
+        )
+      );
+
+      const items = result.rows.map((row: any) => {
+        const sedeIdRaw = row.sede_id;
+        let sedeId: number | null = null;
+        if (typeof sedeIdRaw === 'number' && Number.isFinite(sedeIdRaw)) {
+          sedeId = sedeIdRaw;
+        } else if (typeof sedeIdRaw === 'string') {
+          const trimmed = sedeIdRaw.trim();
+          if (trimmed) {
+            const parsed = Number(trimmed);
+            if (Number.isFinite(parsed)) {
+              sedeId = parsed;
+            }
+          }
+        }
+        const sedeNombre =
+          normalizeSedeName(row.sede_nombre) ??
+          (sedeId !== null ? fallbackSedeName(sedeId) : null);
+        const code =
+          typeof row.rfid === 'string'
+            ? row.rfid.toUpperCase().trim()
+            : String(row.rfid || '');
+        const nombreUnidad =
+          typeof row.nombre_unidad === 'string' && row.nombre_unidad.trim().length
+            ? row.nombre_unidad.trim()
+            : null;
+        const nombreModelo =
+          typeof row.nombre_modelo === 'string' && row.nombre_modelo.trim().length
+            ? row.nombre_modelo.trim()
+            : null;
+        return {
+          rfid: code,
+          nombre_unidad: nombreUnidad,
+          nombre_modelo: nombreModelo,
+          estado: typeof row.estado === 'string' ? row.estado : null,
+          sub_estado: typeof row.sub_estado === 'string' ? row.sub_estado : null,
+          sede_id: sedeId,
+          sede_nombre: sedeNombre,
+          lote: row.lote ?? null,
+          numero_orden: row.numero_orden ?? null,
+          zona_id: row.zona_id ?? null,
+          seccion_id: row.seccion_id ?? null,
+          activo: row.activo ?? null,
+          caja_id: row.caja_id ?? null,
+        };
+      });
+
+      const foundSet = new Set(items.map((item) => item.rfid));
+      const missing = rfids.filter((code) => !foundSet.has(code));
+
+      return res.json({ ok: true, items, missing, duplicates });
+    } catch (err) {
+      console.error('[TrasladoController.lookup] lookup failed', err);
+      return res
+        .status(500)
+        .json({ ok: false, error: 'No se pudo obtener información de las piezas.' });
+    }
+  },
+
   apply: async (req: Request, res: Response) => {
     const tenant = (req as any).user?.tenant;
     const sedeId = getRequestSedeId(req);

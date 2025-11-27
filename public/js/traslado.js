@@ -2,6 +2,12 @@
 (function(){
   'use strict';
 
+  const escapeHtml = (value) => {
+    const str = value == null ? '' : String(value);
+    const replacements = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' };
+    return str.replace(/[&<>"']/g, (ch) => replacements[ch] || ch);
+  };
+
   function parseRfids(raw){
     const original = String(raw || '').toUpperCase();
     const s = original.replace(/\s+/g, '');
@@ -87,6 +93,141 @@
 
   const queue = [];
   let buffer = '';
+  const detailCache = new Map();
+  const detailPending = new Set();
+  let detailTimer = 0;
+  const DETAIL_BATCH_SIZE = 20;
+  let detailInFlight = false;
+
+  function updateEntryWithInfo(entry, info){
+    if(!entry) return;
+    entry.infoLoaded = true;
+    entry.infoLoading = false;
+    entry.infoError = '';
+    entry.nombreUnidad = null;
+    entry.modeloNombre = null;
+    entry.estadoActual = null;
+    entry.subEstado = null;
+    entry.sedeNombre = null;
+
+    if(!info){
+      entry.infoError = 'RFID no encontrado en inventario.';
+      return;
+    }
+
+    if(typeof info.nombre_unidad === 'string' && info.nombre_unidad.trim().length){
+      entry.nombreUnidad = info.nombre_unidad.trim();
+    }
+    if(typeof info.nombre_modelo === 'string' && info.nombre_modelo.trim().length){
+      entry.modeloNombre = info.nombre_modelo.trim();
+    }
+    if(typeof info.estado === 'string' && info.estado.trim().length){
+      entry.estadoActual = info.estado.trim();
+    }
+    if(typeof info.sub_estado === 'string' && info.sub_estado.trim().length){
+      entry.subEstado = info.sub_estado.trim();
+    }
+    if(typeof info.sede_nombre === 'string' && info.sede_nombre.trim().length){
+      entry.sedeNombre = info.sede_nombre.trim();
+    }
+  }
+
+  function applyDetailsFromCache(entry){
+    if(!detailCache.has(entry.code)) return false;
+    updateEntryWithInfo(entry, detailCache.get(entry.code));
+    return true;
+  }
+
+  function ensureEntryDetails(entry){
+    if(!entry) return;
+    entry.infoError = '';
+    if(applyDetailsFromCache(entry)){
+      return;
+    }
+    entry.infoLoaded = false;
+    entry.infoLoading = false;
+    scheduleDetailLookup();
+  }
+
+  function scheduleDetailLookup(){
+    if(detailTimer) return;
+    detailTimer = window.setTimeout(() => {
+      detailTimer = 0;
+      executeDetailLookupBatch();
+    }, 80);
+  }
+
+  async function executeDetailLookupBatch(){
+    if(detailInFlight) return;
+    const batchEntries = [];
+    for(const entry of queue){
+      if(entry.infoLoaded || detailPending.has(entry.code)) continue;
+      batchEntries.push(entry);
+      detailPending.add(entry.code);
+      entry.infoLoading = true;
+      entry.infoError = '';
+      if(batchEntries.length >= DETAIL_BATCH_SIZE) break;
+    }
+    if(!batchEntries.length) return;
+    detailInFlight = true;
+    renderQueue();
+    const codes = batchEntries.map(entry => entry.code);
+    try {
+      const res = await fetch('/traslado/lookup', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ rfids: codes })
+      });
+      let data;
+      try { data = await res.json(); } catch { data = null; }
+      if(!res.ok || !data || data.ok === false){
+        const message = (data && (data.error || data.message)) ? String(data.error || data.message) : `No se pudieron obtener detalles (${res.status})`;
+        batchEntries.forEach(entry => {
+          entry.infoLoaded = true;
+          entry.infoLoading = false;
+          entry.infoError = message;
+        });
+      } else {
+        const items = Array.isArray(data.items) ? data.items : [];
+        const missing = Array.isArray(data.missing) ? data.missing : [];
+        items.forEach(item => {
+          const key = String(item?.rfid || '').toUpperCase();
+          detailCache.set(key, item);
+        });
+        missing.forEach(code => {
+          const key = String(code || '').toUpperCase();
+          detailCache.set(key, null);
+        });
+        batchEntries.forEach(entry => {
+          const cached = detailCache.has(entry.code) ? detailCache.get(entry.code) : undefined;
+          if(cached === undefined){
+            entry.infoLoaded = true;
+            entry.infoLoading = false;
+            entry.infoError = 'Sin información disponible.';
+          } else {
+            updateEntryWithInfo(entry, cached);
+          }
+        });
+      }
+    } catch(err){
+      const message = err && err.message ? String(err.message) : 'Error al obtener detalles.';
+      batchEntries.forEach(entry => {
+        entry.infoLoaded = true;
+        entry.infoLoading = false;
+        entry.infoError = message;
+      });
+    } finally {
+      batchEntries.forEach(entry => {
+        detailPending.delete(entry.code);
+        entry.infoLoading = false;
+      });
+      detailInFlight = false;
+      renderQueue();
+      if(queue.some(entry => !entry.infoLoaded && !detailPending.has(entry.code))){
+        scheduleDetailLookup();
+      }
+    }
+  }
 
   function getSedeName(id) {
     if (!id) return '';
@@ -121,15 +262,44 @@
       if(entry.status === 'processing'){ badgeClass = 'badge-info'; badgeText = 'Procesando'; }
       else if(entry.status === 'done'){ badgeClass = 'badge-success'; badgeText = 'Trasladada'; }
       else if(entry.status === 'error'){ badgeClass = 'badge-error'; badgeText = 'Error'; }
-      const message = entry.message ? `<div class="text-[10px] opacity-70">${entry.message}</div>` : '';
+      let nameHtml = '';
+      if(entry.infoLoaded){
+        if(entry.infoError){
+          nameHtml = `<div class="text-[11px] text-error">${escapeHtml(entry.infoError)}</div>`;
+        } else {
+          const displayName = entry.nombreUnidad || entry.modeloNombre || '';
+          nameHtml = `<div class="text-[11px] font-semibold text-primary/80">${escapeHtml(displayName || 'Sin nombre')}</div>`;
+        }
+      } else if(entry.infoLoading){
+        nameHtml = '<div class="text-[11px] opacity-60 italic">Buscando nombre...</div>';
+      } else {
+        nameHtml = '<div class="text-[11px] opacity-60 italic">Nombre pendiente...</div>';
+      }
+
+      let metaHtml = '';
+      if(entry.infoLoaded && !entry.infoError){
+        const parts = [];
+        if(entry.sedeNombre) parts.push(`Sede: ${entry.sedeNombre}`);
+        if(entry.estadoActual) parts.push(`Estado: ${entry.estadoActual}`);
+        if(entry.subEstado) parts.push(`Subestado: ${entry.subEstado}`);
+        if(parts.length){
+          metaHtml = `<div class="text-[10px] opacity-60">${escapeHtml(parts.join(' · '))}</div>`;
+        }
+      } else if(entry.infoLoading){
+        metaHtml = '<div class="text-[10px] opacity-60 italic">Consultando inventario...</div>';
+      }
+
+      const message = entry.message ? `<div class="text-[10px] opacity-70">${escapeHtml(entry.message)}</div>` : '';
       return `<div class="border border-base-300/50 rounded-lg p-3 bg-base-200/10 flex flex-col gap-1" data-code="${entry.code}">
         <div class="flex items-center justify-between gap-2">
-          <span class="font-mono text-xs break-all">${entry.code}</span>
+          <span class="font-mono text-xs break-all">${escapeHtml(entry.code)}</span>
           <div class="flex items-center gap-2">
             <span class="badge badge-xs ${badgeClass}">${badgeText}</span>
             <button type="button" class="btn btn-ghost btn-xs" data-remove="${entry.code}" title="Quitar">✕</button>
           </div>
         </div>
+        ${nameHtml}
+        ${metaHtml}
         ${message}
       </div>`;
     }).join('');
@@ -283,7 +453,21 @@
         duplicates++;
         return;
       }
-      queue.push({ code: normalized, status: 'pending', message: '' });
+      const entry = {
+        code: normalized,
+        status: 'pending',
+        message: '',
+        infoLoaded: false,
+        infoLoading: false,
+        infoError: '',
+        nombreUnidad: null,
+        modeloNombre: null,
+        estadoActual: null,
+        subEstado: null,
+        sedeNombre: null
+      };
+      queue.push(entry);
+      ensureEntryDetails(entry);
       added++;
     });
     if(msgEl){
