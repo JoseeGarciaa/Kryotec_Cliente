@@ -45,6 +45,7 @@
               <th>Nombre</th>
               <th>Código</th>
               <th>Estado</th>
+              <th class="text-right">Acciones</th>
             </tr>
           </thead>
           <tbody>
@@ -54,6 +55,8 @@
               </tr>
             <% } else { %>
               <% sedes.forEach(s => { %>
+                <% const sedeNombreAttr = (s.nombre || '').replace(/"/g, '&quot;').replace(/'/g, '&#39;'); %>
+                <% const sedeCodigoAttr = ((s.codigo || '')).replace(/"/g, '&quot;').replace(/'/g, '&#39;'); %>
                 <tr>
                   <td><span class="font-semibold"><%= s.nombre %></span></td>
                   <td class="text-sm"><%= s.codigo || '-' %></td>
@@ -61,6 +64,26 @@
                     <span class="badge badge-outline <%= s.activo === false ? 'badge-error' : 'badge-success' %>">
                       <%= s.activo === false ? 'Inactiva' : 'Activa' %>
                     </span>
+                  </td>
+                  <td>
+                    <div class="flex justify-end gap-1">
+                      <button
+                        type="button"
+                        class="btn btn-ghost btn-xs btn-edit-sede"
+                        title="Editar sede"
+                        data-id="<%= s.sede_id %>"
+                        data-nombre="<%- sedeNombreAttr %>"
+                        data-codigo="<%- sedeCodigoAttr %>"
+                        data-activo="<%= s.activo === false ? 'false' : 'true' %>"
+                      >✏️</button>
+                      <button
+                        type="button"
+                        class="btn btn-ghost btn-xs text-error btn-del-sede"
+                        title="Eliminar sede"
+                        data-id="<%= s.sede_id %>"
+                        data-nombre="<%- sedeNombreAttr %>"
+                      >🗑️</button>
+                    </div>
                   </td>
                 </tr>
               <% }) %>
@@ -195,6 +218,24 @@
       <div class="modal-action">
         <button type="submit" class="btn btn-secondary btn-sm">Guardar</button>
         <button type="button" class="btn btn-sm btn-close-modal" data-target="dlg-new-sede">Cerrar</button>
+      </div>
+    </form>
+  </div>
+</dialog>
+
+<dialog id="dlg-edit-sede" class="modal">
+  <div class="modal-box">
+    <form id="form-edit-sede" method="post" class="space-y-3">
+      <h3 class="font-bold text-lg">Editar Sede</h3>
+      <input required name="nombre" placeholder="Nombre" class="input input-sm input-bordered w-full" />
+      <input name="codigo" placeholder="Código" class="input input-sm input-bordered w-full" />
+      <select name="activa" class="select select-sm select-bordered w-full">
+        <option value="true">Activa</option>
+        <option value="false">Inactiva</option>
+      </select>
+      <div class="modal-action">
+        <button type="submit" class="btn btn-primary btn-sm">Guardar cambios</button>
+        <button type="button" class="btn btn-sm btn-close-modal" data-target="dlg-edit-sede">Cerrar</button>
       </div>
     </form>
   </div>

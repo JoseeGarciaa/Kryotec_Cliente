@@ -217,6 +217,68 @@ export const AdminController = {
     }
   },
 
+  updateSede: async (req: Request, res: Response) => {
+    const tenant = (req as any).user?.tenant as string | undefined;
+    const sedeId = Number(req.params.sedeId);
+    const { nombre, codigo, activa } = req.body as any;
+    if (!tenant) return res.redirect('/administracion?error=Tenant+no+especificado');
+    if (!Number.isFinite(sedeId) || sedeId <= 0) {
+      return res.redirect('/administracion?error=Sede+inválida');
+    }
+    const nombreNorm = (nombre || '').trim();
+    if (!nombreNorm) {
+      return res.redirect('/administracion?error=Nombre+de+sede+requerido');
+    }
+    const codigoNorm = (codigo || '').trim();
+    const activaBool = activa === 'false' ? false : true;
+    try {
+      const exists = await withTenant(tenant, (client) => SedesModel.findById(client, sedeId));
+      if (!exists) {
+        return res.redirect('/administracion?error=Sede+no+encontrada');
+      }
+      await withTenant(tenant, (client) =>
+        SedesModel.update(client, sedeId, {
+          nombre: nombreNorm,
+          codigo: codigoNorm ? codigoNorm : null,
+          activa: activaBool,
+        })
+      );
+      return res.redirect('/administracion?ok=Sede+actualizada');
+    } catch (e: any) {
+      console.error(e);
+      if (e?.code === '23505') {
+        return res.redirect('/administracion?error=Nombre+o+codigo+duplicado');
+      }
+      return res.redirect('/administracion?error=Error+actualizando+sede');
+    }
+  },
+
+  deleteSede: async (req: Request, res: Response) => {
+    const tenant = (req as any).user?.tenant as string | undefined;
+    const sedeId = Number(req.params.sedeId);
+    if (!tenant) return res.redirect('/administracion?error=Tenant+no+especificado');
+    if (!Number.isFinite(sedeId) || sedeId <= 0) {
+      return res.redirect('/administracion?error=Sede+inválida');
+    }
+    try {
+      const exists = await withTenant(tenant, (client) => SedesModel.findById(client, sedeId));
+      if (!exists) {
+        return res.redirect('/administracion?error=Sede+no+encontrada');
+      }
+      const removed = await withTenant(tenant, (client) => SedesModel.remove(client, sedeId));
+      if (!removed) {
+        return res.redirect('/administracion?error=No+se+eliminó+la+sede');
+      }
+      return res.redirect('/administracion?ok=Sede+eliminada');
+    } catch (e: any) {
+      console.error(e);
+      if (e?.code === '23503') {
+        return res.redirect('/administracion?error=No+se+puede+eliminar,+tiene+relaciones+activas');
+      }
+      return res.redirect('/administracion?error=Error+eliminando+sede');
+    }
+  },
+
   // Editar usuario (form HTML)
   editUser: async (req: Request, res: Response) => {
     const id = Number(req.params.id);

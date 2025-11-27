@@ -7,6 +7,8 @@
   const dlgNew = qs('#dlg-new-user');
   const btnNewSede = qs('#btn-new-sede');
   const dlgNewSede = qs('#dlg-new-sede');
+  const dlgEditSede = qs('#dlg-edit-sede');
+  const formEditSede = qs('#form-edit-sede');
   const dlgEdit = qs('#dlg-edit-user');
   const formEdit = qs('#form-edit');
   const ttlMin = formEdit && formEdit.dataset && formEdit.dataset.ttlMin ? Number(formEdit.dataset.ttlMin) : 0;
@@ -19,6 +21,39 @@
   if(btnNewSede && dlgNewSede){
     btnNewSede.addEventListener('click', ()=> dlgNewSede.showModal());
   }
+
+  qsa('.btn-edit-sede').forEach(btn => {
+    btn.addEventListener('click', () => {
+      if(!dlgEditSede || !formEditSede) return;
+      const id = btn.dataset.id;
+      if(!id) return;
+      formEditSede.action = `/administracion/sedes/${id}`;
+      if(formEditSede.nombre) formEditSede.nombre.value = btn.dataset.nombre || '';
+      if(formEditSede.codigo) formEditSede.codigo.value = btn.dataset.codigo || '';
+      if(formEditSede.activa){
+        const activeValue = btn.dataset.activo === 'false' ? 'false' : 'true';
+        formEditSede.activa.value = activeValue;
+      }
+      dlgEditSede.showModal();
+    });
+  });
+
+  qsa('.btn-del-sede').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const id = btn.dataset.id;
+      if(!id) return;
+      const nombre = btn.dataset.nombre ? btn.dataset.nombre : 'esta sede';
+      if(!window.confirm(`¿Eliminar ${nombre}? Esta acción no se puede deshacer.`)) return;
+      const form = document.createElement('form');
+      form.method = 'post';
+      form.action = `/administracion/sedes/${id}/eliminar`;
+      document.body.appendChild(form);
+      form.submit();
+      setTimeout(() => {
+        if(form.parentNode) form.parentNode.removeChild(form);
+      }, 1000);
+    });
+  });
 
   // Toggle activo
   qsa('.btn-toggle-activo').forEach(btn => {

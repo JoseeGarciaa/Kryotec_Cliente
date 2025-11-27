@@ -9,6 +9,8 @@ const router = Router();
 router.get('/', requireAuth, requireAdmin, AdminController.listView);
 router.post('/nuevo', requireAuth, requireAdmin, AdminController.newUser);
 router.post('/sedes', requireAuth, requireAdmin, AdminController.createSede);
+router.post('/sedes/:sedeId', requireAuth, requireAdmin, AdminController.updateSede);
+router.post('/sedes/:sedeId/eliminar', requireAuth, requireAdmin, AdminController.deleteSede);
 router.get('/zonas', requireAuth, requireAdmin, ZonasController.view);
 router.post('/zonas', requireAuth, requireAdmin, ZonasController.createZona);
 router.post('/zonas/:zonaId', requireAuth, requireAdmin, ZonasController.updateZona);
