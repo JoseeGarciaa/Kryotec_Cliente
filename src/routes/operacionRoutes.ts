@@ -80,6 +80,7 @@ router.post('/inspeccion/novedad/inhabilitar', requireAuth, OperacionController.
 // En bodega
 router.get('/bodega', requireAuth, OperacionController.bodega);
 router.get('/bodega/data', requireAuth, OperacionController.bodegaData);
+router.post('/bodega/devolucion', requireAuth, OperacionController.bodegaDevolucion as any);
 // En bodega · Pendiente a Inspección (sub vista)
 router.get('/bodega-pend-insp/data', requireAuth, OperacionController.bodegaPendInspData as any);
 // Bodega no puede modificar el cronómetro de "Pendiente a Inspección"

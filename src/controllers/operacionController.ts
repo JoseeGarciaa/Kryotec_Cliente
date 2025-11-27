@@ -66,6 +66,8 @@ const LOCATION_ERROR_CODES = new Set([
   'SECTION_SEDE_MISMATCH',
 ]);
 
+const ALLOWED_BODEGA_RETURN_ESTADOS = new Set(['pre acondicionamiento', 'acondicionamiento']);
+
 const parseOptionalNumber = (value: unknown): number | null => {
   if (value === undefined || value === null || value === '') return null;
   const num = Number(value);
@@ -2579,6 +2581,159 @@ export const OperacionController = {
       // Fallback: no bloquear la vista si algo falla. Log y retornar lista vacía.
   console.error('[bodegaData] error', e);
   res.json({ ok:true, page:1, limit:10, total:0, items:[], warning: e?.message || 'Error interno (se muestra vacío)' });
+    }
+  },
+
+  bodegaDevolucion: async (req: Request, res: Response) => {
+    const tenant = (req as any).user?.tenant;
+    const sedeId = getRequestSedeId(req);
+    if (!tenant) {
+      return res.status(400).json({ ok: false, error: 'Sesión inválida: tenant no disponible.' });
+    }
+    if (typeof sedeId !== 'number' || !Number.isFinite(sedeId)) {
+      return res.status(400).json({ ok: false, error: 'El usuario no tiene una sede asignada.' });
+    }
+
+    const rawList = (() => {
+      const list = req.body?.rfids;
+      if (Array.isArray(list)) return list;
+      if (typeof list === 'string') return list.split(/[^A-Z0-9]+/i);
+      if (typeof req.body?.codes === 'string') return (req.body.codes as string).split(/[^A-Z0-9]+/i);
+      if (typeof req.body?.input === 'string') return (req.body.input as string).split(/[^A-Z0-9]+/i);
+      return [];
+    })();
+
+    const seen = new Set<string>();
+    const duplicates: string[] = [];
+    const rfids: string[] = [];
+    for (const item of rawList) {
+      const code = String(item || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+      if (code.length !== 24) continue;
+      if (seen.has(code)) {
+        if (!duplicates.includes(code)) duplicates.push(code);
+        continue;
+      }
+      seen.add(code);
+      rfids.push(code);
+      if (rfids.length >= 400) break;
+    }
+
+    if (!rfids.length) {
+      return res.status(400).json({ ok: false, error: 'Proporciona al menos un RFID válido (24 caracteres).' });
+    }
+
+    try {
+      const infoQ = await withTenant(tenant, (c) =>
+        c.query(
+          `SELECT ic.rfid, ic.estado, ic.sub_estado, ic.sede_id, ic.lote, ic.numero_orden, ic.zona_id, ic.seccion_id
+             FROM inventario_credocubes ic
+            WHERE ic.rfid = ANY($1::text[])`,
+          [rfids]
+        )
+      );
+
+      const infoMap = new Map<string, any>();
+      for (const row of infoQ.rows as any[]) {
+        if (!infoMap.has(row.rfid)) infoMap.set(row.rfid, row);
+      }
+
+      const notFound = rfids.filter((code) => !infoMap.has(code));
+      const invalid: Array<{ rfid: string; estado: string | null | undefined; sub_estado: string | null | undefined; sede_id: number | null | undefined; reason: string; message: string }>
+        = [];
+      const allowed: any[] = [];
+
+      infoMap.forEach((row, key) => {
+        const estadoCanon = normalizeBasic(row.estado);
+        const subCanon = normalizeBasic(row.sub_estado);
+        const sedeMatch = typeof row.sede_id === 'number' && Number.isFinite(row.sede_id) && row.sede_id === sedeId;
+        if (!sedeMatch) {
+          invalid.push({
+            rfid: row.rfid,
+            estado: row.estado,
+            sub_estado: row.sub_estado,
+            sede_id: row.sede_id,
+            reason: 'SEDE_MISMATCH',
+            message: 'La pieza pertenece a otra sede.',
+          });
+          return;
+        }
+        if (estadoCanon === 'en bodega' && subCanon === 'pendiente a inspeccion') {
+          invalid.push({
+            rfid: row.rfid,
+            estado: row.estado,
+            sub_estado: row.sub_estado,
+            sede_id: row.sede_id,
+            reason: 'PENDIENTE_INSPECCION',
+            message: 'Las piezas en "En bodega · Pendiente a Inspección" deben procesarse desde Inspección.',
+          });
+          return;
+        }
+        if (!ALLOWED_BODEGA_RETURN_ESTADOS.has(estadoCanon)) {
+          let message = 'El estado actual no permite devolver la pieza a bodega.';
+          if (estadoCanon === 'operacion' || estadoCanon === 'en operacion') {
+            message = 'Las piezas en Operación no se pueden devolver a bodega.';
+          } else if (estadoCanon === 'inspeccion' || estadoCanon === 'inspeccion') {
+            message = 'Las piezas en Inspección no se pueden devolver a bodega.';
+          } else if (estadoCanon === 'en bodega') {
+            message = 'La pieza ya se encuentra en bodega.';
+          }
+          invalid.push({
+            rfid: row.rfid,
+            estado: row.estado,
+            sub_estado: row.sub_estado,
+            sede_id: row.sede_id,
+            reason: 'STATE_NOT_ALLOWED',
+            message,
+          });
+          return;
+        }
+        allowed.push(row);
+      });
+
+      const devolved: Array<{ rfid: string; prev_estado: string | null | undefined; prev_sub_estado: string | null | undefined }> = [];
+      if (allowed.length) {
+        const allowedRfids = allowed.map((row) => row.rfid);
+        await runWithSede(tenant, sedeId, async (c) => {
+          await c.query('BEGIN');
+          try {
+            await c.query(`DELETE FROM acond_caja_items WHERE rfid = ANY($1::text[])`, [allowedRfids]);
+            await c.query(
+              `UPDATE inventario_credocubes ic
+                  SET estado='En bodega',
+                      sub_estado=NULL,
+                      sede_id = $2,
+                      lote=NULL,
+                      numero_orden=NULL,
+                      zona_id=NULL,
+                      seccion_id=NULL
+                WHERE ic.rfid = ANY($1::text[])`,
+              [allowedRfids, sedeId]
+            );
+            await c.query('COMMIT');
+          } catch (err) {
+            await c.query('ROLLBACK');
+            throw err;
+          }
+        });
+        for (const row of allowed) {
+          devolved.push({
+            rfid: row.rfid,
+            prev_estado: row.estado,
+            prev_sub_estado: row.sub_estado,
+          });
+        }
+      }
+
+      return res.json({
+        ok: true,
+        devolved,
+        invalid,
+        not_found: notFound,
+        duplicates,
+      });
+    } catch (err: any) {
+      console.error('[bodegaDevolucion] error', err);
+      return res.status(500).json({ ok: false, error: err?.message || 'Error devolviendo piezas a bodega.' });
     }
   },
 

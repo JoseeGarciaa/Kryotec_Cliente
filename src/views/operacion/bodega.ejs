@@ -6,6 +6,11 @@
   </div>
 
   <div class="space-y-6">
+      <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
+        <p class="text-xs opacity-70">Devuelve piezas en Pre o Acondicionamiento directamente a tu bodega.</p>
+        <button id="btn-open-devolucion" type="button" class="btn btn-primary btn-sm w-full sm:w-auto">Devolver a bodega</button>
+      </div>
+
       <form id="form-filtros" class="grid grid-cols-1 gap-4 md:gap-5 w-full sm:grid-cols-2 lg:grid-cols-5 items-end">
         <label class="form-control w-full">
           <span class="label-text text-xs">Buscar</span>
@@ -68,6 +73,41 @@
       </div>
   </div>
 </div>
+
+<dialog id="modal-bodega-devolucion" class="modal">
+  <div class="modal-box max-w-2xl space-y-4">
+    <div class="flex items-start justify-between gap-3">
+      <div>
+        <h3 class="text-lg font-semibold tracking-tight">Devolver a bodega</h3>
+        <p class="text-xs opacity-70">Escanea RFIDs de 24 caracteres. Cada lectura se agregará a la lista para procesarla.</p>
+      </div>
+      <button id="devolucion-close" type="button" class="btn btn-ghost btn-sm">✕</button>
+    </div>
+    <div class="space-y-3">
+      <label class="form-control">
+        <span class="label-text text-xs">Escáner / teclado</span>
+        <input id="devolucion-scan" type="text" class="input input-sm input-bordered font-mono uppercase" placeholder="Escanea o pega RFIDs" autocomplete="off" />
+      </label>
+      <div class="rounded-lg border border-base-300/60 bg-base-200/20 p-3 space-y-2">
+        <div class="flex items-center justify-between text-xs">
+          <span class="font-medium">RFIDs por devolver</span>
+          <span id="devolucion-count" class="badge badge-outline badge-xs">0</span>
+        </div>
+        <div id="devolucion-queue" class="flex flex-col gap-2 text-xs"></div>
+        <div id="devolucion-empty" class="text-[11px] opacity-60">Escanea un RFID para agregarlo aquí.</div>
+      </div>
+      <div id="devolucion-summary" class="text-[11px] opacity-70"></div>
+      <div id="devolucion-result" class="text-xs space-y-2"></div>
+    </div>
+    <div class="flex flex-wrap items-center justify-between gap-3">
+      <button id="devolucion-clear" type="button" class="btn btn-ghost btn-xs">Limpiar lista</button>
+      <button id="devolucion-submit" type="button" class="btn btn-primary btn-sm">Devolver</button>
+    </div>
+  </div>
+  <form method="dialog" class="modal-backdrop">
+    <button>Cerrar</button>
+  </form>
+</dialog>
 
 <script src="/static/js/bodega.js?v=<%= assetVersion %>" defer></script>
 <script src="/static/js/bodega_pend_insp.js?v=<%= assetVersion %>" defer></script>
