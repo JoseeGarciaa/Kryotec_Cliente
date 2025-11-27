@@ -574,7 +574,12 @@ export const OperacionController = {
         WHERE ic.estado IN ('Inspección','Inspeccion')${inspeccionSede}`,
         inspeccionParams
       ));
-      const inspeccion = inspeccionQ.rows[0] || { tics:0, vips:0 };
+      const rawInspeccion = inspeccionQ.rows[0] || { tics:0, vips:0 };
+      const inspeccion = {
+        tics: rawInspeccion.tics || 0,
+        vips: rawInspeccion.vips || 0,
+        total: (rawInspeccion.tics || 0) + (rawInspeccion.vips || 0)
+      };
       const operacionParams: any[] = [];
       const operacionSede = pushSedeFilter(operacionParams, sedeId, 'ic');
       const opQ = await withTenant(tenant, (c)=> c.query(

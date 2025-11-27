@@ -4,9 +4,10 @@
   const statusEl = document.getElementById('kb-status');
   const btn = document.getElementById('kb-refresh');
   if(!statusEl) return;
-  const metricIds = ['kb-bodega-tics','kb-bodega-vips','kb-bodega-cubes','kb-cong-proc','kb-cong-done','kb-atem-proc','kb-atem-done','kb-ensam-items','kb-ensam-cajas','kb-op-cajas','kb-insp-cajas','kb-insp-elapsed'];
+  const metricIds = ['kb-bodega-tics','kb-bodega-vips','kb-bodega-cubes','kb-cong-proc','kb-cong-done','kb-atem-proc','kb-atem-done','kb-ensam-items','kb-ensam-cajas','kb-op-cajas','kb-insp-piezas','kb-insp-elapsed'];
   let firstLoad = true;
   let lastTimers = { acond:[], operacion:[], preAcond:[], inspeccion:[] };
+  let lastInspPieces = 0;
   let serverOffset = 0; // serverNow - Date.now()
   const timersBox = document.getElementById('kb-timers');
   let timerTick=null;
@@ -38,14 +39,18 @@
       setNum('kb-atem-done', d.preAcond.atemperamiento.completado);
       setNum('kb-ensam-items', d.acond.ensamblaje);
       setNum('kb-ensam-cajas', d.acond.cajas);
-  setNum('kb-op-cajas', d.operacion.cajas_op);
+      setNum('kb-op-cajas', d.operacion.cajas_op);
+      lastInspPieces = Number(typeof d?.inspeccion?.total === 'number'
+        ? d.inspeccion.total
+        : ((d?.inspeccion?.tics || 0) + (d?.inspeccion?.vips || 0)));
+      setNum('kb-insp-piezas', lastInspPieces);
       const preArr = d.timers ? (d.timers.preAcond||[]) : [];
       const tp = preArr.length;
   const preGroups = preArr.filter(t=>!t.item && (t.remaining_sec||0)>0).length;
       const preItems = preArr.filter(t=>t.item).length;
       const ta = d.timers ? (d.timers.acond||[]).length : 0;
       const to = d.timers ? (d.timers.operacion||[]).length : 0;
-  statusEl.textContent = 'Actualizado '+ new Date().toLocaleTimeString() + ` · Pre:${tp} (G${preGroups}/I${preItems}) A:${ta} Op:${d.operacion.cajas_op}`;
+      statusEl.textContent = 'Actualizado '+ new Date().toLocaleTimeString() + ` · Pre:${tp} (G${preGroups}/I${preItems}) A:${ta} Op:${d.operacion.cajas_op} Insp:${lastInspPieces}`;
       if(d.timers){
         lastTimers = d.timers; renderTimers(); ensureTick();
   const anyActive = [...preArr, ...(d.timers.acond||[]), ...(d.timers.operacion||[])].some(t=> (t.remaining_sec||0) > 0);
@@ -131,11 +136,12 @@
       console.debug('[kanban] op placeholder timers', { op: (lastTimers.operacion||[]).length, acond: (lastTimers.acond||[]).length, chosen: soonOp? soonOp.lote:null });
     }
     // Inspección: contar cajas y mostrar la que termina primero (countdown / remaining)
-    const inspCnt = (lastTimers.inspeccion||[]).length;
-    const inspCntEl = document.getElementById('kb-insp-cajas'); if(inspCntEl) inspCntEl.textContent = String(inspCnt);
+    const inspTimersCount = (lastTimers.inspeccion||[]).length;
+    const inspPiecesEl = document.getElementById('kb-insp-piezas');
+    if(inspPiecesEl) inspPiecesEl.textContent = String(lastInspPieces);
     const inspSpan = document.getElementById('kb-insp-elapsed');
     if(inspSpan){
-      if(!inspCnt){ inspSpan.textContent = '—'; }
+      if(!inspTimersCount){ inspSpan.textContent = '—'; }
       else {
         // Preferir timers con duración para mostrar conteo regresivo; si falta remaining_sec, calcularlo
         const timers = (lastTimers.inspeccion||[]).map(t=>{

@@ -1,5 +1,6 @@
 import { Request, Response } from 'express';
 import { resolveTenant } from '../middleware/tenant';
+import { collectNormalizedRoles } from '../middleware/roles';
 import { withTenant } from '../db/pool';
 import { AlertsModel } from '../models/Alerts';
 
@@ -14,9 +15,10 @@ export const NotificationsController = {
     try {
       const page = Number(req.query.page || 1) || 1;
       const limit = Math.min(100, Number(req.query.limit || 25) || 25);
-      const role = String(u.rol || '').toLowerCase();
-      // Simple role-based visibility: admins see everything; other roles focus on inventory-related alerts
-      const likePatterns = role === 'administrador' ? undefined : ['inventario:%'];
+      const roles = collectNormalizedRoles(u);
+      const isAdminish = roles.includes('admin') || roles.includes('super_admin');
+      // Simple role-based visibility: admins see everything; otros roles enfocan en alertas de inventario
+      const likePatterns = isAdminish ? undefined : ['inventario:%'];
       const { items, total } = await withTenant(tenantSchema, async (client) => {
         return AlertsModel.list(client, { page, limit, likePatterns });
       });
@@ -37,8 +39,9 @@ export const NotificationsController = {
     const tenantSchema = String(t).startsWith('tenant_') ? String(t) : `tenant_${t}`;
     const afterRaw = Number(req.query.after || 0) || 0;
     try {
-      const role = String(u.rol || '').toLowerCase();
-      const likePatterns = role === 'administrador' ? undefined : ['inventario:%'];
+      const roles = collectNormalizedRoles(u);
+      const isAdminish = roles.includes('admin') || roles.includes('super_admin');
+      const likePatterns = isAdminish ? undefined : ['inventario:%'];
       const { items, lastId } = await withTenant(tenantSchema, async (client) => {
         // Ensure table exists to avoid relation errors bubbling up
         await AlertsModel.ensureTable(client);

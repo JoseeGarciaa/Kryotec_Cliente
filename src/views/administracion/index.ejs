@@ -1,5 +1,13 @@
 <% title = title || 'Administración' %>
 <div class="space-y-6">
+  <% const availableRoles = [
+    { value: 'acondicionador', label: 'Acondicionador' },
+    { value: 'operador', label: 'Operador' },
+    { value: 'bodeguero', label: 'Bodeguero' },
+    { value: 'inspeccionador', label: 'Inspeccionador' },
+    { value: 'admin', label: 'Admin' },
+    { value: 'super_admin', label: 'Super admin' }
+  ]; %>
   <% if (flash && flash.ok) { %>
     <div class="alert alert-success shadow"><span><%= flash.ok %></span></div>
   <% } %>
@@ -99,22 +107,37 @@
                 </td>
                 <td class="text-xs"><%= u.telefono || '-' %></td>
                 <td>
-                  <% const roleMap = {
-                    'Preacond': 'Acondicionador',
-                    'Operacion': 'Operador',
-                    'Bodega': 'Bodeguero',
-                    'Inspeccion': 'Inspeccionador',
-                    'Administrador': 'Admin',
-                    'Admin': 'Admin',
-                    'admin': 'Admin',
-                    'super_admin': 'Super Admin',
-                    'SuperAdmin': 'Super Admin',
-                    'superadmin': 'Super Admin',
-                    'super-admin': 'Super Admin'
+                  <% const roleFriendly = {
+                    super_admin: 'Super Admin',
+                    admin: 'Admin',
+                    acondicionador: 'Acondicionador',
+                    operador: 'Operador',
+                    bodeguero: 'Bodeguero',
+                    inspeccionador: 'Inspeccionador'
                   }; %>
-                  <% const isGlobal = u.sede_id === null || u.sede_id === undefined || u.sede_id === ''; %>
-                  <% const displayRole = isGlobal ? 'Super Admin' : (roleMap[u.rol] || u.rol); %>
-                  <span class="badge badge-outline <%= isGlobal || ['Admin','Administrador','admin','SuperAdmin','superadmin','super_admin','super-admin'].includes(u.rol)?'badge-primary':'' %>"><%= displayRole %></span>
+                  <% const roleLegacyMap = {
+                    preacond: 'acondicionador',
+                    'preacondicionador': 'acondicionador',
+                    operacion: 'operador',
+                    operador: 'operador',
+                    bodega: 'bodeguero',
+                    inspeccion: 'inspeccionador',
+                    administrador: 'admin',
+                    superadmin: 'super_admin',
+                    'super-admin': 'super_admin',
+                    'super administrador': 'super_admin'
+                  }; %>
+                  <% const roleValues = Array.isArray(u.roles) && u.roles.length ? u.roles : (u.rol ? [u.rol] : []); %>
+                  <% const normalizedRoles = []; const seenRoles = new Set(); %>
+                  <% roleValues.forEach((value) => {
+                       const key = (value || '').toString().toLowerCase();
+                       const canonical = roleLegacyMap[key] || key;
+                       if (!seenRoles.has(canonical)) { seenRoles.add(canonical); normalizedRoles.push(canonical); }
+                     }); %>
+                  <% if (!normalizedRoles.length && u.rol) normalizedRoles.push((roleLegacyMap[(u.rol || '').toLowerCase()] || (u.rol || '')).toLowerCase()); %>
+                  <% normalizedRoles.forEach((canonical) => { const label = roleFriendly[canonical] || canonical; const tone = (canonical === 'admin' || canonical === 'super_admin') ? 'badge-primary' : 'badge-outline'; %>
+                    <span class="badge <%= tone %> mr-1"><%= label %></span>
+                  <% }) %>
                 </td>
                 <td>
                   <% const hasSede = !(u.sede_id === null || u.sede_id === undefined || u.sede_id === ''); %>
@@ -141,12 +164,13 @@
       <button class="btn btn-ghost btn-xs btn-edit-user" 
         data-id="<%= u.id %>" 
         data-nombre="<%- u.nombre %>" 
-  data-correo="<%- u.correo %>" 
-  data-telefono="<%- u.telefono || '' %>" 
-  data-rol="<%- u.rol %>" 
-  data-sede="<%= u.sede_id || '' %>" 
-  data-activo="<%= u.activo ? 'true' : 'false' %>"
-  data-ttl="<%= u.sesion_ttl_minutos || sessionTtlDefault %>">✏️</button>
+        data-correo="<%- u.correo %>" 
+        data-telefono="<%- u.telefono || '' %>" 
+        data-rol="<%- u.rol %>" 
+        data-roles='<%- JSON.stringify(Array.isArray(u.roles) && u.roles.length ? u.roles : (u.rol ? [u.rol] : [])) %>'
+        data-sede="<%= u.sede_id || '' %>" 
+        data-activo="<%= u.activo ? 'true' : 'false' %>"
+        data-ttl="<%= u.sesion_ttl_minutos || sessionTtlDefault %>">✏️</button>
   <button class="btn btn-ghost btn-xs text-error btn-del-user" title="Inhabilitar usuario" aria-label="Inhabilitar usuario" data-id="<%= u.id %>">🗑️</button>
                 </td>
               </tr>
@@ -185,14 +209,15 @@
       <input name="telefono" placeholder="Teléfono" class="input input-sm input-bordered w-full" />
       <input name="password" type="password" placeholder="Contraseña inicial (opcional)" class="input input-sm input-bordered w-full" minlength="8" />
       <p class="text-xs opacity-70"><%= passwordPolicy %></p>
-      <select name="rol" class="select select-sm select-bordered w-full">
-        <option value="Acondicionador">Acondicionador</option>
-        <option value="Operador">Operador</option>
-        <option value="Bodeguero">Bodeguero</option>
-        <option value="Inspeccionador">Inspeccionador</option>
-        <option value="admin">Admin</option>
-        <option value="super_admin">Super admin</option>
-      </select>
+      <label class="form-control">
+        <span class="label-text text-xs opacity-70">Roles</span>
+        <select name="roles" id="new-user-roles" class="select select-sm select-bordered w-full" multiple size="6">
+          <% availableRoles.forEach((opt) => { %>
+            <option value="<%= opt.value %>" <%= opt.value === 'acondicionador' ? 'selected' : '' %>><%= opt.label %></option>
+          <% }) %>
+        </select>
+        <span class="text-[11px] opacity-60">Selecciona uno o varios roles (Ctrl/⌘ + clic para combinar).</span>
+      </label>
       <select name="sede_id" class="select select-sm select-bordered w-full">
         <option value="">Sin sede</option>
         <% (sedes || []).forEach(s => { %>
@@ -219,14 +244,15 @@
       <input required name="correo" type="email" placeholder="Correo" class="input input-sm input-bordered w-full" />
       <input name="telefono" placeholder="Teléfono" class="input input-sm input-bordered w-full" />
       <input name="password" type="password" placeholder="Password (dejar vacío para no cambiar)" class="input input-sm input-bordered w-full" minlength="8" />
-      <select name="rol" class="select select-sm select-bordered w-full">
-        <option value="Acondicionador">Acondicionador</option>
-        <option value="Operador">Operador</option>
-        <option value="Bodeguero">Bodeguero</option>
-        <option value="Inspeccionador">Inspeccionador</option>
-        <option value="admin">Admin</option>
-        <option value="super_admin">Super admin</option>
-      </select>
+      <label class="form-control">
+        <span class="label-text text-xs opacity-70">Roles</span>
+        <select name="roles" id="edit-user-roles" class="select select-sm select-bordered w-full" multiple size="6">
+          <% availableRoles.forEach((opt) => { %>
+            <option value="<%= opt.value %>"><%= opt.label %></option>
+          <% }) %>
+        </select>
+        <span class="text-[11px] opacity-60">Selecciona uno o varios roles.</span>
+      </label>
       <select name="sede_id" class="select select-sm select-bordered w-full">
         <option value="">Sin sede</option>
         <% (sedes || []).forEach(s => { %>

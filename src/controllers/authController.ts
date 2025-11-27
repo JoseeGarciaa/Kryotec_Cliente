@@ -8,7 +8,7 @@ import { resolveTenant } from '../middleware/tenant';
 import { findUserInAnyTenant } from '../services/tenantDiscovery';
 import { ensureSecurityArtifacts } from '../services/securityBootstrap';
 import { normalizeSessionTtl } from '../utils/passwordPolicy';
-import { resolveEffectiveRole } from '../middleware/roles';
+import { normalizeRoleName, resolveEffectiveRole } from '../middleware/roles';
 
 export const AuthController = {
   loginView: (req: Request, res: Response) => {
@@ -76,7 +76,7 @@ export const AuthController = {
         return res.status(423).render('auth/login', { error: `Cuenta bloqueada temporalmente por intentos fallidos. Intenta nuevamente después de ${unblockAt}.`, layout: 'layouts/auth', title: 'Acceso al Cliente' });
       }
 
-      console.log('[auth][login] user found', { tenantSchema, userId: user.id, rol: user.rol, activo: user.activo });
+      console.log('[auth][login] user found', { tenantSchema, userId: user.id, rol: user.rol, roles: user.roles, activo: user.activo });
       let match = false;
       // Support hashed or legacy plaintext passwords
       if (/^\$2[aby]\$/.test(user.password)) {
@@ -122,6 +122,7 @@ export const AuthController = {
         sub: user.id,
         tenant: tenantSchema,
         rol: user.rol,
+        roles: user.roles,
         nombre: user.nombre,
         correo: user.correo,
         sede_id: user.sede_id ?? null,
@@ -137,8 +138,7 @@ export const AuthController = {
       });
 
   // Redirección según rol
-  const rolLower = (user.rol || '').toLowerCase();
-  const roleKey = resolveEffectiveRole(user) || rolLower;
+  const roleKey = resolveEffectiveRole(user) || normalizeRoleName(user.rol);
   if (mustChangePassword) {
     return res.redirect('/cuenta?mustChange=1');
   }
@@ -210,6 +210,7 @@ export const AuthController = {
               sub: user.id,
               tenant,
               rol: user.rol,
+              roles: user.roles,
               nombre: user.nombre,
               correo: user.correo,
               sede_id: user.sede_id ?? null,
@@ -223,8 +224,7 @@ export const AuthController = {
               secure: process.env.NODE_ENV === 'production',
               maxAge: sessionTtlMinutes * 60 * 1000,
             });
-            const rolLower = (user.rol || '').toLowerCase();
-            const roleKey = resolveEffectiveRole(user) || rolLower;
+            const roleKey = resolveEffectiveRole(user) || normalizeRoleName(user.rol);
             if (mustChangePassword) {
               return res.redirect('/cuenta?mustChange=1');
             }

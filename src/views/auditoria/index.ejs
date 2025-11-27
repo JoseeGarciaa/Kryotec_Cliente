@@ -27,14 +27,6 @@
             <div class="font-mono"><%= item.rfid || '-' %></div>
           </div>
           <div>
-            <div class="text-sm opacity-70">Lote</div>
-            <div><%= item.lote || '-' %></div>
-          </div>
-          <div>
-            <div class="text-sm opacity-70">Orden</div>
-            <div><%= item.numero_orden || '-' %></div>
-          </div>
-          <div>
             <div class="text-sm opacity-70">Estado</div>
             <div><%= [item.estado,item.sub_estado].filter(Boolean).join('/') || '-' %></div>
           </div>
@@ -100,8 +92,6 @@
           <tr>
             <th class="whitespace-nowrap">Fecha</th>
             <th>RFID</th>
-            <th>Lote</th>
-            <th class="whitespace-nowrap">Orden</th>
             <th class="whitespace-nowrap">Estado</th>
             <th class="whitespace-nowrap">Novedad</th>
             <th>Comentarios</th>
@@ -115,8 +105,6 @@
               <tr>
                 <td class="text-xs whitespace-nowrap opacity-80"><%= new Date(row.fecha).toLocaleString() %></td>
                 <td class="font-mono text-xs"><%= row.rfid || '-' %></td>
-                <td class="text-xs"><%= row.lote || '-' %></td>
-                <td class="text-xs"><%= row.numero_orden || '-' %></td>
                 <td class="text-xs"><%= [row.estado,row.sub_estado].filter(Boolean).join('/') || '-' %></td>
                 <td class="text-xs">
                   <% if (row.nov_tipo) { %>
@@ -148,7 +136,7 @@
               </tr>
             <% }) %>
           <% } else { %>
-            <tr><td colspan="9" class="text-center py-6 opacity-70">No hay registros</td></tr>
+            <tr><td colspan="7" class="text-center py-6 opacity-70">No hay registros</td></tr>
           <% } %>
         </tbody>
       </table>

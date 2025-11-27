@@ -41,36 +41,52 @@
         </div>
         <button id="btn-theme-toggle" class="btn k-gradient-btn btn-sm mb-4 text-xs justify-start">Cambiar tema</button>
         <ul class="menu flex-1">
-          <% const roleLowerRaw = (user && (user.rol || '').toLowerCase()) || ''; %>
+          <% const rawRoles = Array.isArray(user?.roles) && user.roles.length ? user.roles : ((user && user.rol) ? [user.rol] : []); %>
           <% const mapLegacy = {
             preacond:'acondicionador',
             operacion:'operador',
             bodega:'bodeguero',
             inspeccion:'inspeccionador',
-            admin:'administrador',
+            admin:'admin',
+            administrador:'admin',
             super_admin:'super_admin',
             superadmin:'super_admin',
             'super admin':'super_admin',
             'super-admin':'super_admin',
             'super administrador':'super_admin'
           }; %>
-          <% const roleLower = mapLegacy[roleLowerRaw] || roleLowerRaw; %>
+          <% const canonicalRoles = []; const seenRoles = new Set(); %>
+          <% rawRoles.forEach((r) => {
+               const key = (r || '').toString().toLowerCase();
+               const normalized = mapLegacy[key] || key;
+               if (normalized && !seenRoles.has(normalized)) { seenRoles.add(normalized); canonicalRoles.push(normalized); }
+             }); %>
+          <% if (!canonicalRoles.length) {
+               const fallbackKey = ((user && (user.rol || '')) || '').toString().toLowerCase();
+               const fallback = mapLegacy[fallbackKey] || fallbackKey;
+               if (fallback) { canonicalRoles.push(fallback); }
+             } %>
+          <% const rolesSet = new Set(canonicalRoles.filter(Boolean)); %>
+          <% const primaryRole = canonicalRoles[0] || ''; %>
           <% const hasSede = user && !(user.sede_id === null || user.sede_id === undefined || user.sede_id === ''); %>
-          <% const isSuperAdmin = roleLower === 'super_admin' || !hasSede; %>
+          <% const isSuperAdmin = !hasSede || rolesSet.has('super_admin'); %>
           <% const limitedRoles = ['acondicionador','operador','bodeguero','inspeccionador']; %>
+          <% const hasExtendedRole = Array.from(rolesSet).some((r) => !limitedRoles.includes(r)); %>
+          <% const hasRole = (value) => rolesSet.has(value); %>
+          <% const hasAdminRole = hasRole('admin') || hasRole('super_admin'); %>
           <% if (isSuperAdmin) { %>
             <li><a class="<%= currentPath.startsWith('/dashboard') ? 'active' : '' %>" href="/dashboard">Dashboard</a></li>
             <li><a class="<%= currentPath.startsWith('/inventario') ? 'active' : '' %>" href="/inventario">Inventario</a></li>
             <li><a class="<%= currentPath.startsWith('/administracion') ? 'active' : '' %>" href="/administracion">Administración</a></li>
             <li><a class="<%= currentPath.startsWith('/reportes') ? 'active' : '' %>" href="/reportes">Reportes</a></li>
-          <% } else if (!limitedRoles.includes(roleLower)) { %>
+          <% } else if (hasExtendedRole) { %>
             <li><a class="<%= currentPath.startsWith('/dashboard') ? 'active' : '' %>" href="/dashboard">Dashboard</a></li>
             <li><a class="<%= currentPath.startsWith('/registro') ? 'active' : '' %>" href="/registro">Registro</a></li>
             <li><a class="<%= currentPath.startsWith('/inventario') ? 'active' : '' %>" href="/inventario">Inventario</a></li>
             <li><a class="<%= currentPath.startsWith('/ordenes') && !currentPath.startsWith('/ordenes/calculadora') ? 'active' : '' %>" href="/ordenes">Órdenes</a></li>
             <li><a class="<%= currentPath.startsWith('/ordenes/calculadora') ? 'active' : '' %>" href="/ordenes/calculadora">Calculadora de órdenes</a></li>
           <% } %>
-          <% if (!isSuperAdmin && roleLower === 'bodeguero') { %>
+          <% if (!isSuperAdmin && hasRole('bodeguero')) { %>
             <li><a class="<%= currentPath.startsWith('/registro') ? 'active' : '' %>" href="/registro">Registro</a></li>
           <% } %>
           <% if (!isSuperAdmin) { %>
@@ -78,27 +94,27 @@
             <details <%= currentPath.startsWith('/operacion') ? 'open' : '' %>>
               <summary>Operación</summary>
               <ul>
-                <% if (!limitedRoles.includes(roleLower)) { %>
+                <% if (hasExtendedRole) { %>
                   <li><a class="<%= currentPath === '/operacion/todas' ? 'active' : '' %>" href="/operacion/todas">Todas las fases</a></li>
                   <li><a class="<%= currentPath === '/operacion/bodega' ? 'active' : '' %>" href="/operacion/bodega">En bodega</a></li>
                 <% } %>
-                <% if (roleLower === 'bodeguero') { %>
+                <% if (hasRole('bodeguero')) { %>
                   <li><a class="<%= currentPath === '/operacion/bodega' ? 'active' : '' %>" href="/operacion/bodega">En bodega</a></li>
                 <% } %>
-                <% if (roleLower === 'acondicionador' || !limitedRoles.includes(roleLower)) { %>
+                <% if (hasRole('acondicionador') || hasExtendedRole) { %>
                   <li><a class="<%= currentPath === '/operacion/preacond' ? 'active' : '' %>" href="/operacion/preacond">Preacondicionamiento</a></li>
                   <li><a class="<%= currentPath === '/operacion/acond' ? 'active' : '' %>" href="/operacion/acond">Acondicionamiento</a></li>
                 <% } %>
-                <% if (roleLower === 'operador' || !limitedRoles.includes(roleLower)) { %>
+                <% if (hasRole('operador') || hasExtendedRole) { %>
                   <li><a class="<%= currentPath === '/operacion/operacion' ? 'active' : '' %>" href="/operacion/operacion">Operación</a></li>
-                  <% if (roleLower === 'operador') { %>
+                  <% if (hasRole('operador')) { %>
                     <li><a class="<%= currentPath === '/operacion/devolucion' ? 'active' : '' %>" href="/operacion/devolucion">Devolución</a></li>
                   <% } %>
                 <% } %>
-                <% if (roleLower === 'inspeccionador') { %>
+                <% if (hasRole('inspeccionador')) { %>
                   <li><a class="<%= currentPath === '/operacion/inspeccion' ? 'active' : '' %>" href="/operacion/inspeccion">Inspección</a></li>
                 <% } %>
-                <% if (!limitedRoles.includes(roleLower)) { %>
+                <% if (hasExtendedRole) { %>
                   <li><a class="<%= currentPath === '/operacion/devolucion' ? 'active' : '' %>" href="/operacion/devolucion">Devolución</a></li>
                   <li><a class="<%= currentPath === '/operacion/inspeccion' ? 'active' : '' %>" href="/operacion/inspeccion">Inspección</a></li>
                 <% } %>
@@ -106,14 +122,13 @@
             </details>
           </li>
           <% } %>
-          <% if (!isSuperAdmin && (roleLower === 'operador' || !limitedRoles.includes(roleLower))) { %>
+          <% if (!isSuperAdmin && (hasRole('operador') || hasExtendedRole)) { %>
             <li><a class="<%= currentPath.startsWith('/traslado') ? 'active' : '' %>" href="/traslado">Traslado</a></li>
           <% } %>
-          <% const isAdminRole = user && ['Admin','admin','Administrador','administrador'].includes(user.rol); %>
-          <% if (isAdminRole && hasSede) { %>
+          <% if (hasAdminRole && hasSede) { %>
             <li><a class="<%= currentPath.startsWith('/auditoria') ? 'active' : '' %>" href="/auditoria">Auditoría</a></li>
           <% } %>
-          <% if (isAdminRole && hasSede) { %>
+          <% if (hasAdminRole && hasSede) { %>
             <li><a class="<%= currentPath.startsWith('/administracion') ? 'active' : '' %>" href="/administracion">Administración</a></li>
             <li><a class="<%= currentPath.startsWith('/reportes') ? 'active' : '' %>" href="/reportes">Reportes</a></li>
           <% } %>

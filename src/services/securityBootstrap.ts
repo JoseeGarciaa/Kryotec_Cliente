@@ -33,6 +33,27 @@ export async function ensureSecurityArtifacts(tenant: string | null | undefined)
     await client.query(`
       CREATE INDEX IF NOT EXISTS idx_usuarios_password_historial_usuario ON usuarios_password_historial(usuario_id, creado_en DESC);
     `);
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS usuarios_roles (
+        id SERIAL PRIMARY KEY,
+        usuario_id INT NOT NULL REFERENCES usuarios(id) ON DELETE CASCADE,
+        rol TEXT NOT NULL,
+        creado_en TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        CONSTRAINT uq_usuario_rol UNIQUE (usuario_id, rol)
+      );
+    `);
+    await client.query(`
+      CREATE INDEX IF NOT EXISTS idx_usuarios_roles_usuario ON usuarios_roles(usuario_id);
+    `);
+    await client.query(`
+      INSERT INTO usuarios_roles (usuario_id, rol)
+      SELECT u.id, LOWER(TRIM(u.rol))
+        FROM usuarios u
+        LEFT JOIN usuarios_roles ur ON ur.usuario_id = u.id
+       WHERE ur.id IS NULL
+         AND u.rol IS NOT NULL
+         AND LENGTH(TRIM(u.rol)) > 0;
+    `);
   });
   ensuredTenants.add(tenant);
 }

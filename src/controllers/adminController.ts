@@ -4,7 +4,7 @@ import crypto from 'crypto';
 import { withTenant } from '../db/pool';
 import { UsersModel } from '../models/User';
 import { SedesModel } from '../models/Sede';
-import { ALLOWED_ROLES, normalizeRoleName, resolveEffectiveRole } from '../middleware/roles';
+import { normalizeRoleName, resolveEffectiveRole } from '../middleware/roles';
 import { normalizeSessionTtl, PASSWORD_POLICY_MESSAGE, validatePasswordStrength } from '../utils/passwordPolicy';
 import { config } from '../config';
 
@@ -22,6 +22,57 @@ function coerceSedeId(value: unknown): number | null {
     return Number.isFinite(value) ? value : null;
   }
   return null;
+}
+
+const CANONICAL_ROLE_SET = new Set(['super_admin', 'admin', 'acondicionador', 'operador', 'bodeguero', 'inspeccionador']);
+const ROLE_PRIORITY_ORDER = ['super_admin', 'admin', 'acondicionador', 'operador', 'bodeguero', 'inspeccionador'] as const;
+
+function parseRolesInput(rawRoles: unknown, fallback?: string | null): string[] {
+  const result: string[] = [];
+  const seen = new Set<string>();
+  const pushRole = (value: unknown) => {
+    if (value === null || value === undefined) return;
+    const normalized = normalizeRoleName(String(value));
+    if (!normalized) return;
+    let canonical = normalized;
+    if (canonical === 'administrador') canonical = 'admin';
+    if (canonical === 'preacond') canonical = 'acondicionador';
+    if (canonical === 'operacion') canonical = 'operador';
+    if (canonical === 'bodega') canonical = 'bodeguero';
+    if (canonical === 'inspeccion') canonical = 'inspeccionador';
+    if (!CANONICAL_ROLE_SET.has(canonical)) return;
+    if (!seen.has(canonical)) {
+      seen.add(canonical);
+      result.push(canonical);
+    }
+  };
+  if (Array.isArray(rawRoles)) {
+    rawRoles.forEach(pushRole);
+  } else if (typeof rawRoles === 'string') {
+    const trimmed = rawRoles.trim();
+    if (trimmed.startsWith('[')) {
+      try {
+        const parsed = JSON.parse(trimmed);
+        if (Array.isArray(parsed)) {
+          parsed.forEach(pushRole);
+        } else {
+          pushRole(trimmed);
+        }
+      } catch {
+        pushRole(trimmed);
+      }
+    } else if (trimmed.includes(',')) {
+      trimmed.split(',').forEach(pushRole);
+    } else if (trimmed) {
+      pushRole(trimmed);
+    }
+  } else if (rawRoles !== undefined) {
+    pushRole(rawRoles);
+  }
+  if (fallback) pushRole(fallback);
+  if (!result.length) pushRole('acondicionador');
+  const primary = ROLE_PRIORITY_ORDER.find((role) => result.includes(role)) || result[0] || 'acondicionador';
+  return [primary, ...result.filter((role) => role !== primary)];
 }
 
 function generateTemporalPassword(): string {
@@ -104,19 +155,19 @@ export const AdminController = {
         initialPassword = generateTemporalPassword();
       }
       const hashed = await bcrypt.hash(initialPassword, 10);
-      const rolFinal = (() => {
-        let r = (rol || 'Acondicionador').trim();
-        if (['Administrador','Admin','admin'].includes(r)) r = 'admin';
-        if (['SuperAdmin','superadmin','Super Admin','super admin','super_admin','Super-Admin','super-admin'].includes(r)) r = 'super_admin';
-        return ALLOWED_ROLES.includes(r) ? r : 'Acondicionador';
-      })();
-      const normalizedSedeId = coerceSedeId(sede_id);
+      const rolesNormalized = parseRolesInput((req.body as any)?.roles, rol);
+      const primaryRole = rolesNormalized[0] || 'acondicionador';
+      let normalizedSedeId = coerceSedeId(sede_id);
+      if (rolesNormalized.includes('super_admin')) {
+        normalizedSedeId = null;
+      }
       await withTenant(tenant, (client) => UsersModel.create(client, {
         nombre: nombre.trim(),
         correo: correoNorm,
         telefono,
         password: hashed,
-        rol: rolFinal,
+        rol: primaryRole,
+        roles: rolesNormalized,
         activo: true,
         sede_id: normalizedSedeId,
         sesion_ttl_minutos: sessionTtl,
@@ -169,7 +220,7 @@ export const AdminController = {
   // Editar usuario (form HTML)
   editUser: async (req: Request, res: Response) => {
     const id = Number(req.params.id);
-  const { nombre, correo, telefono, password, rol, activo, sede_id, sesion_ttl_minutos } = req.body as any;
+    const { nombre, correo, telefono, password, rol, roles, activo, sede_id, sesion_ttl_minutos } = req.body as any;
     const tenant = (req as any).user?.tenant as string;
     if (!id || !nombre || !correo) return res.redirect('/administracion?error=Datos+inválidos');
     try {
@@ -190,18 +241,17 @@ export const AdminController = {
         }
         hashed = await bcrypt.hash(password, 10);
       }
-      const rolFinal = (() => {
-        let r = (rol || 'Acondicionador').trim();
-        if (['Administrador','Admin','admin'].includes(r)) r = 'admin';
-        if (['SuperAdmin','superadmin','Super Admin','super admin','super_admin','Super-Admin','super-admin'].includes(r)) r = 'super_admin';
-        return ALLOWED_ROLES.includes(r) ? r : 'Acondicionador';
-      })();
+      const rolesNormalized = parseRolesInput(roles, rol);
+      const primaryRole = rolesNormalized[0] || 'acondicionador';
       const nuevoActivo = activo === 'true' || activo === true;
-      const normalizedSedeId = coerceSedeId(sede_id);
+      let normalizedSedeId = coerceSedeId(sede_id);
+      if (rolesNormalized.includes('super_admin')) {
+        normalizedSedeId = null;
+      }
 
       // Validar: no permitir que el último admin quede sin admin (desactivado o cambio de rol)
       const currentRoleNorm = resolveEffectiveRole(currentUser);
-      const nextRoleNorm = resolveEffectiveRole({ rol: rolFinal, sede_id: normalizedSedeId });
+      const nextRoleNorm = resolveEffectiveRole({ rol: primaryRole, roles: rolesNormalized, sede_id: normalizedSedeId });
       const isCurrentlyAdmin = ['admin','super_admin'].includes(currentRoleNorm);
       const willBeAdmin = ['admin','super_admin'].includes(nextRoleNorm);
       if (isCurrentlyAdmin && (!willBeAdmin || !nuevoActivo)) {
@@ -225,7 +275,8 @@ export const AdminController = {
           correo: correoNorm,
           telefono,
           password: null,
-          rol: rolFinal,
+          rol: primaryRole,
+          roles: rolesNormalized,
           activo: nuevoActivo,
           sede_id: normalizedSedeId,
           sesion_ttl_minutos: sessionTtl,

@@ -184,7 +184,11 @@ app.use(async (req, res, next) => {
 	const token = req.cookies?.token;
 	if (token) {
 		try {
-			res.locals.user = jwt.verify(token, config.jwtSecret);
+			const decoded: any = jwt.verify(token, config.jwtSecret);
+			const roles = Array.isArray(decoded?.roles)
+				? decoded.roles
+				: decoded?.roles ? [decoded.roles] : [];
+			res.locals.user = { ...decoded, roles };
 		} catch {}
 	}
 	// Si falta nombre/correo en el token (tokens antiguos), completarlo desde BD
@@ -200,7 +204,8 @@ app.use(async (req, res, next) => {
 								nombre: userRow.nombre,
 								correo: userRow.correo,
 								sede_id: userRow.sede_id ?? null,
-								sede_nombre: userRow.sede_nombre ?? null,
+							sede_nombre: userRow.sede_nombre ?? null,
+							roles: Array.isArray(userRow.roles) ? userRow.roles : (u.roles || []),
 							};
 				}
 			}

@@ -59,10 +59,31 @@
       formEdit.nombre.value = ds.nombre || '';
       formEdit.correo.value = ds.correo || '';
       formEdit.telefono.value = ds.telefono || '';
-  let rol = ds.rol || '';
-  if(['Admin','Administrador','admin'].includes(rol)) rol = 'admin';
-  if(['SuperAdmin','superadmin','Super Admin','super admin','super_admin','Super-Admin','super-admin'].includes(rol)) rol = 'super_admin';
-  formEdit.rol.value = rol || 'Acondicionador';
+      const rolesSelect = formEdit.querySelector('select[name="roles"]');
+      const parseRoles = () => {
+        if (!ds.roles) return [];
+        try {
+          const parsed = JSON.parse(ds.roles);
+          if (Array.isArray(parsed)) return parsed.map((r) => String(r).toLowerCase());
+        } catch {}
+        return String(ds.roles || '')
+          .split(',')
+          .map((r) => r.trim().toLowerCase())
+          .filter(Boolean);
+      };
+      let roles = parseRoles();
+      if (!roles.length) {
+        let rol = (ds.rol || '').toString();
+        if (['Admin','Administrador','admin'].includes(rol)) rol = 'admin';
+        if (['SuperAdmin','superadmin','Super Admin','super admin','super_admin','Super-Admin','super-admin'].includes(rol)) rol = 'super_admin';
+        roles = rol ? [rol.toLowerCase()] : [];
+      }
+      if (rolesSelect instanceof HTMLSelectElement) {
+        const target = roles.length ? roles : ['acondicionador'];
+        Array.from(rolesSelect.options).forEach((opt) => {
+          opt.selected = target.includes(opt.value);
+        });
+      }
       if(formEdit.sede_id){
         formEdit.sede_id.value = ds.sede || '';
         if(!ds.sede){

@@ -1,5 +1,6 @@
 import { PoolClient } from 'pg';
 import { config } from '../config';
+import { normalizeRoleName } from '../middleware/roles';
 
 export type User = {
   id: number;
@@ -8,6 +9,7 @@ export type User = {
   telefono?: string | null;
   password: string; // hashed
   rol: string;
+  roles: string[];
   activo: boolean;
   fecha_creacion: Date;
   ultimo_ingreso: Date | null;
@@ -27,11 +29,118 @@ type BaseUserInput = {
   telefono?: string | null;
   password?: string | null; // already hashed when provided
   rol: string;
+  roles?: string[] | null;
   activo: boolean;
   sede_id?: number | null;
   sesion_ttl_minutos?: number | null;
   debe_cambiar_contrasena?: boolean;
 };
+
+const ROLE_PRIORITY = ['super_admin', 'admin', 'acondicionador', 'operador', 'bodeguero', 'inspeccionador'] as const;
+const CANONICAL_ROLE_SET = new Set<string>(ROLE_PRIORITY as unknown as string[]);
+
+function normalizeRoleToken(value: unknown): string | null {
+  if (value === null || value === undefined) return null;
+  const raw = String(value).trim();
+  if (!raw) return null;
+  const normalized = normalizeRoleName(raw);
+  if (!normalized) return null;
+  if (normalized === 'administrador') return 'admin';
+  if (normalized === 'preacond') return 'acondicionador';
+  if (normalized === 'operacion') return 'operador';
+  if (normalized === 'bodega') return 'bodeguero';
+  if (normalized === 'inspeccion') return 'inspeccionador';
+  return CANONICAL_ROLE_SET.has(normalized) ? normalized : null;
+}
+
+function normalizeRoleList(raw: unknown): string[] {
+  const result: string[] = [];
+  const seen = new Set<string>();
+  const pushToken = (token: unknown) => {
+    const normalized = normalizeRoleToken(token);
+    if (!normalized || seen.has(normalized)) return;
+    seen.add(normalized);
+    result.push(normalized);
+  };
+  if (Array.isArray(raw)) {
+    raw.forEach(pushToken);
+    return result;
+  }
+  if (typeof raw === 'string') {
+    const trimmed = raw.trim();
+    if (!trimmed) return result;
+    if (trimmed.startsWith('[')) {
+      try {
+        const parsed = JSON.parse(trimmed);
+        if (Array.isArray(parsed)) {
+          parsed.forEach(pushToken);
+          return result;
+        }
+      } catch {}
+    }
+    if (trimmed.includes(',')) {
+      trimmed.split(',').forEach(pushToken);
+      return result;
+    }
+    pushToken(trimmed);
+    return result;
+  }
+  if (raw !== undefined) pushToken(raw);
+  return result;
+}
+
+function pickPrimaryRole(roles: string[]): string {
+  for (const key of ROLE_PRIORITY) {
+    if (roles.includes(key)) return key;
+  }
+  return roles[0] || 'acondicionador';
+}
+
+function orderRoles(roles: string[], primary: string): string[] {
+  const ordered: string[] = [];
+  const seen = new Set<string>();
+  const queue = [primary, ...roles];
+  for (const role of queue) {
+    if (!role || !CANONICAL_ROLE_SET.has(role)) continue;
+    if (seen.has(role)) continue;
+    seen.add(role);
+    ordered.push(role);
+  }
+  if (!ordered.length) ordered.push('acondicionador');
+  return ordered;
+}
+
+function hydrateUserRow(row: any): User {
+  const rawRoles = Array.isArray(row?.roles) ? row.roles : normalizeRoleList(row?.roles);
+  const normalizedRoles = Array.isArray(row?.roles) ? normalizeRoleList(row.roles) : rawRoles;
+  const normalizedColumnRole = normalizeRoleToken(row?.rol);
+  const rolesList = normalizedRoles.length ? normalizedRoles.slice() : [];
+  if (normalizedColumnRole) {
+    if (!rolesList.includes(normalizedColumnRole)) rolesList.push(normalizedColumnRole);
+  }
+  const primary = pickPrimaryRole(rolesList);
+  const finalRoles = orderRoles(rolesList, primary);
+  return {
+    id: row.id,
+    nombre: row.nombre,
+    correo: row.correo,
+    telefono: row.telefono,
+    password: row.password,
+    rol: primary,
+    roles: finalRoles,
+    activo: row.activo,
+    fecha_creacion: row.fecha_creacion,
+    ultimo_ingreso: row.ultimo_ingreso,
+    sede_id: row.sede_id,
+    sede_nombre: row.sede_nombre,
+    intentos_fallidos: row.intentos_fallidos,
+    bloqueado_hasta: row.bloqueado_hasta,
+    debe_cambiar_contrasena: row.debe_cambiar_contrasena,
+    contrasena_cambiada_en: row.contrasena_cambiada_en,
+    sesion_ttl_minutos: row.sesion_ttl_minutos,
+    session_version: row.session_version,
+  };
+}
 
 export const UsersModel = {
   async findByCorreo(client: PoolClient, correo: string): Promise<User | null> {
@@ -43,6 +152,7 @@ export const UsersModel = {
          u.telefono,
          u."password" AS password,
          u.rol,
+         (SELECT ARRAY_AGG(r.rol ORDER BY LOWER(TRIM(r.rol))) FROM usuarios_roles r WHERE r.usuario_id = u.id) AS roles,
          u.activo,
          u.fecha_creacion,
          u.ultimo_ingreso,
@@ -60,7 +170,7 @@ export const UsersModel = {
       LIMIT 1`,
       [correo]
     );
-    return rows[0] || null;
+    return rows[0] ? hydrateUserRow(rows[0]) : null;
   },
 
   async touchUltimoIngreso(client: PoolClient, id: number): Promise<void> {
@@ -76,6 +186,7 @@ export const UsersModel = {
          u.telefono,
          u."password" AS password,
          u.rol,
+         (SELECT ARRAY_AGG(r.rol ORDER BY LOWER(TRIM(r.rol))) FROM usuarios_roles r WHERE r.usuario_id = u.id) AS roles,
          u.activo,
          u.fecha_creacion,
          u.ultimo_ingreso,
@@ -93,7 +204,7 @@ export const UsersModel = {
       LIMIT 1`,
       [id]
     );
-    return rows[0] || null;
+    return rows[0] ? hydrateUserRow(rows[0]) : null;
   },
 
   async listAll(client: PoolClient): Promise<User[]> {
@@ -105,6 +216,7 @@ export const UsersModel = {
          u.telefono,
          u."password" AS password,
          u.rol,
+         (SELECT ARRAY_AGG(r.rol ORDER BY LOWER(TRIM(r.rol))) FROM usuarios_roles r WHERE r.usuario_id = u.id) AS roles,
          u.activo,
          u.fecha_creacion,
          u.ultimo_ingreso,
@@ -120,64 +232,117 @@ export const UsersModel = {
   LEFT JOIN sedes s ON s.sede_id = u.sede_id
       ORDER BY u.id ASC`
     );
-    return rows;
+    return rows.map(hydrateUserRow);
   },
 
   async create(client: PoolClient, data: BaseUserInput & { password: string }): Promise<User> {
-    const { rows } = await client.query<User>(
-  `INSERT INTO usuarios (nombre, correo, telefono, "password", rol, activo, fecha_creacion, sede_id, sesion_ttl_minutos, debe_cambiar_contrasena)
-   VALUES ($1,$2,$3,$4,$5,$6, CURRENT_TIMESTAMP, $7, COALESCE($8, ${config.security.defaultSessionMinutes}), COALESCE($9, true))
-       RETURNING id, nombre, correo, telefono, "password" as password, rol, activo, fecha_creacion, ultimo_ingreso, sede_id,
-                 (SELECT nombre FROM sedes WHERE sede_id = usuarios.sede_id) AS sede_nombre,
-                 COALESCE(intentos_fallidos,0) AS intentos_fallidos,
-                 bloqueado_hasta,
-                 COALESCE(debe_cambiar_contrasena,true) AS debe_cambiar_contrasena,
-                 contrasena_cambiada_en,
-                 COALESCE(sesion_ttl_minutos, ${config.security.defaultSessionMinutes}) AS sesion_ttl_minutos,
-                 COALESCE(session_version,0) AS session_version` ,
-      [data.nombre, data.correo, data.telefono || null, data.password, data.rol, data.activo, data.sede_id ?? null, data.sesion_ttl_minutos ?? null, data.debe_cambiar_contrasena ?? true]
-    );
-    return rows[0];
+    let rolesList = normalizeRoleList(data.roles ?? []);
+    if (!rolesList.length) rolesList = normalizeRoleList(data.rol);
+    if (!rolesList.length) rolesList = ['acondicionador'];
+    const primaryRole = pickPrimaryRole(rolesList);
+    const finalRoles = orderRoles(rolesList, primaryRole);
+
+    await client.query('BEGIN');
+    try {
+      const { rows } = await client.query(
+        `INSERT INTO usuarios (nombre, correo, telefono, "password", rol, activo, fecha_creacion, sede_id, sesion_ttl_minutos, debe_cambiar_contrasena)
+         VALUES ($1,$2,$3,$4,$5,$6, CURRENT_TIMESTAMP, $7, COALESCE($8, ${config.security.defaultSessionMinutes}), COALESCE($9, true))
+             RETURNING id` ,
+        [
+          data.nombre,
+          data.correo,
+          data.telefono || null,
+          data.password,
+          primaryRole,
+          data.activo,
+          data.sede_id ?? null,
+          data.sesion_ttl_minutos ?? null,
+          data.debe_cambiar_contrasena ?? true,
+        ]
+      );
+      const inserted = rows[0];
+      if (!inserted) {
+        await client.query('ROLLBACK');
+        throw new Error('No se pudo crear el usuario');
+      }
+      const userId = inserted.id;
+      await client.query('DELETE FROM usuarios_roles WHERE usuario_id = $1', [userId]);
+      for (const role of finalRoles) {
+        await client.query(
+          `INSERT INTO usuarios_roles (usuario_id, rol)
+           VALUES ($1, $2)
+           ON CONFLICT (usuario_id, rol) DO NOTHING`,
+          [userId, role]
+        );
+      }
+      const hydrated = await this.findById(client, userId);
+      await client.query('COMMIT');
+      if (!hydrated) throw new Error('No se pudo recuperar el usuario creado');
+      return hydrated;
+    } catch (e) {
+      await client.query('ROLLBACK');
+      throw e;
+    }
   },
 
   async update(client: PoolClient, id: number, data: BaseUserInput): Promise<User | null> {
     const existing = await this.findById(client, id);
     if (!existing) return null;
+    let rolesList = normalizeRoleList(data.roles ?? existing.roles);
+    if (!rolesList.length) rolesList = normalizeRoleList(data.rol);
+    if (!rolesList.length) rolesList = ['acondicionador'];
+    const primaryRole = pickPrimaryRole(rolesList);
+    const finalRoles = orderRoles(rolesList, primaryRole);
     const newPassword = data.password ? data.password : existing.password; // already hashed outside
-    const { rows } = await client.query<User>(
-      `UPDATE usuarios
-       SET nombre = $1,
-           correo = $2,
-           telefono = $3,
-           "password" = $4,
-           rol = $5,
-           activo = $6,
-           sede_id = $7,
-           sesion_ttl_minutos = COALESCE($8, sesion_ttl_minutos),
-           debe_cambiar_contrasena = COALESCE($9, debe_cambiar_contrasena)
-     WHERE id = $10
-       RETURNING id, nombre, correo, telefono, "password" as password, rol, activo, fecha_creacion, ultimo_ingreso, sede_id,
-                 (SELECT nombre FROM sedes WHERE sede_id = usuarios.sede_id) AS sede_nombre,
-                 COALESCE(intentos_fallidos,0) AS intentos_fallidos,
-                 bloqueado_hasta,
-                 COALESCE(debe_cambiar_contrasena,true) AS debe_cambiar_contrasena,
-                 contrasena_cambiada_en,
-                 COALESCE(sesion_ttl_minutos, ${config.security.defaultSessionMinutes}) AS sesion_ttl_minutos,
-                 COALESCE(session_version,0) AS session_version`,
-      [
-        data.nombre,
-        data.correo,
-        data.telefono || null,
-        newPassword,
-        data.rol,
-        data.activo,
-        data.sede_id ?? null,
-        data.sesion_ttl_minutos ?? null,
-        data.debe_cambiar_contrasena ?? null,
-        id,
-      ]
-    );
-    return rows[0] || null;
+
+    await client.query('BEGIN');
+    try {
+      const { rows } = await client.query(
+        `UPDATE usuarios
+           SET nombre = $1,
+               correo = $2,
+               telefono = $3,
+               "password" = $4,
+               rol = $5,
+               activo = $6,
+               sede_id = $7,
+               sesion_ttl_minutos = COALESCE($8, sesion_ttl_minutos),
+               debe_cambiar_contrasena = COALESCE($9, debe_cambiar_contrasena)
+         WHERE id = $10
+         RETURNING id`,
+        [
+          data.nombre,
+          data.correo,
+          data.telefono || null,
+          newPassword,
+          primaryRole,
+          data.activo,
+          data.sede_id ?? null,
+          data.sesion_ttl_minutos ?? null,
+          data.debe_cambiar_contrasena ?? null,
+          id,
+        ]
+      );
+      if (!rows[0]) {
+        await client.query('ROLLBACK');
+        return null;
+      }
+      await client.query('DELETE FROM usuarios_roles WHERE usuario_id = $1', [id]);
+      for (const role of finalRoles) {
+        await client.query(
+          `INSERT INTO usuarios_roles (usuario_id, rol)
+             VALUES ($1, $2)
+           ON CONFLICT (usuario_id, rol) DO NOTHING`,
+          [id, role]
+        );
+      }
+      const hydrated = await this.findById(client, id);
+      await client.query('COMMIT');
+      return hydrated;
+    } catch (e) {
+      await client.query('ROLLBACK');
+      throw e;
+    }
   },
 
   async setActivo(client: PoolClient, id: number, activo: boolean): Promise<void> {
@@ -191,7 +356,12 @@ export const UsersModel = {
   /** Cuenta el total de usuarios cuyo rol es admin/administrador (case-insensitive) */
   async countAdmins(client: PoolClient): Promise<number> {
     const { rows } = await client.query<{ count: string }>(
-      `SELECT COUNT(*)::text AS count FROM usuarios WHERE LOWER(rol) IN ('admin','administrador','super_admin','superadmin','super administrador','super admin') OR sede_id IS NULL`
+      `SELECT COUNT(DISTINCT u.id)::text AS count
+         FROM usuarios u
+    LEFT JOIN usuarios_roles ur ON ur.usuario_id = u.id
+        WHERE u.sede_id IS NULL
+           OR LOWER(u.rol) IN ('admin','administrador','super_admin','superadmin','super administrador','super admin')
+           OR LOWER(ur.rol) IN ('admin','administrador','super_admin','superadmin','super administrador','super admin')`
     );
     return parseInt(rows[0]?.count || '0', 10);
   },
@@ -199,7 +369,15 @@ export const UsersModel = {
   /** Cuenta administradores activos */
   async countActiveAdmins(client: PoolClient): Promise<number> {
     const { rows } = await client.query<{ count: string }>(
-      `SELECT COUNT(*)::text AS count FROM usuarios WHERE activo = true AND (LOWER(rol) IN ('admin','administrador','super_admin','superadmin','super administrador','super admin') OR sede_id IS NULL)`
+      `SELECT COUNT(DISTINCT u.id)::text AS count
+         FROM usuarios u
+    LEFT JOIN usuarios_roles ur ON ur.usuario_id = u.id
+        WHERE u.activo = TRUE
+          AND (
+                u.sede_id IS NULL
+             OR LOWER(u.rol) IN ('admin','administrador','super_admin','superadmin','super administrador','super admin')
+             OR LOWER(ur.rol) IN ('admin','administrador','super_admin','superadmin','super administrador','super admin')
+          )`
     );
     return parseInt(rows[0]?.count || '0', 10);
   },
