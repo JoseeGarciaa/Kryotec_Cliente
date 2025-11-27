@@ -34,6 +34,7 @@
 
   const devolQueue = [];
   const devolQueueSet = new Set();
+  const devolQueueInfo = new Map();
 
   function setDevolucionSummary(message, tone){
     if(!devolSummaryEl) return;
@@ -144,12 +145,22 @@
       devolQueueEl.innerHTML = '';
       if(devolEmptyEl) devolEmptyEl.classList.remove('hidden');
     } else {
-      devolQueueEl.innerHTML = devolQueue.map(code => `
-        <div class="flex items-center justify-between gap-2 rounded-lg border border-base-300/60 bg-base-100/70 px-3 py-2" data-code="${code}">
-          <code class="font-mono text-[11px]">${code}</code>
-          <button type="button" class="btn btn-ghost btn-xs" data-remove="${code}" title="Quitar">✕</button>
-        </div>
-      `).join('');
+      devolQueueEl.innerHTML = devolQueue.map(code => {
+        const info = devolQueueInfo.has(code) ? devolQueueInfo.get(code) : undefined;
+        const name = info === undefined ? 'Cargando nombre…' : (info && info.nombre_unidad ? info.nombre_unidad : 'Sin nombre');
+        const lote = info && info.lote ? info.lote : '';
+        const meta = lote ? `<span class="text-[10px] opacity-60">${lote}</span>` : '';
+        return `
+          <div class="flex items-center justify-between gap-3 rounded-lg border border-base-300/60 bg-base-100/70 px-3 py-2" data-code="${code}">
+            <div class="flex flex-col leading-tight">
+              <span class="text-xs font-semibold truncate">${name}</span>
+              <code class="font-mono text-[11px]">${code}</code>
+              ${meta}
+            </div>
+            <button type="button" class="btn btn-ghost btn-xs" data-remove="${code}" title="Quitar">✕</button>
+          </div>
+        `;
+      }).join('');
       if(devolEmptyEl) devolEmptyEl.classList.add('hidden');
     }
     if(devolCountEl) devolCountEl.textContent = String(devolQueue.length);
@@ -158,6 +169,7 @@
   function clearDevolucionQueue(){
     devolQueue.length = 0;
     devolQueueSet.clear();
+    devolQueueInfo.clear();
     renderDevolucionQueue();
   }
 
@@ -168,6 +180,7 @@
     devolQueueSet.delete(normalized);
     const idx = devolQueue.indexOf(normalized);
     if(idx >= 0) devolQueue.splice(idx, 1);
+    devolQueueInfo.delete(normalized);
     renderDevolucionQueue();
   }
 
@@ -175,6 +188,7 @@
     let added = 0;
     let duplicates = 0;
     let overflow = false;
+    const addedCodes = [];
     for(const code of codes){
       if(devolQueueSet.has(code)){
         duplicates++;
@@ -187,8 +201,33 @@
       devolQueue.push(code);
       devolQueueSet.add(code);
       added++;
+      addedCodes.push(code);
     }
-    return { added, duplicates, overflow };
+    return { added, duplicates, overflow, addedCodes };
+  }
+
+  async function hydrateQueueInfo(codes){
+    if(!codes || !codes.length) return;
+    const pending = codes.filter(code => !devolQueueInfo.has(code));
+    if(!pending.length) return;
+    try {
+      const requests = pending.map(code => fetch(`/operacion/bodega/data?q=${encodeURIComponent(code)}&page=1&limit=1`)
+        .then(res => res.ok ? res.json() : null)
+        .then(payload => {
+          if(payload && payload.ok && Array.isArray(payload.items) && payload.items.length){
+            devolQueueInfo.set(code, payload.items[0]);
+          } else {
+            devolQueueInfo.set(code, null);
+          }
+        })
+        .catch(err => {
+          console.error('[bodega][hydrate]', code, err);
+          devolQueueInfo.set(code, null);
+        }));
+      await Promise.all(requests);
+    } finally {
+      renderDevolucionQueue();
+    }
   }
 
   function handleScan(raw){
@@ -197,7 +236,7 @@
       setDevolucionSummary('No se detectaron RFIDs válidos.', 'warning');
       return;
     }
-    const { added, duplicates, overflow } = addCodes(codes);
+    const { added, duplicates, overflow, addedCodes } = addCodes(codes);
     const parts = [];
     let tone = 'info';
     if(added){
@@ -218,6 +257,9 @@
     }
     setDevolucionSummary(parts.join(' · '), tone);
     renderDevolucionQueue();
+    if(addedCodes && addedCodes.length){
+      hydrateQueueInfo(addedCodes);
+    }
   }
 
   function consumeScanInput(){
