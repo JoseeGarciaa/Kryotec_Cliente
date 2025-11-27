@@ -95,6 +95,36 @@
   </div>
 </div>
 
+<dialog id="modal-catalogo" class="modal">
+  <div class="modal-box w-11/12 max-w-3xl sm:w-full">
+    <h3 class="font-bold text-lg mb-1">Catálogo de productos</h3>
+    <p class="text-sm opacity-70 mb-3">Filtra, selecciona o elimina referencias guardadas para completar rápidamente los campos del producto.</p>
+    <div class="form-control">
+      <label class="label"><span class="label-text">Buscar referencia</span></label>
+      <input type="search" class="input input-sm input-bordered" placeholder="Nombre o código" data-catalog-search />
+    </div>
+    <div class="overflow-x-auto -mx-4 sm:mx-0">
+      <table class="table table-zebra table-sm w-full">
+        <thead>
+          <tr class="text-xs uppercase tracking-wide opacity-70">
+            <th>Referencia</th>
+            <th>Dimensiones internas</th>
+            <th class="text-right">Acciones</th>
+          </tr>
+        </thead>
+        <tbody data-catalog-list></tbody>
+      </table>
+    </div>
+    <div data-catalog-empty class="hidden alert alert-warning text-sm mt-3">
+      <span>No hay productos que coincidan con el filtro. Limpia la búsqueda o importa nuevas referencias.</span>
+    </div>
+    <div class="modal-action">
+      <button type="button" class="btn btn-sm" data-close>Cerrar</button>
+    </div>
+  </div>
+  <form method="dialog" class="modal-backdrop"><button>close</button></form>
+</dialog>
+
 <dialog id="modal-confirm-order" class="modal">
   <div class="modal-box w-11/12 max-w-2xl">
     <h3 class="font-bold text-lg mb-2">Crear orden recomendada</h3>

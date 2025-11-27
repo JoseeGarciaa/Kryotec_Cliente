@@ -203,41 +203,251 @@
     const largoInput = row.querySelector('[data-field="largo"]');
     const anchoInput = row.querySelector('[data-field="ancho"]');
     const altoInput = row.querySelector('[data-field="alto"]');
-    const cantidadInput = row.querySelector('[data-field="cantidad"]');
     if (nombreInput) nombreInput.value = product.nombre || product.descripcion || '';
     if (codigoInput) codigoInput.value = product.codigo || '';
     if (largoInput) largoInput.value = product.largo_mm != null ? product.largo_mm : '';
     if (anchoInput) anchoInput.value = product.ancho_mm != null ? product.ancho_mm : '';
     if (altoInput) altoInput.value = product.alto_mm != null ? product.alto_mm : '';
-    if (cantidadInput) cantidadInput.value = product.cantidad != null ? product.cantidad : 1;
   };
 
-  const buildCatalogSelect = (row, prefillId) => {
-    const select = document.createElement('select');
-    select.className = 'select select-sm select-bordered w-full';
-    select.setAttribute('data-field', 'catalogo');
-    const defaultOpt = document.createElement('option');
-    defaultOpt.value = '';
-    defaultOpt.textContent = 'Catálogo';
-    select.appendChild(defaultOpt);
-    catalogoProductos.forEach((producto) => {
-      const opt = document.createElement('option');
-      opt.value = String(producto.id);
-      opt.textContent = producto.nombre || producto.codigo || `Producto ${producto.id}`;
-      select.appendChild(opt);
-    });
-    if (prefillId) {
-      select.value = String(prefillId);
+  let catalogKeyCounter = 0;
+  const normalizeCatalogItem = (item) => {
+    if (!item || typeof item !== 'object') return null;
+    if (!item.__catalogKey) {
+      catalogKeyCounter += 1;
+      const fallback = `catalog-${Date.now()}-${catalogKeyCounter}`;
+      item.__catalogKey = String(item.id != null ? item.id : fallback);
+    } else {
+      item.__catalogKey = String(item.__catalogKey);
     }
-    select.addEventListener('change', () => {
-      const selected = catalogoProductos.find((item) => String(item.id) === select.value);
-      if (selected) {
-        fillFromCatalog(row, selected);
-        updateAddButtonState();
+    return item;
+  };
+
+  catalogoProductos = catalogoProductos
+    .map((item) => normalizeCatalogItem(item))
+    .filter(Boolean);
+
+  const getCatalogKey = (item) => (item ? item.__catalogKey || String(item.id ?? '') : '');
+
+  const findCatalogItem = (key) => {
+    if (!key) return null;
+    return catalogoProductos.find((item) => getCatalogKey(item) === key || String(item.id ?? '') === key) || null;
+  };
+
+  const describeCatalogItem = (item) => {
+    if (!item) return 'Catálogo';
+    const parts = [];
+    if (item.nombre) parts.push(item.nombre);
+    else if (item.descripcion) parts.push(item.descripcion);
+    if (item.codigo) parts.push(`#${item.codigo}`);
+    return parts.length ? parts.join(' · ') : 'Catálogo';
+  };
+
+  const catalogModal = document.getElementById('modal-catalogo');
+  const catalogSearch = catalogModal ? catalogModal.querySelector('[data-catalog-search]') : null;
+  const catalogList = catalogModal ? catalogModal.querySelector('[data-catalog-list]') : null;
+  const catalogEmpty = catalogModal ? catalogModal.querySelector('[data-catalog-empty]') : null;
+  let activeCatalogRow = null;
+  const rowCatalogControls = new WeakMap();
+
+  const clearRowCatalogSelection = (row, skipUpdate) => {
+    const controls = rowCatalogControls.get(row);
+    if (!controls) return;
+    if (controls.hidden) controls.hidden.value = '';
+    if (controls.label) {
+      controls.label.textContent = 'Catálogo';
+      controls.label.title = 'Catálogo';
+    }
+    if (controls.hint) controls.hint.textContent = 'Usa el catálogo para completar nombre y medidas.';
+    if (!skipUpdate) updateAddButtonState();
+  };
+
+  const setRowCatalogSelection = (row, product) => {
+    if (!row || !product) return;
+    const controls = rowCatalogControls.get(row);
+    if (!controls) return;
+    const key = getCatalogKey(product);
+    if (!key) return;
+    if (controls.hidden) controls.hidden.value = key;
+    if (controls.label) {
+      const description = describeCatalogItem(product);
+      controls.label.textContent = description;
+      controls.label.title = description;
+    }
+    if (controls.hint) controls.hint.textContent = 'Catálogo aplicado. Puedes cambiarlo cuando quieras.';
+    fillFromCatalog(row, product);
+    updateAddButtonState();
+  };
+
+  const renderCatalogTable = () => {
+    if (!catalogList) return;
+    const term = (catalogSearch?.value || '').trim().toLowerCase();
+    const currentKey = activeCatalogRow ? (rowCatalogControls.get(activeCatalogRow)?.hidden?.value || '') : '';
+    const filtered = catalogoProductos.filter((item) => {
+      if (!term) return true;
+      const pool = [item.nombre, item.descripcion, item.codigo]
+        .filter(Boolean)
+        .map((value) => value.toString().toLowerCase());
+      return pool.some((value) => value.includes(term));
+    });
+    catalogList.innerHTML = '';
+    if (!filtered.length) {
+      if (catalogEmpty) catalogEmpty.classList.remove('hidden');
+      return;
+    }
+    if (catalogEmpty) catalogEmpty.classList.add('hidden');
+    filtered.forEach((item) => {
+      const key = getCatalogKey(item);
+      const tr = document.createElement('tr');
+      if (currentKey && key === currentKey) {
+        tr.classList.add('bg-primary/10');
+      }
+      const nameCell = document.createElement('td');
+      nameCell.innerHTML = `<div class="font-semibold text-sm">${item.nombre || item.descripcion || 'Producto'}</div>`
+        + `<div class="text-xs opacity-70">${item.codigo || 'Sin código'}</div>`;
+      const dimsCell = document.createElement('td');
+      dimsCell.className = 'text-xs';
+      dimsCell.innerHTML = `${item.largo_mm ?? '—'} × ${item.ancho_mm ?? '—'} × ${item.alto_mm ?? '—'} mm`;
+      const actionsCell = document.createElement('td');
+      actionsCell.className = 'flex gap-2 justify-end';
+      const selectBtn = document.createElement('button');
+      selectBtn.type = 'button';
+      selectBtn.className = 'btn btn-xs btn-primary';
+      selectBtn.dataset.action = 'pick';
+      selectBtn.dataset.id = key;
+      selectBtn.textContent = 'Seleccionar';
+      const deleteBtn = document.createElement('button');
+      deleteBtn.type = 'button';
+      deleteBtn.className = 'btn btn-xs btn-error btn-outline';
+      deleteBtn.dataset.action = 'delete';
+      deleteBtn.dataset.id = key;
+      deleteBtn.textContent = 'Eliminar';
+      actionsCell.append(selectBtn, deleteBtn);
+      tr.append(nameCell, dimsCell, actionsCell);
+      catalogList.appendChild(tr);
+    });
+  };
+
+  const openCatalogModal = (row) => {
+    if (!catalogModal) return;
+    activeCatalogRow = row;
+    if (catalogSearch) catalogSearch.value = '';
+    renderCatalogTable();
+    openDialog(catalogModal);
+    window.setTimeout(() => {
+      catalogSearch?.focus();
+      catalogSearch?.select?.();
+    }, 50);
+  };
+
+  const closeCatalogModal = () => {
+    if (!catalogModal) return;
+    activeCatalogRow = null;
+    closeDialog(catalogModal);
+  };
+
+  const removeCatalogItem = (key) => {
+    if (!key) return;
+    const before = catalogoProductos.length;
+    catalogoProductos = catalogoProductos.filter((item) => getCatalogKey(item) !== key);
+    if (catalogoProductos.length === before) return;
+    Array.from(tbody.querySelectorAll('.calc-item')).forEach((row) => {
+      const controls = rowCatalogControls.get(row);
+      if (controls && controls.hidden && controls.hidden.value === key) {
+        clearRowCatalogSelection(row, true);
       }
     });
-    return select;
+    renderCatalogTable();
+    setStatus('Elemento removido del catálogo temporal.', '');
+    updateAddButtonState();
   };
+
+  const buildCatalogPicker = (row, prefillId) => {
+    const container = document.createElement('div');
+    container.className = 'flex flex-col gap-1';
+
+    const trigger = document.createElement('button');
+    trigger.type = 'button';
+    trigger.className = 'btn btn-sm btn-outline w-full justify-center text-center';
+    trigger.setAttribute('aria-label', 'Abrir catálogo de productos');
+    const labelSpan = document.createElement('span');
+    labelSpan.setAttribute('data-catalog-label', '');
+    labelSpan.className = 'truncate max-w-full';
+    labelSpan.textContent = 'Catálogo';
+    labelSpan.title = 'Catálogo';
+    trigger.append(labelSpan);
+    trigger.addEventListener('click', () => openCatalogModal(row));
+
+    const clearBtn = document.createElement('button');
+    clearBtn.type = 'button';
+    clearBtn.className = 'btn btn-ghost btn-xs px-0 self-start';
+    clearBtn.textContent = 'Limpiar';
+    clearBtn.addEventListener('click', () => {
+      clearRowCatalogSelection(row);
+    });
+
+    const hintText = document.createElement('span');
+    hintText.className = 'text-xs opacity-70';
+    hintText.textContent = 'Usa el catálogo para completar nombre y medidas.';
+
+    const hiddenInput = document.createElement('input');
+    hiddenInput.type = 'hidden';
+    hiddenInput.setAttribute('data-field', 'catalogo');
+
+    container.append(trigger, clearBtn, hintText, hiddenInput);
+
+    const wrapper = createFieldWrapper('Catálogo', container, 'md:col-span-2');
+    rowCatalogControls.set(row, {
+      trigger,
+      label: labelSpan,
+      hint: hintText,
+      hidden: hiddenInput,
+      clearBtn,
+    });
+
+    if (prefillId) {
+      const product = findCatalogItem(String(prefillId));
+      if (product) {
+        setRowCatalogSelection(row, product);
+      }
+    }
+
+    return wrapper;
+  };
+
+  if (catalogSearch) {
+    catalogSearch.addEventListener('input', () => renderCatalogTable());
+  }
+
+  if (catalogList) {
+    catalogList.addEventListener('click', (event) => {
+      const actionBtn = event.target.closest('[data-action]');
+      if (!actionBtn) return;
+      const { action, id } = actionBtn.dataset;
+      if (!id) return;
+      if (action === 'pick') {
+        const product = findCatalogItem(id);
+        if (product && activeCatalogRow) {
+          setRowCatalogSelection(activeCatalogRow, product);
+          closeCatalogModal();
+        }
+      } else if (action === 'delete') {
+        if (window.confirm('¿Eliminar este registro del catálogo temporal?')) {
+          removeCatalogItem(id);
+        }
+      }
+    });
+  }
+
+  if (catalogModal) {
+    catalogModal.querySelectorAll('[data-close]').forEach((el) => {
+      el.addEventListener('click', () => closeCatalogModal());
+    });
+    const catalogBackdrop = catalogModal.querySelector('.modal-backdrop');
+    if (catalogBackdrop) {
+      catalogBackdrop.addEventListener('click', () => closeCatalogModal());
+    }
+  }
 
     const isPositiveField = (input) => {
       if (!(input instanceof HTMLInputElement)) return false;
@@ -293,8 +503,7 @@
     const row = document.createElement('div');
     row.className = 'calc-item grid grid-cols-1 md:grid-cols-12 gap-3 p-3 bg-base-100/80 border border-base-300/40 rounded-lg shadow-sm';
 
-    const catalogSelect = buildCatalogSelect(row, prefill && prefill.catalogoId);
-    const catalogWrapper = createFieldWrapper('Catálogo', catalogSelect, 'md:col-span-2');
+    const catalogWrapper = buildCatalogPicker(row, prefill && prefill.catalogoId);
 
     const nombreInput = createInput({
       type: 'text',
@@ -364,11 +573,6 @@
     row.appendChild(actionsWrapper);
 
     tbody.appendChild(row);
-
-    if (prefill && prefill.catalogoId) {
-      const selected = catalogoProductos.find((item) => item.id === prefill.catalogoId);
-      if (selected) fillFromCatalog(row, selected);
-    }
 
     attachRowListeners(row);
     updateAddButtonState();
