@@ -8,6 +8,40 @@ import {
   runWithSede,
 } from './operacionController';
 
+const normalizeSedeName = (value: string | null | undefined): string | null => {
+  if (typeof value !== 'string') return null;
+  const trimmed = value.trim();
+  return trimmed.length ? trimmed : null;
+};
+
+const canonicalizeSedeName = (value: string | null | undefined): string | null => {
+  const normalized = normalizeSedeName(value);
+  if (!normalized) return null;
+  return normalized
+    .normalize('NFD')
+    .replace(/\s+/g, ' ')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase();
+};
+
+const fallbackSedeName = (id: number): string => `Sede ${id}`;
+
+const fetchSedeInfo = async (
+  tenant: string,
+  sedeId: number
+): Promise<{ id: number; nombre: string } | null> => {
+  const result = await withTenant(tenant, (client) =>
+    client.query<{ sede_id: number; nombre: string | null }>(
+      `SELECT sede_id, nombre FROM sedes WHERE sede_id = $1 LIMIT 1`,
+      [sedeId]
+    )
+  );
+  if (!result.rowCount) return null;
+  const row = result.rows[0];
+  const name = normalizeSedeName(row?.nombre) ?? fallbackSedeName(row.sede_id);
+  return { id: row.sede_id, nombre: name };
+};
+
 export const TrasladoController = {
   index: async (req: Request, res: Response) => {
     const tenant = (req as any).user?.tenant || resolveTenant(req);
@@ -41,6 +75,7 @@ export const TrasladoController = {
     }
     const modeRaw = typeof req.body?.mode === 'string' ? req.body.mode : '';
     const mode = modeRaw === 'to_destination' ? 'to_destination' : 'to_current';
+    const userSedeNombre = normalizeSedeName((req as any)?.user?.sede_nombre ?? null);
 
     let targetSedeIdForTransit: number | null = null;
     let targetSedeNombre: string | null = null;
@@ -51,18 +86,12 @@ export const TrasladoController = {
         return res.status(400).json({ ok: false, error: 'Selecciona una sede destino válida.' });
       }
       try {
-        const lookup = await withTenant(tenant, (client) =>
-          client.query<{ sede_id: number; nombre: string | null }>(
-            `SELECT sede_id, nombre FROM sedes WHERE sede_id = $1 LIMIT 1`,
-            [targetIdRaw]
-          )
-        );
-        if (!lookup.rowCount) {
+        const lookup = await fetchSedeInfo(tenant, targetIdRaw);
+        if (!lookup) {
           return res.status(404).json({ ok: false, error: 'Sede destino no encontrada.' });
         }
-        targetSedeIdForTransit = lookup.rows[0].sede_id;
-        const nombreRaw = lookup.rows[0].nombre || null;
-        targetSedeNombre = nombreRaw && nombreRaw.trim() ? nombreRaw.trim() : `Sede ${targetSedeIdForTransit}`;
+        targetSedeIdForTransit = lookup.id;
+        targetSedeNombre = lookup.nombre;
       } catch (err) {
         console.error('[TrasladoController.apply] target sede lookup failed', err);
         return res.status(500).json({ ok: false, error: 'No se pudo validar la sede destino.' });
@@ -117,32 +146,8 @@ export const TrasladoController = {
 
     const notFound = rfids.filter((code) => !infoMap.has(code));
 
-    const invalidEstado: Array<{ rfid: string; estado: string | null | undefined }> = [];
-    const validEntries: any[] = [];
-    infoMap.forEach((row) => {
-      const estado = typeof row.estado === 'string' ? row.estado.trim().toLowerCase() : '';
-      if (estado === 'en bodega') {
-        validEntries.push(row);
-      } else {
-        invalidEstado.push({ rfid: row.rfid, estado: row.estado });
-      }
-    });
-    infoMap.clear();
-    for (const row of validEntries) {
-      infoMap.set(row.rfid, row);
-    }
-
-    if (infoMap.size === 0) {
-      return res.status(400).json({
-        ok: false,
-        error: 'Solo se pueden trasladar piezas con estado "En bodega".',
-        invalid_estado: invalidEstado,
-        not_found: notFound,
-        duplicates,
-      });
-    }
-
     let toCurrentSedeTarget: number | null = null;
+    let toCurrentSedeNombre: string | null = userSedeNombre;
     let allowCrossTransfer = false;
     let transferCheck:
       | Awaited<ReturnType<typeof ensureCrossSedeAuthorization>>
@@ -162,8 +167,51 @@ export const TrasladoController = {
         return res.status(400).json({ ok: false, error: 'No se pudo determinar la sede destino para el traslado.' });
       }
       allowCrossTransfer = transferCheck.allowCrossTransfer;
+      if (!toCurrentSedeNombre) {
+        try {
+          const currentInfo = await fetchSedeInfo(tenant, toCurrentSedeTarget);
+          toCurrentSedeNombre = currentInfo?.nombre ?? fallbackSedeName(toCurrentSedeTarget);
+        } catch (err) {
+          console.warn('[TrasladoController.apply] current sede lookup failed', err);
+          toCurrentSedeNombre = fallbackSedeName(toCurrentSedeTarget);
+        }
+      }
     } else {
       allowCrossTransfer = true;
+    }
+
+    const invalidEstado: Array<{ rfid: string; estado: string | null | undefined; sub_estado: string | null | undefined }> = [];
+    const validEntries: any[] = [];
+    const targetCurrentCanonical = mode === 'to_current' ? canonicalizeSedeName(toCurrentSedeNombre) : null;
+    infoMap.forEach((row) => {
+      const estadoLower = typeof row.estado === 'string' ? row.estado.trim().toLowerCase() : '';
+      const subEstadoCanonical = canonicalizeSedeName(row.sub_estado);
+      const allowBodega = estadoLower === 'en bodega';
+      const allowReservedForCurrent =
+        mode === 'to_current' && estadoLower === 'en traslado' && targetCurrentCanonical !== null && subEstadoCanonical === targetCurrentCanonical;
+      if (allowBodega || allowReservedForCurrent) {
+        validEntries.push(row);
+      } else {
+        invalidEstado.push({ rfid: row.rfid, estado: row.estado, sub_estado: row.sub_estado });
+      }
+    });
+    infoMap.clear();
+    for (const row of validEntries) {
+      infoMap.set(row.rfid, row);
+    }
+
+    if (infoMap.size === 0) {
+      const errorMessage =
+        mode === 'to_current'
+          ? 'Solo se pueden trasladar piezas en "En bodega" o en "En traslado" reservadas para tu sede.'
+          : 'Solo se pueden trasladar piezas con estado "En bodega".';
+      return res.status(400).json({
+        ok: false,
+        error: errorMessage,
+        invalid_estado: invalidEstado,
+        not_found: notFound,
+        duplicates,
+      });
     }
 
     const toUpdate: any[] = [];
@@ -171,6 +219,7 @@ export const TrasladoController = {
     const invalidSnapshot: any[] = invalidEstado.map((row) => ({
       rfid: row.rfid,
       estado: row.estado,
+      sub_estado: row.sub_estado ?? null,
     }));
     infoMap.forEach((row) => {
       const currentEstado = typeof row.estado === 'string' ? row.estado.trim() : '';
@@ -278,7 +327,7 @@ export const TrasladoController = {
       target:
         mode === 'to_destination'
           ? { id: targetSedeIdForTransit, nombre: targetSedeNombre }
-          : { id: toCurrentSedeTarget, nombre: null },
+          : { id: toCurrentSedeTarget, nombre: toCurrentSedeNombre },
     });
   },
 };

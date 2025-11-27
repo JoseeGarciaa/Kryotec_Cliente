@@ -150,14 +150,28 @@
     const payload = attempt.data || {};
     if(!attempt.httpOk || payload.ok === false){
       const message = payload.error || payload.message || ctx.errorMessage || `Error (${attempt.status || 0})`;
-      const invalidMap = new Map((payload.invalid_estado || []).map(item => [String(item?.rfid || '').toUpperCase(), item?.estado || null]));
+      const invalidMap = new Map((payload.invalid_estado || []).map(item => [
+        String(item?.rfid || '').toUpperCase(),
+        {
+          estado: typeof item?.estado === 'string' ? item.estado : null,
+          subEstado: typeof item?.sub_estado === 'string' ? item.sub_estado : null,
+        }
+      ]));
       const notFoundSet = new Set((payload.not_found || []).map(r => String(r || '').toUpperCase()));
       queue.forEach(entry => {
         const key = entry.code;
         if(invalidMap.has(key)){
           entry.status = 'error';
-          const estado = invalidMap.get(key);
-          entry.message = estado ? `Estado actual: ${estado}.` : 'Solo se pueden trasladar piezas en "En bodega".';
+          const info = invalidMap.get(key) || {};
+          const estado = typeof info.estado === 'string' ? info.estado.trim() : '';
+          const subEstado = typeof info.subEstado === 'string' ? info.subEstado.trim() : '';
+          if(estado.toLowerCase() === 'en traslado' && subEstado){
+            entry.message = `Reservada hacia ${subEstado}.`;
+          } else if(estado){
+            entry.message = `Estado actual: ${estado}.`;
+          } else {
+            entry.message = 'Solo se pueden trasladar piezas en "En bodega".';
+          }
         } else if(notFoundSet.has(key)){
           entry.status = 'error';
           entry.message = 'RFID no encontrado.';
@@ -168,7 +182,7 @@
       });
       if(msgEl){
         msgEl.textContent = invalidMap.size
-          ? 'Se omitieron piezas fuera de "En bodega". Revisa la cola para ver detalles.'
+          ? 'Se omitieron piezas en estados incompatibles. Revisa la cola para ver detalles.'
           : message;
       }
       renderQueue();
@@ -182,7 +196,13 @@
     const movedMap = new Map((payload.moved || []).map(item => [String(item.rfid || '').toUpperCase(), item]));
     const alreadyMap = new Map((payload.already || []).map(item => [String(item.rfid || '').toUpperCase(), item]));
     const missingSet = new Set((payload.not_found || []).map(r => String(r || '').toUpperCase()));
-    const invalidMap = new Map((payload.invalid_estado || []).map(item => [String(item.rfid || '').toUpperCase(), item?.estado || null]));
+    const invalidMap = new Map((payload.invalid_estado || []).map(item => [
+      String(item.rfid || '').toUpperCase(),
+      {
+        estado: typeof item?.estado === 'string' ? item.estado : null,
+        subEstado: typeof item?.sub_estado === 'string' ? item.sub_estado : null,
+      }
+    ]));
     const errorMap = new Map((payload.errors || []).map(err => [String(err.rfid || '').toUpperCase(), err.message || err.error || 'Error']));
 
     queue.forEach(entry => {
@@ -216,8 +236,16 @@
         entry.message = 'RFID no encontrado';
       } else if(invalidMap.has(key)){
         entry.status = 'error';
-        const estado = invalidMap.get(key);
-        entry.message = estado ? `Estado actual: ${estado}.` : 'Solo se pueden trasladar piezas en "En bodega".';
+        const info = invalidMap.get(key) || {};
+        const estado = typeof info.estado === 'string' ? info.estado.trim() : '';
+        const subEstado = typeof info.subEstado === 'string' ? info.subEstado.trim() : '';
+        if(estado.toLowerCase() === 'en traslado' && subEstado){
+          entry.message = `Reservada hacia ${subEstado}.`;
+        } else if(estado){
+          entry.message = `Estado actual: ${estado}.`;
+        } else {
+          entry.message = 'Solo se pueden trasladar piezas en "En bodega".';
+        }
       } else if(errorMap.has(key)){
         entry.status = 'error';
         entry.message = errorMap.get(key);
