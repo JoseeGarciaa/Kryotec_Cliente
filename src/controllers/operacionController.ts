@@ -123,6 +123,18 @@ export const allowSedeTransferFromValue = (value: any): boolean => {
   return value === true || value === 'true' || value === 1 || value === '1' || value === 'si' || value === 'sí';
 };
 
+const shouldAllowCrossSedeForRequest = (req: Request): boolean => {
+  const combined = `${req.baseUrl || ''}${req.path || ''}`.toLowerCase();
+  const original = typeof req.originalUrl === 'string' ? req.originalUrl.toLowerCase() : '';
+  const target = combined || original;
+  return target.includes('/devolucion');
+};
+
+const resolveAllowSedeTransferFlag = (req: Request, rawValue: any): boolean => {
+  if (!shouldAllowCrossSedeForRequest(req)) return false;
+  return allowSedeTransferFromValue(rawValue);
+};
+
 type SedeAwareRow = { rfid: string; sede_id: number | null | undefined };
 
 const analyzeCrossSedeContext = (rows: SedeAwareRow[], sedeId: number | null) => {
@@ -973,7 +985,7 @@ export const OperacionController = {
     const { caja_id } = req.body as any;
     const cajaId = Number(caja_id);
     if(!Number.isFinite(cajaId) || cajaId<=0) return res.status(400).json({ ok:false, error:'caja_id inválido' });
-    const allowSedeTransferFlag = allowSedeTransferFromValue(req.body?.allowSedeTransfer);
+    const allowSedeTransferFlag = resolveAllowSedeTransferFlag(req, req.body?.allowSedeTransfer);
     try {
       const itemsQ = await withTenant(tenant, (c)=> c.query(
         `SELECT rfid FROM acond_caja_items WHERE caja_id=$1`,
@@ -1029,7 +1041,7 @@ export const OperacionController = {
     const { rfids } = req.body as any;
     const list = Array.isArray(rfids)? rfids.filter((x:any)=> typeof x==='string' && x.trim().length===24).slice(0,500):[];
     if(!list.length) return res.status(400).json({ ok:false, error:'Sin RFIDs' });
-    const allowSedeTransferFlag = allowSedeTransferFromValue(req.body?.allowSedeTransfer);
+    const allowSedeTransferFlag = resolveAllowSedeTransferFlag(req, req.body?.allowSedeTransfer);
     let trackedRfids = list.slice();
     try {
       const stateRows = await withTenant(tenant, (c)=> c.query(
@@ -1094,7 +1106,7 @@ export const OperacionController = {
     const { rfids } = req.body as any;
     const list = Array.isArray(rfids)? rfids.filter((x:any)=> typeof x==='string' && x.trim().length===24).slice(0,800):[];
     if(!list.length) return res.status(400).json({ ok:false, error:'Sin RFIDs' });
-    const allowSedeTransferFlag = allowSedeTransferFromValue(req.body?.allowSedeTransfer);
+    const allowSedeTransferFlag = resolveAllowSedeTransferFlag(req, req.body?.allowSedeTransfer);
     let trackedRfids = list.slice();
     try {
       const stateRows = await withTenant(tenant, (c)=> c.query(
@@ -1136,7 +1148,7 @@ export const OperacionController = {
     const { caja_id } = req.body as any;
     const cajaId = Number(caja_id);
     if(!Number.isFinite(cajaId) || cajaId<=0) return res.status(400).json({ ok:false, error:'caja_id inválido' });
-    const allowSedeTransferFlag = allowSedeTransferFromValue(req.body?.allowSedeTransfer);
+    const allowSedeTransferFlag = resolveAllowSedeTransferFlag(req, req.body?.allowSedeTransfer);
     let trackedRfids: string[] = [];
     try {
       const eligQ = await withTenant(tenant, (c)=> c.query(
@@ -1245,7 +1257,7 @@ export const OperacionController = {
     const { caja_id, durationSec } = req.body as any;
     const cajaId = Number(caja_id);
   const dur = Number(durationSec);
-    const allowSedeTransferFlag = allowSedeTransferFromValue(req.body?.allowSedeTransfer);
+    const allowSedeTransferFlag = resolveAllowSedeTransferFlag(req, req.body?.allowSedeTransfer);
     if(!Number.isFinite(cajaId) || cajaId<=0) return res.status(400).json({ ok:false, error:'caja_id inválido' });
     try {
       // Validar elegibilidad primero
@@ -1407,7 +1419,7 @@ export const OperacionController = {
     const tenant = (req as any).user?.tenant;
     const sedeId = getRequestSedeId(req);
     const { caja_id } = req.body as any; const cajaId = Number(caja_id);
-    const allowSedeTransferFlag = allowSedeTransferFromValue(req.body?.allowSedeTransfer);
+    const allowSedeTransferFlag = resolveAllowSedeTransferFlag(req, req.body?.allowSedeTransfer);
     if(!Number.isFinite(cajaId) || cajaId<=0) return res.status(400).json({ ok:false, error:'caja_id invalido' });
     try {
       const eligQ = await withTenant(tenant, (c)=> c.query(
@@ -1491,7 +1503,7 @@ export const OperacionController = {
     const sedeId = getRequestSedeId(req);
     const { caja_id } = req.body as any; const cajaId = Number(caja_id);
     if(!Number.isFinite(cajaId) || cajaId<=0) return res.status(400).json({ ok:false, error:'caja_id invalido' });
-    const allowSedeTransferFlag = allowSedeTransferFromValue(req.body?.allowSedeTransfer);
+    const allowSedeTransferFlag = resolveAllowSedeTransferFlag(req, req.body?.allowSedeTransfer);
     try {
       const itemsQ = await withTenant(tenant, (c)=> c.query(
         `SELECT rfid FROM acond_caja_items WHERE caja_id=$1`, [cajaId]));
@@ -1651,7 +1663,7 @@ export const OperacionController = {
     const individualRaw = (req.body as any)?.individual ?? (req.body as any)?.individualMode;
     const individualMode = individualRaw === true || individualRaw === 'true' || individualRaw === 1 || individualRaw === '1';
     const code = typeof rfid === 'string' ? rfid.trim() : '';
-    const allowSedeTransferFlag = allowSedeTransferFromValue(req.body?.allowSedeTransfer);
+    const allowSedeTransferFlag = resolveAllowSedeTransferFlag(req, req.body?.allowSedeTransfer);
     if(code.length !== 24) return res.status(400).json({ ok:false, error:'RFID inválido' });
     try {
       const inferRol = (nombre: string) => {
@@ -1869,7 +1881,7 @@ export const OperacionController = {
   inspeccionPullFromPending: async (req: Request, res: Response) => {
     const tenant = (req as any).user?.tenant;
     const sedeId = getRequestSedeId(req);
-    const allowSedeTransferFlag = allowSedeTransferFromValue(req.body?.allowSedeTransfer);
+    const allowSedeTransferFlag = resolveAllowSedeTransferFlag(req, req.body?.allowSedeTransfer);
     const normalizeRfid = (value: string): string => value.trim().toUpperCase().replace(/[^A-Z0-9]/g, '');
     const gatherRfids = (): string[] => {
       const list: string[] = [];
@@ -2162,7 +2174,7 @@ export const OperacionController = {
     const { caja_id, confirm_rfids } = req.body as any;
     const cajaId = Number(caja_id);
     if(!Number.isFinite(cajaId) || cajaId<=0) return res.status(400).json({ ok:false, error:'caja_id inválido' });
-    const allowSedeTransferFlag = allowSedeTransferFromValue(req.body?.allowSedeTransfer);
+    const allowSedeTransferFlag = resolveAllowSedeTransferFlag(req, req.body?.allowSedeTransfer);
     try {
       const inferRol = (nombre:string)=>{
         const n = (nombre||'').toLowerCase();
@@ -2266,7 +2278,7 @@ export const OperacionController = {
       .slice(0, 500);
     if(!rfids.length) return res.status(400).json({ ok:false, error:'Sin RFIDs válidos' });
     const uniqueRfids = Array.from(new Set(rfids));
-    const allowSedeTransferFlag = allowSedeTransferFromValue((req.body as any)?.allowSedeTransfer);
+    const allowSedeTransferFlag = resolveAllowSedeTransferFlag(req, (req.body as any)?.allowSedeTransfer);
     try {
       const lookup = await withTenant(tenant, (c)=> c.query(
         `SELECT ic.rfid, ic.sede_id, aci.caja_id
@@ -3012,7 +3024,7 @@ export const OperacionController = {
   preacondScan: async (req: Request, res: Response) => {
     const tenant = (req as any).user?.tenant;
     const sedeId = getRequestSedeId(req);
-    const allowSedeTransferFlag = allowSedeTransferFromValue(req.body?.allowSedeTransfer);
+    const allowSedeTransferFlag = resolveAllowSedeTransferFlag(req, req.body?.allowSedeTransfer);
 
     try {
       const { target, rfids, keepLote } = req.body as any;
@@ -3258,7 +3270,7 @@ export const OperacionController = {
   preacondLoteMove: async (req: Request, res: Response) => {
     const tenant = (req as any).user?.tenant;
   const sedeId = getRequestSedeId(req);
-  const allowSedeTransferFlag = allowSedeTransferFromValue(req.body?.allowSedeTransfer);
+  const allowSedeTransferFlag = resolveAllowSedeTransferFlag(req, req.body?.allowSedeTransfer);
     const { lote, keepLote } = req.body as any;
     const loteVal = typeof lote === 'string' ? lote.trim() : '';
     if(!loteVal) return res.status(400).json({ ok:false, error:'Lote requerido' });
@@ -4263,7 +4275,7 @@ export const OperacionController = {
     const tenant = (req as any).user?.tenant;
     const sedeId = getRequestSedeId(req);
     const { rfids, order_id } = req.body as any;
-    const allowSedeTransferFlag = allowSedeTransferFromValue(req.body?.allowSedeTransfer);
+    const allowSedeTransferFlag = resolveAllowSedeTransferFlag(req, req.body?.allowSedeTransfer);
     let orderId: number | null = null;
     if(order_id != null){
       const n = Number(order_id);
@@ -4858,7 +4870,7 @@ export const OperacionController = {
     const sedeId = getRequestSedeId(req);
     const { rfid, durationSec, order_id, allowIncomplete } = req.body as any;
     const allowIncompleteFlag = allowIncomplete === true;
-    const allowSedeTransferFlag = allowSedeTransferFromValue(req.body?.allowSedeTransfer);
+    const allowSedeTransferFlag = resolveAllowSedeTransferFlag(req, req.body?.allowSedeTransfer);
     const code = typeof rfid === 'string' ? rfid.trim() : '';
     const dur = Number(durationSec);
     if(code.length !== 24) return res.status(400).json({ ok:false, error:'RFID inválido' });
@@ -5028,7 +5040,7 @@ export const OperacionController = {
     const sedeId = getRequestSedeId(req);
     const { caja_id } = req.body as any;
     const cajaId = Number(caja_id);
-    const allowSedeTransferFlag = allowSedeTransferFromValue(req.body?.allowSedeTransfer);
+    const allowSedeTransferFlag = resolveAllowSedeTransferFlag(req, req.body?.allowSedeTransfer);
     if(!Number.isFinite(cajaId) || cajaId <= 0) return res.status(400).json({ ok:false, error:'caja_id inválido' });
     try {
       const sedeRowsQ = await withTenant(tenant, (c)=> c.query(
@@ -5174,7 +5186,7 @@ export const OperacionController = {
     const sedeId = getRequestSedeId(req);
     const { code } = req.body as any;
     let val = typeof code === 'string' ? code.trim() : '';
-    const allowSedeTransferFlag = allowSedeTransferFromValue(req.body?.allowSedeTransfer);
+    const allowSedeTransferFlag = resolveAllowSedeTransferFlag(req, req.body?.allowSedeTransfer);
     if(!val) return res.status(400).json({ ok:false, error:'Código requerido' });
     try {
       let cajaId: number | null = null;
@@ -5578,7 +5590,7 @@ export const OperacionController = {
     const sedeId = getRequestSedeId(req);
     const { caja_id } = req.body as any;
     const id = Number(caja_id);
-    const allowSedeTransferFlag = allowSedeTransferFromValue(req.body?.allowSedeTransfer);
+    const allowSedeTransferFlag = resolveAllowSedeTransferFlag(req, req.body?.allowSedeTransfer);
     if(!Number.isFinite(id) || id<=0) return res.status(400).json({ ok:false, error:'caja_id inválido' });
     try {
       const sedeRowsQ = await withTenant(tenant, (c)=> c.query(
