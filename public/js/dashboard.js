@@ -6,15 +6,96 @@
   const clockEl = document.getElementById('dash-clock');
   const btn = document.getElementById('dash-refresh');
   const flowChart = document.getElementById('flow-chart');
+  const root = document.getElementById('dash-root');
+  const scopeLabelEl = document.getElementById('dash-scope-label');
+  const sedeWrapper = document.getElementById('dash-sede-wrapper');
+  const sedeTable = document.getElementById('dash-sede-table');
   if(!statusEl) return;
 
   const el = (id)=> document.getElementById(id);
   function fmt(sec){ if(sec==null) return '--:--:--'; const s=Math.max(0,sec); const h=Math.floor(s/3600); const m=Math.floor((s%3600)/60); const ss=s%60; return `${h}:${String(m).padStart(2,'0')}:${String(ss).padStart(2,'0')}`; }
 
+  if(root && scopeLabelEl){
+    const scopeAttr = root.getAttribute('data-scope-label');
+    if(scopeAttr && scopeAttr.trim()){ scopeLabelEl.textContent = scopeAttr.trim(); }
+  }
+
+  const formatInt = (value)=>{
+    const num = Number(value);
+    if(Number.isFinite(num)){ return num.toLocaleString('es-CO'); }
+    return '0';
+  };
+
+  const escapeHtml = (value)=>{
+    return String(value == null ? '' : value)
+      .replace(/&/g,'&amp;')
+      .replace(/</g,'&lt;')
+      .replace(/>/g,'&gt;')
+      .replace(/"/g,'&quot;')
+      .replace(/'/g,'&#39;');
+  };
+
   let autoReload=null; let reloadMs=15000;
   function schedule(ms){ if(reloadMs===ms) return; reloadMs=ms; if(autoReload) clearInterval(autoReload); autoReload=setInterval(load, reloadMs); }
 
   function kpi(id,val){ const e=el(id); if(e) e.textContent=(val==null?'–':val); }
+
+  function renderSedeBreakdown(rows){
+    if(!sedeTable) return;
+    if(!Array.isArray(rows) || !rows.length){
+      sedeTable.innerHTML = "<div class='text-xs opacity-60'>Sin datos por sede.</div>";
+      return;
+    }
+    const cards = rows.map((row)=>{
+      const sedeName = escapeHtml(row?.sede_nombre || 'Sin sede');
+      const sedeIdLabel = row?.sede_id == null ? 'Sin ID' : `ID ${row.sede_id}`;
+      const stock = row?.stock || {};
+      const preAcond = row?.preAcond || {};
+      const acond = row?.acond || {};
+      const inspeccion = row?.inspeccion || {};
+      const operacion = row?.operacion || {};
+      const devolucion = row?.devolucion || {};
+      const pendientesBodega = row?.pendientesBodega || 0;
+      return `
+        <div class="k-sede-card">
+          <div class="k-sede-card__header">
+            <span class="k-sede-card__title">${sedeName}</span>
+            <span class="k-sede-card__subtitle">${escapeHtml(sedeIdLabel)}</span>
+          </div>
+          <dl class="k-sede-card__grid">
+            <div>
+              <dt>Stock</dt>
+              <dd><span>TIC ${formatInt(stock.tics||0)}</span><span>VIP ${formatInt(stock.vips||0)}</span><span>CUBE ${formatInt(stock.cubes||0)}</span></dd>
+            </div>
+            <div>
+              <dt>Pre Acond</dt>
+              <dd><span>Proceso ${formatInt(preAcond.proceso||0)}</span><span>Listos ${formatInt(preAcond.listo||0)}</span></dd>
+            </div>
+            <div>
+              <dt>Acond</dt>
+              <dd><span>Ensamblaje ${formatInt(acond.ensamblaje||0)}</span><span>Cajas ${formatInt(acond.cajas||0)}</span></dd>
+            </div>
+            <div>
+              <dt>Inspección</dt>
+              <dd><span>TIC ${formatInt(inspeccion.tics||0)}</span><span>VIP ${formatInt(inspeccion.vips||0)}</span></dd>
+            </div>
+            <div>
+              <dt>Operación</dt>
+              <dd><span>Cajas ${formatInt(operacion.cajas_op||0)}</span><span>TIC tránsito ${formatInt(operacion.tic_transito||0)}</span><span>VIP tránsito ${formatInt(operacion.vip_transito||0)}</span></dd>
+            </div>
+            <div>
+              <dt>Pend. Bodega</dt>
+              <dd><span>Cajas ${formatInt(pendientesBodega||0)}</span></dd>
+            </div>
+            <div>
+              <dt>Retorno</dt>
+              <dd><span>TIC ${formatInt(devolucion.tic_pendiente||0)}</span><span>VIP ${formatInt(devolucion.vip_pendiente||0)}</span></dd>
+            </div>
+          </dl>
+        </div>`;
+    }).join('');
+    sedeTable.innerHTML = cards;
+  }
 
   async function load(){
     if(spin) spin.classList.remove('hidden');
@@ -34,9 +115,9 @@
       kpi('k-pre-proc', preProc); kpi('k-pre-ready', preDone); const pct = preTotal? Math.round(preDone/preTotal*100):0; const pctEl=el('k-pre-pct'); if(pctEl) pctEl.textContent=pct+'%';
       kpi('k-ensam-items', d.acond.ensamblaje); kpi('k-cajas', d.acond.cajas); kpi('k-op-cajas', d.operacion.cajas_op);
 
-  renderFlow(d, pct);
-  buildFlow(d);
-  schedule(15000);
+      renderFlow(d, pct);
+      renderSedeBreakdown(Array.isArray(d.perSede) ? d.perSede : []);
+      schedule(15000);
       const now=new Date(); if(lastEl) lastEl.textContent=now.toLocaleTimeString(); statusEl.textContent='Listo';
     } catch(e){ console.error('[dash] load', e); statusEl.textContent='Error'; }
     finally { if(spin) spin.classList.add('hidden'); }

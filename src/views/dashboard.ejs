@@ -1,12 +1,39 @@
 <% title = title || 'Dashboard' %>
-<div id="dash-root" class="space-y-10">
+<%
+  const rawUser = (typeof user !== 'undefined' && user) ? user : {};
+  const rawRoles = Array.isArray(rawUser.roles) ? rawUser.roles : (rawUser.role ? [rawUser.role] : []);
+  const scopeIsSuperAdmin = (typeof inventoryScopeIsSuperAdmin === 'boolean')
+    ? inventoryScopeIsSuperAdmin
+    : rawRoles.some((role) => String(role || '').toLowerCase() === 'super_admin');
+  const scopeHasSede = (typeof inventoryScopeHasSede === 'boolean')
+    ? inventoryScopeHasSede
+    : (rawUser.sede_id !== null && rawUser.sede_id !== undefined && rawUser.sede_id !== '');
+  const sedeNameFromLocals = (typeof inventoryScopeSedeName === 'string' && inventoryScopeSedeName.trim().length)
+    ? inventoryScopeSedeName.trim()
+    : (rawUser.sede_nombre && String(rawUser.sede_nombre).trim().length
+        ? String(rawUser.sede_nombre).trim()
+        : (scopeHasSede ? `Sede ${rawUser.sede_id}` : 'Sin sede asignada'));
+  const scopeDisplay = scopeIsSuperAdmin ? 'Todas las sedes' : sedeNameFromLocals;
+  const scopePrefix = scopeIsSuperAdmin ? 'Inventario global' : 'Inventario sede';
+  const scopeLabel = (typeof inventoryScopeLabel === 'string' && inventoryScopeLabel.trim().length)
+    ? inventoryScopeLabel.trim()
+    : `${scopePrefix} · ${scopeDisplay}`;
+%>
+<div id="dash-root" class="space-y-10" data-scope-kind="<%= scopeIsSuperAdmin ? 'all' : 'sede' %>" data-scope-label="<%= scopeLabel %>" data-sede-name="<%= scopeHasSede ? sedeNameFromLocals : '' %>">
   <!-- HERO / HEADER -->
   <section class="relative overflow-hidden rounded-2xl border border-primary/30 bg-gradient-to-br from-primary/25 via-primary/5 to-base-200 p-6 md:p-8">
     <div class="relative z-10 space-y-4">
       <div class="flex flex-wrap items-center gap-4">
         <div class="h-14 w-14 rounded-2xl bg-primary text-base-100 flex items-center justify-center text-2xl shadow-lg shadow-primary/40">⚙️</div>
-        <div>
+        <div class="flex flex-col gap-1">
           <h1 class="text-2xl md:text-3xl font-bold tracking-tight leading-none">Visión General</h1>
+          <div class="text-xs sm:text-sm opacity-75 leading-tight">
+            <span class="font-semibold uppercase tracking-wide">Inventario vinculado</span>
+            <span id="dash-scope-label" class="ml-2 font-mono text-primary"><%= scopePrefix %> · <%= scopeDisplay %></span>
+          </div>
+          <% if (scopeIsSuperAdmin && scopeHasSede) { %>
+            <div class="text-[11px] sm:text-xs opacity-60">Sede asignada al usuario: <span class="font-mono"><%= sedeNameFromLocals %></span></div>
+          <% } %>
         </div>
         <div class="ms-auto flex flex-wrap gap-3 items-center font-mono text-xs">
           <span id="dash-clock" class="px-2 py-1 rounded bg-base-300/40">--:--:--</span>
@@ -64,13 +91,19 @@
     </div>
   </section>
 
-  <!-- QUICK LINKS -->
-  <section class="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-    <a class="k-link" href="/operacion/preacond">Pre Acond</a>
-    <a class="k-link" href="/operacion/acond">Acondicionamiento</a>
-    <a class="k-link" href="/operacion/operacion">Operación</a>
-    <a class="k-link" href="/operacion/todas">Kanban Completo</a>
-  </section>
+  <% if (scopeIsSuperAdmin) { %>
+    <section id="dash-sede-wrapper" class="rounded-2xl border border-base-300/50 bg-base-200/5 p-5 space-y-4">
+      <div class="flex flex-col gap-1 md:flex-row md:items-center md:justify-between">
+        <div>
+          <h2 class="text-sm font-semibold uppercase tracking-wide opacity-80">Inventario por sede</h2>
+          <p class="text-xs opacity-60">Detalle por sede disponible solo en vista global.</p>
+        </div>
+        <span class="badge badge-outline badge-sm">Vista global</span>
+      </div>
+      <div id="dash-sede-table" class="grid gap-3 xl:grid-cols-2"></div>
+    </section>
+  <% } %>
+
 </div>
 
 <style>
@@ -81,8 +114,6 @@
   .k-label{font-size:10px;letter-spacing:.05em;text-transform:uppercase;opacity:.65;font-weight:600;}
   .k-value{font-size:1.6rem;line-height:1;font-weight:700;}
   .k-sub{font-size:10px;opacity:.55;}
-  .k-link{display:flex;align-items:center;justify-content:center;padding:.9rem 1rem;border:1px solid hsl(var(--b3,210 10% 30%)/.4);border-radius:.85rem;font-size:.75rem;text-transform:uppercase;font-weight:600;letter-spacing:.06em;background:linear-gradient(135deg,var(--fallback-p,royalblue)/.18,transparent);backdrop-filter:blur(4px);transition:.25s;}
-  .k-link:hover{border-color:var(--fallback-p,royalblue);color:var(--fallback-p,royalblue);}
   #flow-bar .seg{position:relative;flex:1;display:flex;align-items:center;justify-content:center;height:42px;font-weight:600;border-radius:.55rem;background:var(--bg,rgba(255,255,255,.04));border:1px solid var(--bd,rgba(255,255,255,.1));overflow:hidden;}
   #flow-bar .seg small{position:absolute;bottom:3px;right:5px;font-size:9px;opacity:.55;font-weight:500;}
   #flow-bar .seg[data-state='warn']{--bg:rgba(234,179,8,.15);--bd:rgba(234,179,8,.35);}
@@ -115,6 +146,16 @@
   .k-timer .bar span{display:block;height:100%;background:linear-gradient(90deg,var(--fallback-p,royalblue),#4F78FF);transition:width .5s;} 
   .k-timer[data-level='crit'] .bar span{background:linear-gradient(90deg,#ef4444,#b91c1c);} 
   .k-timer[data-level='warn'] .bar span{background:linear-gradient(90deg,#eab308,#b45309);} 
+  .k-sede-card{position:relative;display:flex;flex-direction:column;gap:.9rem;padding:1.1rem;border:1px solid hsl(var(--b3,210 10% 30%)/.4);background:hsla(var(--b1,210 20% 5%),0.35);backdrop-filter:blur(6px);border-radius:1rem;overflow:hidden;}
+  .k-sede-card:before{content:"";position:absolute;inset:0;background:linear-gradient(135deg,rgba(79,120,255,.14),transparent);opacity:.7;pointer-events:none;}
+  .k-sede-card__header{display:flex;flex-direction:column;gap:.2rem;position:relative;z-index:1;}
+  .k-sede-card__title{font-size:1rem;font-weight:700;}
+  .k-sede-card__subtitle{font-size:10px;text-transform:uppercase;letter-spacing:.06em;opacity:.6;}
+  .k-sede-card__grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:.75rem;position:relative;z-index:1;}
+  .k-sede-card__grid dt{font-size:10px;text-transform:uppercase;letter-spacing:.05em;opacity:.6;font-weight:600;margin-bottom:.15rem;}
+  .k-sede-card__grid dd{font-size:12px;line-height:1.35;font-variant-numeric:tabular-nums;opacity:.85;}
+  .k-sede-card__grid dd span{display:inline-block;margin-right:.35rem;}
+  .k-sede-card__grid dd span:last-child{margin-right:0;}
 </style>
 
 <script src="/static/js/dashboard.js?v=<%= assetVersion %>" defer></script>

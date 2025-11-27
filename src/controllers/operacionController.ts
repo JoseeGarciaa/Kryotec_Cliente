@@ -96,6 +96,225 @@ const fetchSedeNames = async (tenant: string, ids: number[]): Promise<Map<number
   return map;
 };
 
+type PerSedeSummary = {
+  sede_id: number | null;
+  sede_nombre: string;
+  stock: { tics: number; vips: number; cubes: number; total: number };
+  preAcond: { proceso: number; listo: number };
+  acond: { ensamblaje: number; cajas: number };
+  inspeccion: { tics: number; vips: number; total: number };
+  operacion: { cajas_op: number; tic_transito: number; vip_transito: number };
+  devolucion: { tic_pendiente: number; vip_pendiente: number };
+  pendientesBodega: number;
+};
+
+const formatSedeName = (id: number | null, raw: string | null | undefined): string => {
+  if (typeof raw === 'string' && raw.trim().length) {
+    return raw.trim();
+  }
+  if (id === null || id === undefined) {
+    return 'Sin sede asignada';
+  }
+  return `Sede ${id}`;
+};
+
+const buildPerSedeSummary = async (tenant: string): Promise<PerSedeSummary[]> => {
+  const map = new Map<string, PerSedeSummary>();
+
+  const ensureEntry = (id: number | null, rawNombre: string | null | undefined): PerSedeSummary => {
+    const key = id === null || id === undefined ? 'null' : String(id);
+    if (!map.has(key)) {
+      map.set(key, {
+        sede_id: id === undefined ? null : id,
+        sede_nombre: formatSedeName(id ?? null, rawNombre),
+        stock: { tics: 0, vips: 0, cubes: 0, total: 0 },
+        preAcond: { proceso: 0, listo: 0 },
+        acond: { ensamblaje: 0, cajas: 0 },
+        inspeccion: { tics: 0, vips: 0, total: 0 },
+        operacion: { cajas_op: 0, tic_transito: 0, vip_transito: 0 },
+        devolucion: { tic_pendiente: 0, vip_pendiente: 0 },
+        pendientesBodega: 0,
+      });
+    }
+    return map.get(key)!;
+  };
+
+  await withTenant(tenant, async (client) => {
+    const sedesRows = await client.query<{ sede_id: number; nombre: string | null }>(
+      `SELECT sede_id, nombre FROM sedes ORDER BY nombre ASC`
+    );
+    sedesRows.rows.forEach((row) => ensureEntry(row?.sede_id ?? null, row?.nombre ?? null));
+
+    const stockRows = await client.query<{ sede_id: number | null; sede_nombre: string | null; tics: number; vips: number; cubes: number }>(
+      `SELECT ic.sede_id,
+              s.nombre AS sede_nombre,
+              SUM(CASE WHEN m.nombre_modelo ILIKE '%tic%' THEN 1 ELSE 0 END)::int AS tics,
+              SUM(CASE WHEN m.nombre_modelo ILIKE '%vip%' THEN 1 ELSE 0 END)::int AS vips,
+              SUM(CASE WHEN (m.nombre_modelo ILIKE '%cube%' OR m.nombre_modelo ILIKE '%cubo%') THEN 1 ELSE 0 END)::int AS cubes
+         FROM inventario_credocubes ic
+         JOIN modelos m ON m.modelo_id = ic.modelo_id
+         LEFT JOIN sedes s ON s.sede_id = ic.sede_id
+        WHERE LOWER(ic.estado) = 'en bodega'
+          AND ic.activo = true
+     GROUP BY ic.sede_id, s.nombre`
+    );
+    stockRows.rows.forEach((row) => {
+      const entry = ensureEntry(row.sede_id ?? null, row.sede_nombre ?? null);
+      const tics = row.tics || 0;
+      const vips = row.vips || 0;
+      const cubes = row.cubes || 0;
+      entry.stock = { tics, vips, cubes, total: tics + vips + cubes };
+    });
+
+    const preRows = await client.query<{ sede_id: number | null; sede_nombre: string | null; proceso: number; listo: number }>(
+      `SELECT ic.sede_id,
+              s.nombre AS sede_nombre,
+              SUM(CASE WHEN ic.sub_estado IN ('Congelamiento','Atemperamiento') THEN 1 ELSE 0 END)::int AS proceso,
+              SUM(CASE WHEN ic.sub_estado IN ('Congelado','Atemperado') THEN 1 ELSE 0 END)::int AS listo
+         FROM inventario_credocubes ic
+         JOIN modelos m ON m.modelo_id = ic.modelo_id
+         LEFT JOIN sedes s ON s.sede_id = ic.sede_id
+        WHERE ic.estado = 'Pre Acondicionamiento'
+          AND ic.activo = true
+          AND m.nombre_modelo ILIKE '%tic%'
+     GROUP BY ic.sede_id, s.nombre`
+    );
+    preRows.rows.forEach((row) => {
+      const entry = ensureEntry(row.sede_id ?? null, row.sede_nombre ?? null);
+      entry.preAcond = {
+        proceso: row.proceso || 0,
+        listo: row.listo || 0,
+      };
+    });
+
+    const acondRows = await client.query<{ sede_id: number | null; sede_nombre: string | null; items: number }>(
+      `SELECT ic.sede_id,
+              s.nombre AS sede_nombre,
+              COUNT(*)::int AS items
+         FROM inventario_credocubes ic
+         LEFT JOIN sedes s ON s.sede_id = ic.sede_id
+        WHERE ic.estado = 'Acondicionamiento'
+          AND ic.sub_estado = 'Ensamblaje'
+          AND ic.activo = true
+     GROUP BY ic.sede_id, s.nombre`
+    );
+    acondRows.rows.forEach((row) => {
+      const entry = ensureEntry(row.sede_id ?? null, row.sede_nombre ?? null);
+      entry.acond.ensamblaje = row.items || 0;
+    });
+
+    const cajasRows = await client.query<{ sede_id: number | null; sede_nombre: string | null; total: number }>(
+      `SELECT ic.sede_id,
+              s.nombre AS sede_nombre,
+              COUNT(DISTINCT ic.lote)::int AS total
+         FROM inventario_credocubes ic
+         LEFT JOIN sedes s ON s.sede_id = ic.sede_id
+        WHERE ic.activo = true
+          AND ic.lote IS NOT NULL
+          AND ic.lote ILIKE 'CAJA-%'
+          AND TRIM(ic.lote) <> ''
+     GROUP BY ic.sede_id, s.nombre`
+    );
+    cajasRows.rows.forEach((row) => {
+      const entry = ensureEntry(row.sede_id ?? null, row.sede_nombre ?? null);
+      entry.acond.cajas = row.total || 0;
+    });
+
+    const inspeccionRows = await client.query<{ sede_id: number | null; sede_nombre: string | null; tics: number; vips: number }>(
+      `SELECT ic.sede_id,
+              s.nombre AS sede_nombre,
+              SUM(CASE WHEN m.nombre_modelo ILIKE '%tic%' THEN 1 ELSE 0 END)::int AS tics,
+              SUM(CASE WHEN m.nombre_modelo ILIKE '%vip%' THEN 1 ELSE 0 END)::int AS vips
+         FROM inventario_credocubes ic
+         JOIN modelos m ON m.modelo_id = ic.modelo_id
+         LEFT JOIN sedes s ON s.sede_id = ic.sede_id
+        WHERE ic.estado IN ('Inspección','Inspeccion')
+          AND ic.activo = true
+     GROUP BY ic.sede_id, s.nombre`
+    );
+    inspeccionRows.rows.forEach((row) => {
+      const entry = ensureEntry(row.sede_id ?? null, row.sede_nombre ?? null);
+      const tics = row.tics || 0;
+      const vips = row.vips || 0;
+      entry.inspeccion = { tics, vips, total: tics + vips };
+    });
+
+    const operacionRows = await client.query<{
+      sede_id: number | null;
+      sede_nombre: string | null;
+      tic_transito: number;
+      vip_transito: number;
+      cajas_op: number;
+    }>(
+      `SELECT ic.sede_id,
+              s.nombre AS sede_nombre,
+              SUM(CASE WHEN m.nombre_modelo ILIKE '%tic%' AND ic.sub_estado = 'Transito' THEN 1 ELSE 0 END)::int AS tic_transito,
+              SUM(CASE WHEN m.nombre_modelo ILIKE '%vip%' AND ic.sub_estado = 'Transito' THEN 1 ELSE 0 END)::int AS vip_transito,
+              COUNT(DISTINCT CASE WHEN ic.estado = 'Operación' THEN aci.caja_id END)::int AS cajas_op
+         FROM inventario_credocubes ic
+         JOIN modelos m ON m.modelo_id = ic.modelo_id
+         LEFT JOIN acond_caja_items aci ON aci.rfid = ic.rfid
+         LEFT JOIN sedes s ON s.sede_id = ic.sede_id
+        WHERE ic.estado = 'Operación'
+          AND ic.activo = true
+     GROUP BY ic.sede_id, s.nombre`
+    );
+    operacionRows.rows.forEach((row) => {
+      const entry = ensureEntry(row.sede_id ?? null, row.sede_nombre ?? null);
+      entry.operacion = {
+        cajas_op: row.cajas_op || 0,
+        tic_transito: row.tic_transito || 0,
+        vip_transito: row.vip_transito || 0,
+      };
+    });
+
+    const pendientesRows = await client.query<{ sede_id: number | null; sede_nombre: string | null; cajas: number }>(
+      `SELECT ic.sede_id,
+              s.nombre AS sede_nombre,
+              COUNT(DISTINCT aci.caja_id)::int AS cajas
+         FROM acond_caja_items aci
+         JOIN inventario_credocubes ic ON ic.rfid = aci.rfid
+         LEFT JOIN sedes s ON s.sede_id = ic.sede_id
+        WHERE ic.estado = 'En bodega'
+          AND ic.sub_estado IN ('Pendiente a Inspección','Pendiente a Inspeccion')
+          AND ic.activo = true
+     GROUP BY ic.sede_id, s.nombre`
+    );
+    pendientesRows.rows.forEach((row) => {
+      const entry = ensureEntry(row.sede_id ?? null, row.sede_nombre ?? null);
+      entry.pendientesBodega = row.cajas || 0;
+    });
+
+    const devolucionRows = await client.query<{ sede_id: number | null; sede_nombre: string | null; tic_pendiente: number; vip_pendiente: number }>(
+      `SELECT ic.sede_id,
+              s.nombre AS sede_nombre,
+              SUM(CASE WHEN m.nombre_modelo ILIKE '%tic%' AND ic.sub_estado = 'Retorno' THEN 1 ELSE 0 END)::int AS tic_pendiente,
+              SUM(CASE WHEN m.nombre_modelo ILIKE '%vip%' AND ic.sub_estado = 'Retorno' THEN 1 ELSE 0 END)::int AS vip_pendiente
+         FROM inventario_credocubes ic
+         JOIN modelos m ON m.modelo_id = ic.modelo_id
+         LEFT JOIN sedes s ON s.sede_id = ic.sede_id
+        WHERE ic.estado = 'Operación'
+          AND ic.activo = true
+     GROUP BY ic.sede_id, s.nombre`
+    );
+    devolucionRows.rows.forEach((row) => {
+      const entry = ensureEntry(row.sede_id ?? null, row.sede_nombre ?? null);
+      entry.devolucion = {
+        tic_pendiente: row.tic_pendiente || 0,
+        vip_pendiente: row.vip_pendiente || 0,
+      };
+    });
+  });
+
+  const list = Array.from(map.values());
+  list.sort((a, b) => {
+    if (a.sede_id === null && b.sede_id !== null) return 1;
+    if (a.sede_id !== null && b.sede_id === null) return -1;
+    return a.sede_nombre.localeCompare(b.sede_nombre, 'es', { sensitivity: 'base' });
+  });
+  return list;
+};
+
 const parseSedeMismatchDetail = (detail: string | null | undefined) => {
   const info: { origenId: number | null; destinoId: number | null; rfid: string | null } = {
     origenId: null,
@@ -399,7 +618,12 @@ export const OperacionController = {
   // Kanban data summary for all phases
   kanbanData: async (req: Request, res: Response) => {
   const tenant = (req as any).user?.tenant;
-  const sedeId = getRequestSedeId(req);
+  const rawRoles = Array.isArray((req as any).user?.roles)
+    ? (req as any).user.roles
+    : (((req as any).user?.role) ? [(req as any).user.role] : []);
+  const isSuperAdmin = rawRoles.some((role: any) => String(role || '').toLowerCase() === 'super_admin');
+  const baseSedeId = getRequestSedeId(req);
+  const sedeId = isSuperAdmin ? null : baseSedeId;
   try {
       // Ensure optional tables exist (cajas)
       await withTenant(tenant, async (c) => {
@@ -844,10 +1068,11 @@ export const OperacionController = {
   // Debug counts for visibility (no PII)
   const preGroupsCount = timers.preAcond.filter((t:any)=> !t.item).length;
   const preItemsCount = timers.preAcond.filter((t:any)=> t.item).length;
-  if (KANBAN_DEBUG && Date.now() - lastKanbanLog > 30000) { // log at most cada 30s
+      if (KANBAN_DEBUG && Date.now() - lastKanbanLog > 30000) { // log at most cada 30s
     console.log('[kanbanData] timers preAcond groups/items', preGroupsCount, preItemsCount);
     lastKanbanLog = Date.now();
   }
+      const perSede = isSuperAdmin ? await buildPerSedeSummary(tenant) : [];
   res.json({ ok: true, data: {
         enBodega: enBodega.rows[0] || { tics:0, vips:0, cubes:0 },
         preAcond: {
@@ -862,7 +1087,8 @@ export const OperacionController = {
         inspeccion,
         operacion,
         devolucion,
-        timers
+        timers,
+        perSede
       }});
     } catch (e:any) {
   console.error('[kanbanData] error', e);
