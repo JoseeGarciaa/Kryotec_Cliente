@@ -899,6 +899,7 @@
 
   function setMode(mode){
     const bulk = mode === 'bulk';
+    const previous = state.bulkMode;
     state.bulkMode = bulk;
     modeIndividualBtn?.classList.toggle('btn-primary', !bulk);
     modeIndividualBtn?.classList.toggle('btn-ghost', bulk);
@@ -909,8 +910,27 @@
     if(ticScanBlock){
       ticScanBlock.classList.toggle('hidden', !bulk);
     }
-    if(!bulk){
+    if(bulk !== previous){
+      state.lastLookupCode = null;
+      if(bulk){
+        clearIndividualSelection();
+        if(scanInput) scanInput.value='';
+        if(scanMsg) scanMsg.textContent='';
+        if(ticScan) ticScan.value='';
+        if(ticMsg) ticMsg.textContent='';
+        if(bulkInput) bulkInput.value='';
+        setBulkMessage('');
+      } else {
+        clearBulkQueue();
+        if(scanInput) scanInput.value='';
+        if(scanMsg) scanMsg.textContent='';
+        if(ticScan) ticScan.value='';
+        if(ticMsg) ticMsg.textContent='';
+      }
+      renderChecklist();
+    } else if(!bulk){
       clearMassEntries();
+      renderChecklist();
     }
     setTimeout(()=> (bulk ? bulkInput : scanInput)?.focus(), 120);
   }
