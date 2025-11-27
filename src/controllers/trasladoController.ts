@@ -117,8 +117,29 @@ export const TrasladoController = {
 
     const notFound = rfids.filter((code) => !infoMap.has(code));
 
+    const invalidEstado: Array<{ rfid: string; estado: string | null | undefined }> = [];
+    const validEntries: any[] = [];
+    infoMap.forEach((row) => {
+      const estado = typeof row.estado === 'string' ? row.estado.trim().toLowerCase() : '';
+      if (estado === 'en bodega') {
+        validEntries.push(row);
+      } else {
+        invalidEstado.push({ rfid: row.rfid, estado: row.estado });
+      }
+    });
+    infoMap.clear();
+    for (const row of validEntries) {
+      infoMap.set(row.rfid, row);
+    }
+
     if (infoMap.size === 0) {
-      return res.json({ ok: true, mode, moved: [], already: [], not_found: notFound, duplicates });
+      return res.status(400).json({
+        ok: false,
+        error: 'Solo se pueden trasladar piezas con estado "En bodega".',
+        invalid_estado: invalidEstado,
+        not_found: notFound,
+        duplicates,
+      });
     }
 
     let toCurrentSedeTarget: number | null = null;
@@ -147,6 +168,10 @@ export const TrasladoController = {
 
     const toUpdate: any[] = [];
     const already: any[] = [];
+    const invalidSnapshot: any[] = invalidEstado.map((row) => ({
+      rfid: row.rfid,
+      estado: row.estado,
+    }));
     infoMap.forEach((row) => {
       const currentEstado = typeof row.estado === 'string' ? row.estado.trim() : '';
       const currentSubEstado = typeof row.sub_estado === 'string' ? row.sub_estado.trim() : '';
@@ -249,6 +274,7 @@ export const TrasladoController = {
       already,
       not_found: notFound,
       duplicates,
+      invalid_estado: invalidSnapshot,
       target:
         mode === 'to_destination'
           ? { id: targetSedeIdForTransit, nombre: targetSedeNombre }

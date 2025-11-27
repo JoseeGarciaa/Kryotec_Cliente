@@ -150,8 +150,27 @@
     const payload = attempt.data || {};
     if(!attempt.httpOk || payload.ok === false){
       const message = payload.error || payload.message || ctx.errorMessage || `Error (${attempt.status || 0})`;
-      candidates.forEach(entry => { entry.status = 'error'; entry.message = message; });
-      if(msgEl) msgEl.textContent = message;
+      const invalidMap = new Map((payload.invalid_estado || []).map(item => [String(item?.rfid || '').toUpperCase(), item?.estado || null]));
+      const notFoundSet = new Set((payload.not_found || []).map(r => String(r || '').toUpperCase()));
+      queue.forEach(entry => {
+        const key = entry.code;
+        if(invalidMap.has(key)){
+          entry.status = 'error';
+          const estado = invalidMap.get(key);
+          entry.message = estado ? `Estado actual: ${estado}.` : 'Solo se pueden trasladar piezas en "En bodega".';
+        } else if(notFoundSet.has(key)){
+          entry.status = 'error';
+          entry.message = 'RFID no encontrado.';
+        } else if(candidates.includes(entry)){
+          entry.status = 'error';
+          entry.message = message;
+        }
+      });
+      if(msgEl){
+        msgEl.textContent = invalidMap.size
+          ? 'Se omitieron piezas fuera de "En bodega". Revisa la cola para ver detalles.'
+          : message;
+      }
       renderQueue();
       return;
     }
@@ -163,6 +182,7 @@
     const movedMap = new Map((payload.moved || []).map(item => [String(item.rfid || '').toUpperCase(), item]));
     const alreadyMap = new Map((payload.already || []).map(item => [String(item.rfid || '').toUpperCase(), item]));
     const missingSet = new Set((payload.not_found || []).map(r => String(r || '').toUpperCase()));
+    const invalidMap = new Map((payload.invalid_estado || []).map(item => [String(item.rfid || '').toUpperCase(), item?.estado || null]));
     const errorMap = new Map((payload.errors || []).map(err => [String(err.rfid || '').toUpperCase(), err.message || err.error || 'Error']));
 
     queue.forEach(entry => {
@@ -175,7 +195,10 @@
           entry.message = `En traslado → ${dest}`;
         } else {
           const details = [];
-          if(info.prev_sede_id !== undefined && info.prev_sede_id !== null){ details.push(`de sede ${info.prev_sede_id}`); }
+          if(info.prev_sede_id !== undefined && info.prev_sede_id !== null){
+            const sedeLabel = getSedeName(info.prev_sede_id);
+            details.push(`de ${sedeLabel}`);
+          }
           if(info.prev_estado){ details.push(`estado ${info.prev_estado}`); }
           entry.message = details.length ? `Trasladada ${details.join(', ')}` : 'Trasladada';
         }
@@ -191,6 +214,10 @@
       } else if(missingSet.has(key)){
         entry.status = 'error';
         entry.message = 'RFID no encontrado';
+      } else if(invalidMap.has(key)){
+        entry.status = 'error';
+        const estado = invalidMap.get(key);
+        entry.message = estado ? `Estado actual: ${estado}.` : 'Solo se pueden trasladar piezas en "En bodega".';
       } else if(errorMap.has(key)){
         entry.status = 'error';
         entry.message = errorMap.get(key);
@@ -203,14 +230,15 @@
     const movedCount = Array.isArray(payload.moved) ? payload.moved.length : 0;
     const alreadyCount = Array.isArray(payload.already) ? payload.already.length : 0;
     const missingCount = Array.isArray(payload.not_found) ? payload.not_found.length : 0;
+    const invalidCount = Array.isArray(payload.invalid_estado) ? payload.invalid_estado.length : 0;
     const errorCount = Array.isArray(payload.errors) ? payload.errors.length : 0;
 
     if(msgEl){
       if(mode === 'to_destination'){
         const label = targetName ? targetName : 'la sede destino';
-        msgEl.textContent = `Marcadas en traslado ${movedCount} hacia ${label}. Sin cambios ${alreadyCount}. No encontradas ${missingCount}. Errores ${errorCount}.`;
+        msgEl.textContent = `Marcadas en traslado ${movedCount} hacia ${label}. Sin cambios ${alreadyCount}. Omitidas ${invalidCount}. No encontradas ${missingCount}. Errores ${errorCount}.`;
       } else {
-        msgEl.textContent = `Trasladadas ${movedCount}. Sin cambios ${alreadyCount}. No encontradas ${missingCount}. Errores ${errorCount}.`;
+        msgEl.textContent = `Trasladadas ${movedCount}. Sin cambios ${alreadyCount}. Omitidas ${invalidCount}. No encontradas ${missingCount}. Errores ${errorCount}.`;
       }
     }
     renderQueue();
