@@ -346,11 +346,38 @@
     closeDialog(catalogModal);
   };
 
-  const removeCatalogItem = (key) => {
-    if (!key) return;
+  const removeCatalogItem = async (key) => {
+    if (!key) return false;
+    const target = findCatalogItem(key);
+    if (!target) return false;
+    const numericId = Number(target.id);
+    let removedMessage = 'Referencia eliminada de la sesión.';
+    let removedType = '';
+
+    if (Number.isFinite(numericId) && numericId > 0) {
+      try {
+        const response = await fetch(`/ordenes/calculadora/catalogo/${numericId}`, {
+          method: 'DELETE',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'same-origin',
+        });
+        const payload = await response.json().catch(() => null);
+        if (!response.ok || !payload || payload.ok !== true) {
+          const message = payload && typeof payload.error === 'string' ? payload.error : 'No se pudo eliminar la referencia.';
+          setStatus(message, 'error');
+          return false;
+        }
+        removedMessage = 'Referencia eliminada del catálogo.';
+        removedType = 'success';
+      } catch (_err) {
+        setStatus('Error eliminando la referencia del catálogo.', 'error');
+        return false;
+      }
+    }
+
     const before = catalogoProductos.length;
     catalogoProductos = catalogoProductos.filter((item) => getCatalogKey(item) !== key);
-    if (catalogoProductos.length === before) return;
+    if (catalogoProductos.length === before) return false;
     Array.from(tbody.querySelectorAll('.calc-item')).forEach((row) => {
       const controls = rowCatalogControls.get(row);
       if (controls && controls.hidden && controls.hidden.value === key) {
@@ -358,8 +385,9 @@
       }
     });
     renderCatalogTable();
-    setStatus('Elemento removido del catálogo temporal.', '');
+    setStatus(removedMessage, removedType);
     updateAddButtonState();
+    return true;
   };
 
   const buildCatalogPicker = (row, prefillId) => {
@@ -420,7 +448,7 @@
   }
 
   if (catalogList) {
-    catalogList.addEventListener('click', (event) => {
+    catalogList.addEventListener('click', async (event) => {
       const actionBtn = event.target.closest('[data-action]');
       if (!actionBtn) return;
       const { action, id } = actionBtn.dataset;
@@ -432,8 +460,8 @@
           closeCatalogModal();
         }
       } else if (action === 'delete') {
-        if (window.confirm('¿Eliminar este registro del catálogo temporal?')) {
-          removeCatalogItem(id);
+        if (window.confirm('¿Eliminar esta referencia del catálogo?')) {
+          await removeCatalogItem(id);
         }
       }
     });

@@ -1460,6 +1460,33 @@ export const OrdenesController = {
     }
   },
 
+  calculadoraEliminarCatalogo: async (req: Request, res: Response) => {
+    const t = (req as any).user?.tenant || resolveTenant(req);
+    if (!t) return res.status(400).json({ ok: false, error: 'Tenant no especificado' });
+    const tenant = String(t).startsWith('tenant_') ? String(t) : `tenant_${t}`;
+    const rawId = typeof req.params?.id === 'string' ? req.params.id : (req.body as any)?.id;
+    const invId = Number(rawId);
+    if (!Number.isFinite(invId) || invId <= 0) {
+      return res.status(400).json({ ok: false, error: 'Identificador de catálogo inválido.' });
+    }
+
+    try {
+      const deleted = await withTenant(tenant, (client) =>
+        client.query<{ inv_id: number }>(
+          'DELETE FROM productos_calculo WHERE inv_id = $1 RETURNING inv_id',
+          [invId],
+        ),
+      );
+      if (!deleted.rowCount) {
+        return res.status(404).json({ ok: false, error: 'La referencia ya no existe.' });
+      }
+      return res.json({ ok: true, id: invId });
+    } catch (error: any) {
+      console.error('[Ordenes][calculadoraEliminarCatalogo]', error);
+      return res.status(500).json({ ok: false, error: 'No fue posible eliminar la referencia.' });
+    }
+  },
+
   calculadoraRecomendar: async (req: Request, res: Response) => {
     const t = (req as any).user?.tenant || resolveTenant(req);
     if (!t) return res.status(400).json({ ok: false, error: 'Tenant no especificado' });

@@ -517,7 +517,8 @@ export const OperacionController = {
             SUM(CASE WHEN (m.nombre_modelo ILIKE '%cube%' OR m.nombre_modelo ILIKE '%cubo%') THEN 1 ELSE 0 END)::int AS cubes
          FROM inventario_credocubes ic
          JOIN modelos m ON m.modelo_id = ic.modelo_id
-        WHERE LOWER(ic.estado)=LOWER('En bodega')${enBodegaSede}`,
+        WHERE LOWER(ic.estado)=LOWER('En bodega')
+          AND ic.activo = true${enBodegaSede}`,
         enBodegaParams
       ));
       // Pre-acond (congelamiento / atemperamiento) only TICs
@@ -529,7 +530,9 @@ export const OperacionController = {
             SUM(CASE WHEN ic.sub_estado='Congelado' THEN 1 ELSE 0 END)::int AS completado
          FROM inventario_credocubes ic
          JOIN modelos m ON m.modelo_id = ic.modelo_id
-        WHERE ic.estado='Pre Acondicionamiento' AND (m.nombre_modelo ILIKE '%tic%')${preAcondCongSede}`,
+        WHERE ic.estado='Pre Acondicionamiento'
+          AND ic.activo = true
+          AND (m.nombre_modelo ILIKE '%tic%')${preAcondCongSede}`,
         preAcondCongParams
       ));
       const preAcondAtempParams: any[] = [];
@@ -540,26 +543,31 @@ export const OperacionController = {
             SUM(CASE WHEN ic.sub_estado='Atemperado' THEN 1 ELSE 0 END)::int AS completado
          FROM inventario_credocubes ic
          JOIN modelos m ON m.modelo_id = ic.modelo_id
-        WHERE ic.estado='Pre Acondicionamiento' AND (m.nombre_modelo ILIKE '%tic%')${preAcondAtempSede}`,
+        WHERE ic.estado='Pre Acondicionamiento'
+          AND ic.activo = true
+          AND (m.nombre_modelo ILIKE '%tic%')${preAcondAtempSede}`,
         preAcondAtempParams
       ));
       // Acondicionamiento (ensamblaje items y cajas construidas)
       const ensamblajeParams: any[] = [];
       const ensamblajeSede = pushSedeFilter(ensamblajeParams, sedeId);
       const ensamblaje = await withTenant(tenant, (c) => c.query(
-        `SELECT COUNT(*)::int AS items
-           FROM inventario_credocubes ic
-           WHERE ic.estado='Acondicionamiento' AND ic.sub_estado='Ensamblaje'${ensamblajeSede}`,
+          `SELECT COUNT(*)::int AS items
+            FROM inventario_credocubes ic
+            WHERE ic.estado='Acondicionamiento'
+             AND ic.sub_estado='Ensamblaje'
+             AND ic.activo = true${ensamblajeSede}`,
         ensamblajeParams
       ));
       const cajasParams: any[] = [];
       const cajasSede = pushSedeFilter(cajasParams, sedeId);
       const cajas = await withTenant(tenant, (c) => c.query(
-        `SELECT COUNT(DISTINCT c.caja_id)::int AS total
-           FROM acond_cajas c
-           JOIN acond_caja_items aci ON aci.caja_id = c.caja_id
-           JOIN inventario_credocubes ic ON ic.rfid = aci.rfid
-           WHERE 1=1${cajasSede}`,
+        `SELECT COUNT(DISTINCT ic.lote)::int AS total
+           FROM inventario_credocubes ic
+          WHERE ic.activo = true
+            AND ic.lote IS NOT NULL
+            AND ic.lote ILIKE 'CAJA-%'
+            AND TRIM(ic.lote) <> ''${cajasSede}`,
         cajasParams
       ));
       // Inspección (items cuyo estado es 'Inspección' o 'Inspeccion')
@@ -571,7 +579,8 @@ export const OperacionController = {
             SUM(CASE WHEN m.nombre_modelo ILIKE '%vip%' THEN 1 ELSE 0 END)::int AS vips
          FROM inventario_credocubes ic
          JOIN modelos m ON m.modelo_id = ic.modelo_id
-        WHERE ic.estado IN ('Inspección','Inspeccion')${inspeccionSede}`,
+        WHERE ic.estado IN ('Inspección','Inspeccion')
+          AND ic.activo = true${inspeccionSede}`,
         inspeccionParams
       ));
       const rawInspeccion = inspeccionQ.rows[0] || { tics:0, vips:0 };
@@ -590,7 +599,8 @@ export const OperacionController = {
          FROM inventario_credocubes ic
          JOIN modelos m ON m.modelo_id = ic.modelo_id
     LEFT JOIN acond_caja_items aci ON aci.rfid = ic.rfid
-        WHERE ic.estado='Operación'${operacionSede}`,
+        WHERE ic.estado='Operación'
+          AND ic.activo = true${operacionSede}`,
         operacionParams
       ));
       const operacion = opQ.rows[0] || { tic_transito:0, vip_transito:0, cajas_op:0 };
@@ -625,7 +635,8 @@ export const OperacionController = {
            SUM(CASE WHEN m.nombre_modelo ILIKE '%vip%' AND ic.sub_estado='Retorno' THEN 1 ELSE 0 END)::int AS vip_pendiente
          FROM inventario_credocubes ic
          JOIN modelos m ON m.modelo_id = ic.modelo_id
-        WHERE ic.estado='Operación'${devSede}`,
+        WHERE ic.estado='Operación'
+          AND ic.activo = true${devSede}`,
         devParams
       ));
       const devolucion = devQ.rows[0] || { tic_pendiente:0, vip_pendiente:0 };
@@ -636,7 +647,8 @@ export const OperacionController = {
            FROM acond_caja_items aci
            JOIN inventario_credocubes ic ON ic.rfid = aci.rfid
           WHERE ic.estado = 'En bodega'
-            AND ic.sub_estado IN ('Pendiente a Inspección','Pendiente a Inspeccion')${pendInspSede}`,
+            AND ic.sub_estado IN ('Pendiente a Inspección','Pendiente a Inspeccion')
+            AND ic.activo = true${pendInspSede}`,
         pendInspParams
       ));
       const pendientesBodega = pendInspQ.rows[0]?.cajas || 0;

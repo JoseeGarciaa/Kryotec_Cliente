@@ -466,7 +466,16 @@ ${selectClause}
            sede_id = COALESCE($3, ic.sede_id),
            zona_id = $4,
            seccion_id = $5,
-           activo = COALESCE($6, ic.activo)
+           activo = COALESCE($6, ic.activo),
+           estado = CASE
+             WHEN $6 IS TRUE THEN 'En bodega'
+             WHEN $6 IS FALSE THEN 'Inhabilitado'
+             ELSE ic.estado
+           END,
+           sub_estado = CASE
+             WHEN $6 IS NOT NULL THEN NULL
+             ELSE ic.sub_estado
+           END
          WHERE ic.id = $7`;
       if (sedeId !== null) {
         params.push(sedeId);
