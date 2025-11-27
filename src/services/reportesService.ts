@@ -934,13 +934,24 @@ function buildHistFilters(filters: ReportFilters, options: FilterOptions = {}) {
   }
 
   if (filters.from instanceof Date && !Number.isNaN(filters.from.getTime())) {
+    const fromStart = new Date(filters.from.getTime());
+    fromStart.setHours(0, 0, 0, 0);
     clauses.push(`hist.happened_at >= $${params.length + 1}`);
-    params.push(filters.from.toISOString());
+    params.push(fromStart.toISOString());
   }
 
   if (filters.to instanceof Date && !Number.isNaN(filters.to.getTime())) {
+    const toEnd = new Date(filters.to.getTime());
+    if (
+      toEnd.getHours() === 0 &&
+      toEnd.getMinutes() === 0 &&
+      toEnd.getSeconds() === 0 &&
+      toEnd.getMilliseconds() === 0
+    ) {
+      toEnd.setHours(23, 59, 59, 999);
+    }
     clauses.push(`hist.happened_at <= $${params.length + 1}`);
-    params.push(filters.to.toISOString());
+    params.push(toEnd.toISOString());
   }
 
   if (typeof filters.sedeId === 'number') {

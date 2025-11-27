@@ -31,28 +31,31 @@ function parseNumber(value: unknown): number | null {
 
 function parseDate(value: unknown): Date | null {
   if (!value) return null;
-  const d = new Date(String(value));
-  return Number.isNaN(d.getTime()) ? null : d;
-}
-
-function normalizeToUtcEndOfDay(date: Date): Date {
-  const normalized = new Date(date);
-  if (
-    normalized.getUTCHours() === 0 &&
-    normalized.getUTCMinutes() === 0 &&
-    normalized.getUTCSeconds() === 0 &&
-    normalized.getUTCMilliseconds() === 0
-  ) {
-    normalized.setUTCHours(23, 59, 59, 999);
+  if (typeof value === 'string') {
+    const trimmed = value.trim();
+    const dateOnly = trimmed.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+    if (dateOnly) {
+      const year = Number(dateOnly[1]);
+      const month = Number(dateOnly[2]) - 1;
+      const day = Number(dateOnly[3]);
+      const parsed = new Date(year, month, day);
+      return Number.isNaN(parsed.getTime()) ? null : parsed;
+    }
   }
-  return normalized;
+  const d = value instanceof Date ? new Date(value.getTime()) : new Date(String(value));
+  return Number.isNaN(d.getTime()) ? null : d;
 }
 
 function parseFilters(req: Request): ReportFilters {
   const { query } = req;
   const from = parseDate(query.from);
-  const toRaw = parseDate(query.to);
-  const to = toRaw ? normalizeToUtcEndOfDay(toRaw) : null;
+  if (from) {
+    from.setHours(0, 0, 0, 0);
+  }
+  const to = parseDate(query.to);
+  if (to) {
+    to.setHours(0, 0, 0, 0);
+  }
   const sedeId = parseNumber(query.sedeId ?? query.sede_id);
   const zonaId = parseNumber(query.zonaId ?? query.zona_id);
   const seccionId = parseNumber(query.seccionId ?? query.seccion_id);
