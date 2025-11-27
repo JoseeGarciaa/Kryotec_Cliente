@@ -311,6 +311,7 @@
   const ticScanBtn = qs('#insp-tic-scan-btn');
   const ticScanClear = qs('#insp-tic-scan-clear');
   const ticMsg = qs('#insp-tic-msg');
+  const ticScanBlock = qs('#insp-tic-scan-block');
   // Add modal controls (Agregar a Inspección)
   const btnAdd = qs('#insp-btn-add');
   const addDlg = document.getElementById('insp-modal-add');
@@ -905,6 +906,9 @@
     modeBulkBtn?.classList.toggle('btn-ghost', !bulk);
     singleSection?.classList.toggle('hidden', bulk);
     bulkSection?.classList.toggle('hidden', !bulk);
+    if(ticScanBlock){
+      ticScanBlock.classList.toggle('hidden', !bulk);
+    }
     if(!bulk){
       clearMassEntries();
     }
@@ -1015,13 +1019,16 @@
       updateCompleteBtn();
       return;
     }
+    const gating = state.bulkMode;
     const active = state.activeTic;
     list.innerHTML = (state.tics||[]).map(t=>{
       const v = state.ticChecks.get(t.rfid) || { limpieza:false, goteo:false, desinfeccion:false };
-      const enabled = active === t.rfid;
-      const rowCls = enabled ? 'border-primary bg-primary/10 ring-2 ring-primary shadow-md' : 'bg-base-100 border-base-300/40 opacity-70';
-      const dis = enabled ? '' : 'disabled';
-      const badge = enabled ? "<span class='badge badge-primary badge-xs'>ACTIVA</span>" : '';
+      const isActive = active === t.rfid;
+      const rowCls = gating
+        ? (isActive ? 'border-primary bg-primary/10 ring-2 ring-primary shadow-md' : 'bg-base-100 border-base-300/40 opacity-70')
+        : 'bg-base-100 border-base-300/40';
+      const dis = gating && !isActive ? 'disabled' : '';
+      const badge = gating && isActive ? "<span class='badge badge-primary badge-xs'>ACTIVA</span>" : '';
       return `<div class='border rounded-md p-2 ${rowCls}' data-tic-row='${t.rfid}'>
         <div class='flex items-center justify-between text-[11px] font-mono opacity-70'>
           <span>TIC ${badge}</span>
@@ -1154,6 +1161,43 @@
           const baseLabel = baseCaja?.lote || baseCaja?.nombreCaja || 'Sin lote';
           const filteredTics = fullTics.filter((t)=> normalizeCode(t?.rfid || '') === upperCode);
           const filteredComps = rawComps.filter((c)=> normalizeCode(c?.rfid || c?.codigo || '') === upperCode);
+          if(filteredTics.length === 0 && filteredComps.length === 0){
+            const notInInspectionMsg = 'La pieza no está en Inspección. Usa "Agregar piezas a Inspección" para traerla.';
+            if(targetMsg) targetMsg.textContent = notInInspectionMsg;
+            if(fromBulk){
+              updateBulkEntry(code, { status:'missing', message: notInInspectionMsg });
+              renderBulkQueue();
+              if(state.lastLookupCode === code){ state.lastLookupCode = null; }
+              setTimeout(()=> loadNextBulkCode(), 20);
+            } else {
+              state.lastLookupCode = null;
+              if(scanInput) scanInput.value='';
+            }
+            const removalIdx = state.massEntries.findIndex((item)=> item.key === entryKey);
+            if(removalIdx >= 0){
+              const wasActive = state.massActiveKey === entryKey;
+              state.massEntries.splice(removalIdx, 1);
+              if(wasActive){
+                const next = state.massEntries[0];
+                if(next){
+                  applyMassSelection(next.key);
+                } else {
+                  state.massActiveKey = null;
+                  state.cajaSel = null;
+                  state.tics = [];
+                  state.ticChecks.clear();
+                  state.activeTic = null;
+                  state.inInspeccion = false;
+                  renderChecklist();
+                }
+              } else {
+                renderChecklist();
+              }
+            } else if(!fromBulk){
+              renderChecklist();
+            }
+            return;
+          }
           const unitName = resolveNombreUnidad(filteredTics[0]) || resolveNombreUnidad(filteredComps[0]);
           const existingEntry = state.massEntries.find((item)=> item.key === entryKey);
           const displayParts = [upperCode, baseLabel];
