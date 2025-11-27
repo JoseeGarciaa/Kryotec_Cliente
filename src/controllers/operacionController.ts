@@ -2764,36 +2764,78 @@ export const OperacionController = {
     const tenant = (req as any).user?.tenant;
     const sedeId = getRequestSedeId(req);
     try {
-  const page = Math.max(1, parseInt(String(req.query.page||'1'),10)||1);
-  const limit = Math.min(200, Math.max(5, parseInt(String(req.query.limit||'10'),10)||10));
-      const offset = (page-1)*limit;
-      const q = (req.query.q||'').toString().trim();
-      const cat = (req.query.cat||'').toString(); // tics | vips | cubes
-  const filters: string[] = ["TRIM(LOWER(ic.estado))=TRIM(LOWER('En bodega'))"]; const params: any[] = [];
-      if(q){
-        params.push('%'+q.toLowerCase()+'%');
-        const idx = params.length;
-        // Correct empty string quoting inside COALESCE
-        filters.push(`(LOWER(ic.rfid) LIKE $${idx} OR LOWER(ic.nombre_unidad) LIKE $${idx} OR LOWER(COALESCE(ic.lote,'')) LIKE $${idx})`);
+      const page = Math.max(1, parseInt(String(req.query.page || '1'), 10) || 1);
+      const limit = Math.min(200, Math.max(5, parseInt(String(req.query.limit || '10'), 10) || 10));
+      const offset = (page - 1) * limit;
+      const qRaw = (req.query.q || '').toString();
+      const q = qRaw.trim();
+      const cat = (req.query.cat || '').toString(); // tics | vips | cubes
+      const lookupRaw = (req.query.lookup || '').toString().trim().toLowerCase();
+      const lookupMode = lookupRaw === '1' || lookupRaw === 'true' || lookupRaw === 'yes';
+
+      const filters: string[] = [];
+      const params: any[] = [];
+
+      if (!lookupMode) {
+        filters.push("TRIM(LOWER(ic.estado)) = TRIM(LOWER('En bodega'))");
       }
-      if(cat){
-        if(cat==='tics'){ params.push('%tic%'); filters.push('m.nombre_modelo ILIKE $'+params.length); }
-        else if(cat==='vips'){ params.push('%vip%'); filters.push('m.nombre_modelo ILIKE $'+params.length); }
-  else if(cat==='cubes'){ params.push('%cube%'); filters.push('(m.nombre_modelo ILIKE $'+params.length+" OR m.nombre_modelo ILIKE '%cubo%')"); }
+
+      if (q) {
+        params.push('%' + q.toLowerCase() + '%');
+        const likeIdx = params.length;
+        let qFilter = `(LOWER(ic.rfid) LIKE $${likeIdx} OR LOWER(ic.nombre_unidad) LIKE $${likeIdx} OR LOWER(COALESCE(ic.lote,'')) LIKE $${likeIdx})`;
+        if (lookupMode) {
+          const normalized = q.replace(/[^A-Z0-9]/gi, '').toUpperCase();
+          if (normalized.length === 24) {
+            params.push(normalized);
+            const exactIdx = params.length;
+            qFilter = `(UPPER(ic.rfid) = $${exactIdx} OR ${qFilter})`;
+          }
+        }
+        filters.push(qFilter);
+      } else if (lookupMode) {
+        return res.json({
+          ok: true,
+          page,
+          limit,
+          total: 0,
+          items: [],
+          meta: { lookupMode: true, usedUpdatedAt: true, debug: { filters: [], params: [] } },
+        });
       }
-      if(sedeId !== null){
+
+      if (cat) {
+        if (cat === 'tics') {
+          params.push('%tic%');
+          filters.push('m.nombre_modelo ILIKE $' + params.length);
+        } else if (cat === 'vips') {
+          params.push('%vip%');
+          filters.push('m.nombre_modelo ILIKE $' + params.length);
+        } else if (cat === 'cubes') {
+          params.push('%cube%');
+          filters.push('(m.nombre_modelo ILIKE $' + params.length + " OR m.nombre_modelo ILIKE '%cubo%')");
+        }
+      }
+
+      if (sedeId !== null) {
         params.push(sedeId);
         filters.push(`ic.sede_id = $${params.length}`);
       }
-      const where = filters.length? ('WHERE '+filters.join(' AND ')) : '';
+
+      const where = filters.length ? 'WHERE ' + filters.join(' AND ') : '';
       const baseSel = `FROM inventario_credocubes ic JOIN modelos m ON m.modelo_id = ic.modelo_id ${where}`;
-   // Use parameterized limit/offset via appended params to avoid string concat issues (even if safe here)
-   params.push(limit); const limitIdx = params.length;
-   params.push(offset); const offsetIdx = params.length;
-      let rows; let usedUpdatedAt=true;
+
+      params.push(limit);
+      const limitIdx = params.length;
+      params.push(offset);
+      const offsetIdx = params.length;
+
+      let rows;
+      let usedUpdatedAt = true;
       try {
-        rows = await withTenant(tenant, (c) => c.query(
-          `SELECT ic.id AS id, ic.rfid, ic.nombre_unidad, ic.lote, ic.estado, ic.sub_estado, m.nombre_modelo,
+        rows = await withTenant(tenant, (c) =>
+          c.query(
+            `SELECT ic.id AS id, ic.rfid, ic.nombre_unidad, ic.lote, ic.estado, ic.sub_estado, m.nombre_modelo,
          CASE WHEN m.nombre_modelo ILIKE '%tic%' THEN 'TIC'
            WHEN m.nombre_modelo ILIKE '%vip%' THEN 'VIP'
            WHEN (m.nombre_modelo ILIKE '%cube%' OR m.nombre_modelo ILIKE '%cubo%') THEN 'CUBE'
@@ -2801,13 +2843,16 @@ export const OperacionController = {
          ic.updated_at AS fecha_ingreso
        ${baseSel}
        ORDER BY ic.updated_at DESC
-       LIMIT $${limitIdx} OFFSET $${offsetIdx}`, params));
-      } catch(e:any){
-        // Si la columna updated_at no existe (bases antiguas), reintentar usando id
-        if(e?.code==='42703'){
-          usedUpdatedAt=false;
-          rows = await withTenant(tenant, (c) => c.query(
-            `SELECT ic.id AS id, ic.rfid, ic.nombre_unidad, ic.lote, ic.estado, ic.sub_estado, m.nombre_modelo,
+       LIMIT $${limitIdx} OFFSET $${offsetIdx}`,
+            params
+          )
+        );
+      } catch (e: any) {
+        if (e?.code === '42703') {
+          usedUpdatedAt = false;
+          rows = await withTenant(tenant, (c) =>
+            c.query(
+              `SELECT ic.id AS id, ic.rfid, ic.nombre_unidad, ic.lote, ic.estado, ic.sub_estado, m.nombre_modelo,
              CASE WHEN m.nombre_modelo ILIKE '%tic%' THEN 'TIC'
                WHEN m.nombre_modelo ILIKE '%vip%' THEN 'VIP'
                WHEN (m.nombre_modelo ILIKE '%cube%' OR m.nombre_modelo ILIKE '%cubo%') THEN 'CUBE'
@@ -2815,15 +2860,32 @@ export const OperacionController = {
              NOW() AS fecha_ingreso
              ${baseSel}
              ORDER BY ic.id DESC
-             LIMIT $${limitIdx} OFFSET $${offsetIdx}`, params));
-        } else { throw e; }
+             LIMIT $${limitIdx} OFFSET $${offsetIdx}`,
+              params
+            )
+          );
+        } else {
+          throw e;
+        }
       }
-  const totalQ = await withTenant(tenant, (c) => c.query(`SELECT COUNT(*)::int AS total ${baseSel}`, params.slice(0, params.length-2))); // exclude limit & offset
-  res.json({ ok:true, page, limit, total: totalQ.rows[0]?.total||0, items: rows.rows, meta:{ usedUpdatedAt, debug:{ filters, params: params.slice(0, params.length-2) } } });
-    } catch(e:any){
-      // Fallback: no bloquear la vista si algo falla. Log y retornar lista vacía.
-  console.error('[bodegaData] error', e);
-  res.json({ ok:true, page:1, limit:10, total:0, items:[], warning: e?.message || 'Error interno (se muestra vacío)' });
+
+      const totalParams = params.slice(0, params.length - 2);
+      const totalQ = await withTenant(tenant, (c) => c.query(`SELECT COUNT(*)::int AS total ${baseSel}`, totalParams));
+      res.json({
+        ok: true,
+        page,
+        limit,
+        total: totalQ.rows[0]?.total || 0,
+        items: rows.rows,
+        meta: {
+          usedUpdatedAt,
+          lookupMode,
+          debug: { filters, params: totalParams },
+        },
+      });
+    } catch (e: any) {
+      console.error('[bodegaData] error', e);
+      res.json({ ok: true, page: 1, limit: 10, total: 0, items: [], warning: e?.message || 'Error interno (se muestra vacío)' });
     }
   },
 

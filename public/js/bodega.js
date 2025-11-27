@@ -147,8 +147,16 @@
     } else {
       devolQueueEl.innerHTML = devolQueue.map(code => {
         const info = devolQueueInfo.has(code) ? devolQueueInfo.get(code) : undefined;
-        const name = info === undefined ? 'Cargando nombre…' : (info && info.nombre_unidad ? info.nombre_unidad : 'Sin nombre');
-        const lote = info && info.lote ? info.lote : '';
+        const name = info === undefined
+          ? 'Cargando nombre…'
+          : info === null
+            ? 'No encontrado'
+            : (info.nombre_unidad && info.nombre_unidad.trim())
+              ? info.nombre_unidad.trim()
+              : (info.nombre_modelo && info.nombre_modelo.trim())
+                ? info.nombre_modelo.trim()
+                : 'Sin nombre';
+        const lote = info && info !== null && info.lote ? info.lote : '';
         const meta = lote ? `<span class="text-[10px] opacity-60">${lote}</span>` : '';
         return `
           <div class="flex items-center justify-between gap-3 rounded-lg border border-base-300/60 bg-base-100/70 px-3 py-2" data-code="${code}">
@@ -211,7 +219,7 @@
     const pending = codes.filter(code => !devolQueueInfo.has(code));
     if(!pending.length) return;
     try {
-      const requests = pending.map(code => fetch(`/operacion/bodega/data?q=${encodeURIComponent(code)}&page=1&limit=1`)
+      const requests = pending.map(code => fetch(`/operacion/bodega/data?lookup=1&q=${encodeURIComponent(code)}&page=1&limit=1`)
         .then(res => res.ok ? res.json() : null)
         .then(payload => {
           if(payload && payload.ok && Array.isArray(payload.items) && payload.items.length){
@@ -346,7 +354,7 @@
     try {
       if(multiMode){
         const catParam = cat ? `&cat=${encodeURIComponent(cat)}` : '';
-        const requests = rfids.map(code => fetch(`/operacion/bodega/data?q=${encodeURIComponent(code)}&page=1&limit=1${catParam}`)
+        const requests = rfids.map(code => fetch(`/operacion/bodega/data?lookup=1&q=${encodeURIComponent(code)}&page=1&limit=1${catParam}`)
           .then(r => r.json()).catch(() => ({ ok:false, items:[] })));
         const responses = await Promise.all(requests);
         const merged = new Map();
