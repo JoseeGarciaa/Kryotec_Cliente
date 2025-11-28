@@ -248,7 +248,7 @@
       <input required name="nombre" placeholder="Nombre" class="input input-sm input-bordered w-full" />
       <input required name="correo" type="email" placeholder="Correo" class="input input-sm input-bordered w-full" />
       <input name="telefono" placeholder="Teléfono" class="input input-sm input-bordered w-full" />
-      <input name="password" type="password" placeholder="Contraseña inicial (opcional)" class="input input-sm input-bordered w-full" minlength="8" />
+      <input required name="password" type="password" placeholder="Contraseña inicial" class="input input-sm input-bordered w-full" minlength="8" autocomplete="new-password" />
       <p class="text-xs opacity-70"><%= passwordPolicy %></p>
       <label class="form-control">
         <span class="label-text text-xs opacity-70">Roles</span>

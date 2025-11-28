@@ -1,6 +1,5 @@
 import { Request, Response } from 'express';
 import bcrypt from 'bcryptjs';
-import crypto from 'crypto';
 import { withTenant } from '../db/pool';
 import { UsersModel } from '../models/User';
 import { SedesModel } from '../models/Sede';
@@ -75,24 +74,6 @@ function parseRolesInput(rawRoles: unknown, fallback?: string | null): string[] 
   return [primary, ...result.filter((role) => role !== primary)];
 }
 
-function generateTemporalPassword(): string {
-  const upper = 'ABCDEFGHJKLMNPQRSTUVWXYZ';
-  const lower = 'abcdefghijkmnpqrstuvwxyz';
-  const digits = '23456789';
-  const special = '!@#$%*-_=+?';
-  const all = upper + lower + digits + special;
-  const pick = (pool: string) => pool[crypto.randomInt(0, pool.length)];
-  const chars = [pick(upper), pick(lower), pick(digits), pick(special)];
-  while (chars.length < 12) {
-    chars.push(pick(all));
-  }
-  for (let i = chars.length - 1; i > 0; i--) {
-    const j = crypto.randomInt(0, i + 1);
-    [chars[i], chars[j]] = [chars[j], chars[i]];
-  }
-  return chars.join('');
-}
-
 export const AdminController = {
   // Render principal
   listView: async (req: Request, res: Response) => {
@@ -137,7 +118,9 @@ export const AdminController = {
   newUser: async (req: Request, res: Response) => {
     const { nombre, correo, telefono, password, rol, sede_id, sesion_ttl_minutos } = req.body as any;
     const tenant = (req as any).user?.tenant as string;
-    if (!nombre || !correo) return res.redirect('/administracion?error=Nombre+y+correo+requeridos');
+    if (!nombre || !correo || !password) {
+      return res.redirect('/administracion?error=Nombre,+correo+y+contraseña+requeridos');
+    }
     try {
       // Normalizamos correo para búsqueda (trim). Si la base usa citext o lower() en índice seguirá funcionando.
       const correoNorm = (correo as string).trim();
@@ -146,13 +129,9 @@ export const AdminController = {
         return res.redirect(`/administracion?error=Correo+ya+existe:+${encodeURIComponent(correoNorm)}`);
       }
       const sessionTtl = normalizeSessionTtl(sesion_ttl_minutos ?? config.security.defaultSessionMinutes);
-      let initialPassword = (password || '').trim();
-      if (initialPassword) {
-        if (!validatePasswordStrength(initialPassword)) {
-          return res.redirect(`/administracion?error=${encodeURIComponent(PASSWORD_POLICY_MESSAGE)}`);
-        }
-      } else {
-        initialPassword = generateTemporalPassword();
+      const initialPassword = String(password).trim();
+      if (!validatePasswordStrength(initialPassword)) {
+        return res.redirect(`/administracion?error=${encodeURIComponent(PASSWORD_POLICY_MESSAGE)}`);
       }
       const hashed = await bcrypt.hash(initialPassword, 10);
       const rolesNormalized = parseRolesInput((req.body as any)?.roles, rol);
@@ -173,7 +152,6 @@ export const AdminController = {
         sesion_ttl_minutos: sessionTtl,
         debe_cambiar_contrasena: true,
       }));
-      console.log('[admin][newUser] Contraseña temporal generada para', correoNorm);
       res.redirect('/administracion?ok=Usuario+creado');
     } catch (e: any) {
       console.error(e);
