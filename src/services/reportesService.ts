@@ -75,111 +75,195 @@ export async function runReport(key: ReportKey, ctx: ReportContext): Promise<Rep
 // --- Implementaciones internas ---
 
 async function inventarioPorSede(ctx: ReportContext): Promise<ReportDataset> {
-  const { tenant, filters } = ctx;
-  const { whereClause, params } = buildHistFilters(filters);
-  const sql = `
-    WITH filtered AS (
-      SELECT
-        hist.hist_id,
-        hist.inventario_id,
-        hist.rfid,
-        hist.happened_at,
-        COALESCE(hist.estado_new, hist.estado_old) AS estado_actual,
-        COALESCE(hist.sub_estado_new, hist.sub_estado_old) AS sub_estado_actual,
-        COALESCE(hist.sede_id_new, hist.sede_id_old) AS sede_id_actual
-      FROM hist_trazabilidad AS hist
-      ${whereClause ? `WHERE ${whereClause}` : ''}
-    ),
-    latest AS (
-      SELECT DISTINCT ON (inventario_id)
-        inventario_id,
-        rfid,
-        estado_actual,
-        sub_estado_actual,
-        sede_id_actual,
-        happened_at
-      FROM filtered
-      ORDER BY inventario_id, happened_at DESC
-    )
-    SELECT
-      l.sede_id_actual AS sede_id,
-      s.nombre AS sede_nombre,
-      COALESCE(l.estado_actual, 'Sin estado') AS estado,
-      COUNT(*)::int AS cantidad,
-      MAX(l.happened_at) AS ultimo_movimiento
-    FROM latest l
-    LEFT JOIN sedes s ON s.sede_id = l.sede_id_actual
-    GROUP BY l.sede_id_actual, s.nombre, COALESCE(l.estado_actual, 'Sin estado')
-    ORDER BY s.nombre NULLS LAST, estado;
-  `;
+  const { tenant, filters, pagination } = ctx;
+  const { whereClause, params: histParams } = buildHistFilters(filters);
+  const hasHistFilters = Boolean(whereClause);
+  const pageSize = pagination.pageSize;
+  const offset = (pagination.page - 1) * pageSize;
 
-  const rows = await withTenant(tenant, (client) => client.query(sql, params));
-  const grouped = new Map<number | null, {
-    sede_id: number | null;
-    sede_nombre: string;
-    total: number;
-    estados: { estado: string; cantidad: number }[];
-    ultimo_movimiento: Date | null;
-  }>();
+  const baseParamOffset = histParams.length;
+  const conditionClauses: string[] = [];
+  const conditionParams: any[] = [];
 
-  let totalItems = 0;
-  let estadosSet = new Set<string>();
-
-  for (const row of rows.rows) {
-    const sedeId = (row as any).sede_id as number | null;
-    const sedeNombre = (row as any).sede_nombre ?? 'Sin sede';
-    const estado = (row as any).estado as string;
-    const cantidad = Number((row as any).cantidad) || 0;
-    const ultimo = (row as any).ultimo_movimiento instanceof Date ? (row as any).ultimo_movimiento : (row as any).ultimo_movimiento ? new Date((row as any).ultimo_movimiento) : null;
-
-    totalItems += cantidad;
-    estadosSet.add(estado);
-
-    if (!grouped.has(sedeId)) {
-      grouped.set(sedeId, {
-        sede_id: sedeId,
-        sede_nombre: sedeNombre,
-        total: 0,
-        estados: [],
-        ultimo_movimiento: ultimo,
-      });
-    }
-    const entry = grouped.get(sedeId)!;
-    entry.total += cantidad;
-    entry.estados.push({ estado, cantidad });
-    if (!entry.ultimo_movimiento || (ultimo && ultimo > entry.ultimo_movimiento)) {
-      entry.ultimo_movimiento = ultimo;
-    }
+  if (typeof filters.sedeId === 'number' && Number.isFinite(filters.sedeId)) {
+    conditionParams.push(filters.sedeId);
+    conditionClauses.push(`base.sede_id_final = $${baseParamOffset + conditionParams.length}`);
+  }
+  if (typeof filters.zonaId === 'number' && Number.isFinite(filters.zonaId)) {
+    conditionParams.push(filters.zonaId);
+    conditionClauses.push(`base.zona_id_final = $${baseParamOffset + conditionParams.length}`);
+  }
+  if (typeof filters.seccionId === 'number' && Number.isFinite(filters.seccionId)) {
+    conditionParams.push(filters.seccionId);
+    conditionClauses.push(`base.seccion_id_final = $${baseParamOffset + conditionParams.length}`);
+  }
+  if (typeof filters.orderId === 'number' && Number.isFinite(filters.orderId)) {
+    conditionParams.push(filters.orderId);
+    conditionClauses.push(`COALESCE(base.order_id, 0) = $${baseParamOffset + conditionParams.length}`);
+  }
+  if (filters.credocube) {
+    const term = `%${filters.credocube.trim()}%`;
+    conditionParams.push(term);
+    const idx1 = baseParamOffset + conditionParams.length;
+    conditionParams.push(term);
+    const idx2 = baseParamOffset + conditionParams.length;
+    conditionParams.push(term);
+    const idx3 = baseParamOffset + conditionParams.length;
+    conditionClauses.push(`(base.rfid ILIKE $${idx1} OR COALESCE(base.numero_orden, '') ILIKE $${idx2} OR COALESCE(base.nombre_unidad, '') ILIKE $${idx3})`);
   }
 
-  const rowsOut = Array.from(grouped.values()).map((item) => ({
-    sede: item.sede_nombre,
-    total: item.total,
-    estados: item.estados
-      .sort((a, b) => b.cantidad - a.cantidad)
-      .map((x) => `${x.estado}: ${x.cantidad}`)
-      .join(', '),
-    ultimo_movimiento: item.ultimo_movimiento ? item.ultimo_movimiento.toISOString() : null,
+  const whereDetail = conditionClauses.length ? `WHERE ${conditionClauses.join(' AND ')}` : '';
+
+  const filteredCte = `
+WITH filtered AS (
+  SELECT
+    hist.hist_id,
+    hist.inventario_id,
+    hist.rfid,
+    hist.happened_at,
+    COALESCE(hist.estado_new, hist.estado_old) AS estado_actual,
+    COALESCE(hist.sub_estado_new, hist.sub_estado_old) AS sub_estado_actual,
+    COALESCE(hist.sede_id_new, hist.sede_id_old) AS sede_id_actual,
+    COALESCE(hist.zona_id_new, hist.zona_id_old) AS zona_id_actual,
+    COALESCE(hist.seccion_id_new, hist.seccion_id_old) AS seccion_id_actual,
+    hist.order_id
+  FROM hist_trazabilidad hist
+  ${whereClause ? `WHERE ${whereClause}` : ''}
+),
+latest AS (
+  SELECT DISTINCT ON (hist_key)
+    inventario_id,
+    rfid,
+    estado_actual,
+    sub_estado_actual,
+    sede_id_actual,
+    zona_id_actual,
+    seccion_id_actual,
+    order_id,
+    happened_at
+  FROM (
+    SELECT
+      f.*,
+      COALESCE(CAST(f.inventario_id AS TEXT), 'rfid:' || f.rfid) AS hist_key
+    FROM filtered f
+  ) sub
+  ORDER BY hist_key, happened_at DESC
+),
+base AS (
+  SELECT
+    ic.id AS inventario_id,
+    ic.rfid,
+    ic.nombre_unidad,
+    ic.numero_orden,
+    ic.lote,
+    ic.modelo_id,
+    COALESCE(lat.estado_actual, ic.estado) AS estado_final,
+    COALESCE(lat.sub_estado_actual, ic.sub_estado) AS sub_estado_final,
+    COALESCE(lat.sede_id_actual, ic.sede_id) AS sede_id_final,
+    COALESCE(lat.zona_id_actual, ic.zona_id) AS zona_id_final,
+    COALESCE(lat.seccion_id_actual, ic.seccion_id) AS seccion_id_final,
+    lat.happened_at AS ultimo_movimiento,
+    lat.order_id
+  FROM inventario_credocubes ic
+  ${hasHistFilters ? 'JOIN latest lat ON lat.inventario_id = ic.id' : 'LEFT JOIN latest lat ON lat.inventario_id = ic.id'}
+  WHERE ic.activo = true
+)
+`;
+
+  const limitIndex = baseParamOffset + conditionParams.length + 1;
+  const offsetIndex = limitIndex + 1;
+
+  const detailSql = `
+${filteredCte}
+SELECT
+  base.sede_id_final,
+  base.zona_id_final,
+  base.seccion_id_final,
+  base.rfid,
+  base.nombre_unidad,
+  base.numero_orden,
+  base.estado_final,
+  base.sub_estado_final,
+  base.lote,
+  base.ultimo_movimiento,
+  base.order_id,
+  s.nombre AS sede_nombre,
+  z.nombre AS zona_nombre,
+  sc.nombre AS seccion_nombre,
+  m.nombre_modelo,
+  COUNT(*) OVER() AS total_rows
+FROM base
+LEFT JOIN sedes s ON s.sede_id = base.sede_id_final
+LEFT JOIN zonas z ON z.zona_id = base.zona_id_final
+LEFT JOIN secciones sc ON sc.seccion_id = base.seccion_id_final
+LEFT JOIN modelos m ON m.modelo_id = base.modelo_id
+${whereDetail}
+ORDER BY s.nombre NULLS LAST, base.nombre_unidad NULLS LAST, base.rfid
+LIMIT $${limitIndex} OFFSET $${offsetIndex};
+`;
+
+  const detailParams = [...histParams, ...conditionParams, pageSize, offset];
+  const detailResult = await withTenant(tenant, (client) => client.query(detailSql, detailParams));
+
+  const statsSql = `
+${filteredCte}
+SELECT
+  COUNT(*)::int AS total_items,
+  COUNT(DISTINCT COALESCE(base.sede_id_final, -1))::int AS sedes,
+  COUNT(DISTINCT COALESCE(base.estado_final, 'Sin estado'))::int AS estados_distintos
+FROM base
+${whereDetail};
+`;
+
+  const statsParams = [...histParams, ...conditionParams];
+  const statsResult = await withTenant(tenant, (client) => client.query(statsSql, statsParams));
+  const totalsRow = statsResult.rows[0] ?? { total_items: 0, sedes: 0, estados_distintos: 0 };
+
+  const rows = detailResult.rows.map((row: any) => ({
+    sede: row.sede_nombre || (row.sede_id_final ? `Sede ${row.sede_id_final}` : 'Sin sede'),
+    rfid: row.rfid,
+    pieza: row.nombre_unidad || '',
+    modelo: row.nombre_modelo || '',
+    estado: row.estado_final || 'Sin estado',
+    sub_estado: row.sub_estado_final || '',
+    zona: row.zona_nombre || '',
+    seccion: row.seccion_nombre || '',
+    lote: row.lote || '',
+    numero_orden: row.numero_orden || '',
+    ultimo_movimiento: row.ultimo_movimiento || null,
   }));
+
+  const totalRows = rows.length
+    ? Number(detailResult.rows[0]?.total_rows || 0)
+    : Number(totalsRow.total_items || 0);
+  const pages = totalRows > 0 ? Math.ceil(totalRows / pageSize) : 1;
 
   return {
     columns: [
       { key: 'sede', label: 'Sede', format: 'text' },
-      { key: 'total', label: 'Inventario total', format: 'number' },
-      { key: 'estados', label: 'Estados', format: 'text' },
+      { key: 'rfid', label: 'RFID', format: 'text' },
+      { key: 'pieza', label: 'Pieza', format: 'text' },
+      { key: 'modelo', label: 'Modelo', format: 'text' },
+      { key: 'estado', label: 'Estado', format: 'text' },
+      { key: 'sub_estado', label: 'Sub-estado', format: 'text' },
+      { key: 'zona', label: 'Zona', format: 'text' },
+      { key: 'seccion', label: 'Sección', format: 'text' },
+      { key: 'lote', label: 'Lote/Caja', format: 'text' },
+      { key: 'numero_orden', label: 'Orden', format: 'text' },
       { key: 'ultimo_movimiento', label: 'Último movimiento', format: 'datetime' },
     ],
-    rows: rowsOut,
+    rows,
     meta: {
-      total: rowsOut.length,
-      page: 1,
-      pages: 1,
-      pageSize: rowsOut.length || 1,
+      total: totalRows,
+      page: pagination.page,
+      pages,
+      pageSize,
     },
     kpis: {
-      total_items: totalItems,
-      sedes: grouped.size,
-      estados_distintos: estadosSet.size,
+      total_items: Number(totalsRow.total_items || 0),
+      sedes: Number(totalsRow.sedes || 0),
+      estados_distintos: Number(totalsRow.estados_distintos || 0),
+      items_pagina: rows.length,
     },
   };
 }
