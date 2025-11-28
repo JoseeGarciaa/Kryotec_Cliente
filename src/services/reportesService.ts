@@ -241,7 +241,7 @@ ${whereDetail};
   return {
     columns: [
       { key: 'sede', label: 'Sede', format: 'text' },
-      { key: 'rfid', label: 'RFID', format: 'text' },
+      { key: 'rfid', label: 'Código', format: 'text' },
       { key: 'pieza', label: 'Pieza', format: 'text' },
       { key: 'modelo', label: 'Modelo', format: 'text' },
       { key: 'estado', label: 'Estado', format: 'text' },
@@ -321,7 +321,7 @@ async function trazabilidadHistorial(ctx: ReportContext): Promise<ReportDataset>
     columns: [
       { key: 'happened_at', label: 'Fecha', format: 'datetime' },
       { key: 'accion', label: 'Acción', format: 'text' },
-      { key: 'rfid', label: 'RFID', format: 'text' },
+      { key: 'rfid', label: 'Código', format: 'text' },
       { key: 'nombre_unidad', label: 'Pieza', format: 'text' },
       { key: 'estado_anterior', label: 'Estado anterior', format: 'text' },
       { key: 'estado_nuevo', label: 'Estado nuevo', format: 'text' },
