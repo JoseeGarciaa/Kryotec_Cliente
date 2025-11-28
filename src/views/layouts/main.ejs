@@ -122,7 +122,7 @@
             </details>
           </li>
           <% } %>
-          <% if (!isSuperAdmin && (hasRole('operador') || hasExtendedRole)) { %>
+          <% if (!isSuperAdmin && (hasRole('operador') || hasAdminRole)) { %>
             <li><a class="<%= currentPath.startsWith('/traslado') ? 'active' : '' %>" href="/traslado">Traslado</a></li>
           <% } %>
           <% if (hasAdminRole && hasSede) { %>

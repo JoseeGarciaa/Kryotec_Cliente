@@ -117,6 +117,7 @@ const ROLE_ACCESS: Record<string, string[]> = {
     '/operacion/caja',
     '/operacion/scan',
     '/operacion/devolucion',
+    '/traslado',
     '/cuenta', '/notificaciones',
     '/auth', '/ui/theme', '/static', '/health'
   ],
