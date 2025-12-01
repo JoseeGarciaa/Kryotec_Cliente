@@ -203,9 +203,11 @@
     let ordenStr = ordenStrBase;
     const haveCount = (caja.orderCajaCount!=null && caja.orderCajaCount>=0);
     const haveExpected = (caja.orderCajaExpected!=null && caja.orderCajaExpected>0);
+    const haveTotal = (caja.orderCajaTotal!=null && caja.orderCajaTotal>0);
+    const denom = haveTotal ? caja.orderCajaTotal : (haveExpected ? caja.orderCajaExpected : null);
     if(caja.orderId && haveCount){
-      if(haveExpected){
-        ordenStr = `${ordenStrBase} (${caja.orderCajaCount}/${caja.orderCajaExpected})`;
+      if(denom!=null){
+        ordenStr = `${ordenStrBase} (${caja.orderCajaCount}/${denom})`;
       } else {
         ordenStr = `${ordenStrBase} (${caja.orderCajaCount})`;
       }
@@ -238,9 +240,10 @@
         resumenBox.innerHTML = entries.map(o=>{
           const a = o.cajas;
           const haveExpected = (o.expected!=null && o.expected>0);
-          const b = haveExpected? o.expected : null;
-          const match = (haveExpected && a>=o.expected);
-          const countStr = haveExpected? `${a}/${b}` : `${a}`;
+          const haveTotal = (o.totalCajas!=null && o.totalCajas>0);
+          const denom = haveTotal ? o.totalCajas : (haveExpected ? o.expected : null);
+          const match = denom!=null ? (a>=denom) : (haveExpected && a>=o.expected);
+          const countStr = denom!=null ? `${a}/${denom}` : `${a}`;
           return `<span class='px-2 py-1 rounded border ${match?'border-success/60 text-success':'border-base-300/50'} bg-base-300/10 font-mono'>${o.numero_orden||('#'+o.order_id)}: ${countStr}</span>`;
         }).join('');
       }

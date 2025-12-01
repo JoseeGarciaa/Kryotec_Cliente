@@ -1208,17 +1208,64 @@ export const OperacionController = {
       // ==== Agregación por orden (conteo de cajas y esperado) ====
       // Obtener order_id únicos
       const orderIds = [...new Set(cajas.filter(c=> c.orderId).map(c=> c.orderId))];
-  let ordenesInfo: Record<string, { order_id:number; numero_orden:string|null; cajas:number; expected:number|null; }> = {};
+      let ordenesInfo: Record<string, { order_id:number; numero_orden:string|null; cajas:number; expected:number|null; totalCajas:number|null; }> = {};
       if(orderIds.length){
         // Contar cajas por order_id (ya las tenemos en memoria) y traer expected (cantidad) y numero_orden
         const counts: Record<string, number> = {};
-        cajas.forEach(c=>{ if(c.orderId){ counts[c.orderId] = (counts[c.orderId]||0)+1; } });
+        cajas.forEach(c=>{
+          if(c.orderId){
+            const key = String(c.orderId);
+            counts[key] = (counts[key]||0)+1;
+          }
+        });
+        const totalsQ = await withTenant(tenant, (c)=> c.query(
+          `SELECT order_id, COUNT(*)::int AS total_cajas
+             FROM acond_cajas
+            WHERE order_id = ANY($1::int[])
+         GROUP BY order_id`,
+          [orderIds]
+        ));
+        const totalsMap = new Map<string, number>();
+        for(const row of totalsQ.rows as any[]){
+          if(row.order_id!=null){
+            totalsMap.set(String(row.order_id), Number(row.total_cajas)||0);
+          }
+        }
         const ordRows = await withTenant(tenant, (c)=> c.query(`SELECT id, numero_orden, cantidad FROM ordenes WHERE id = ANY($1::int[])`, [orderIds]));
         for(const r of ordRows.rows as any[]){
-          ordenesInfo[String(r.id)] = { order_id:r.id, numero_orden: r.numero_orden||null, cajas: counts[r.id]||0, expected: (r.cantidad!=null? Number(r.cantidad): null) };
+          const key = String(r.id);
+          ordenesInfo[key] = {
+            order_id: r.id,
+            numero_orden: r.numero_orden||null,
+            cajas: counts[key]||0,
+            expected: (r.cantidad!=null? Number(r.cantidad): null),
+            totalCajas: totalsMap.has(key) ? (totalsMap.get(key) || 0) : null
+          };
+        }
+        for(const rawId of orderIds){
+          const key = String(rawId);
+          if(!ordenesInfo[key]){
+            ordenesInfo[key] = {
+              order_id: rawId,
+              numero_orden: null,
+              cajas: counts[key]||0,
+              expected: null,
+              totalCajas: totalsMap.has(key) ? (totalsMap.get(key) || 0) : null
+            };
+          } else if(ordenesInfo[key].totalCajas==null && totalsMap.has(key)){
+            ordenesInfo[key].totalCajas = totalsMap.get(key) || 0;
+          }
         }
         // Enriquecer cada caja con contadores
-        cajas.forEach(c=>{ if(c.orderId && ordenesInfo[String(c.orderId)]){ const meta = ordenesInfo[String(c.orderId)]; c.orderCajaCount = meta.cajas; c.orderCajaExpected = meta.expected; c.orderNumero = meta.numero_orden || c.orderNumero; } });
+        cajas.forEach(c=>{
+          if(!c.orderId) return;
+          const meta = ordenesInfo[String(c.orderId)];
+          if(!meta) return;
+          c.orderCajaCount = meta.cajas;
+          c.orderCajaExpected = meta.expected;
+          c.orderCajaTotal = meta.totalCajas;
+          c.orderNumero = meta.numero_orden || c.orderNumero;
+        });
       }
       res.json({ ok:true, serverNow: nowIso, pendientes, cajas, ordenes: ordenesInfo, stats:{ cubes: statsRow.cubes, vips: statsRow.vips, tics: statsRow.tics, total: (statsRow.cubes||0)+(statsRow.vips||0)+(statsRow.tics||0) } });
     } catch(e:any){ res.status(500).json({ ok:false, error: e.message||'Error devolucion data' }); }
