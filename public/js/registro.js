@@ -37,6 +37,17 @@
   let rfids = Array.isArray(initialRfids)
     ? initialRfids.map(normalizeRfid).filter((r)=> r.length === 24)
     : [];
+  if(rfids.length){
+    const dedup = [];
+    const seen = new Set();
+    for(const code of rfids){
+      if(seen.has(code)) continue;
+      seen.add(code);
+      dedup.push(code);
+    }
+    rfids = dedup;
+  }
+  const pendingCodes = new Set();
 
   function parseForeignEntries(raw){
     if(!Array.isArray(raw)) return [];
@@ -68,6 +79,7 @@
 
   function resetRFIDs(){
     rfids = [];
+    pendingCodes.clear();
     validationDone = false;
     setValidationFeedback([], []);
     renderRFIDs();
@@ -117,11 +129,13 @@
       if(normalizedDuplicates.length){
         const dupSet = new Set(normalizedDuplicates);
         rfids = rfids.filter((r)=> !dupSet.has(r));
+        normalizedDuplicates.forEach((code)=> pendingCodes.delete(code));
       }
       const foreignEntries = parseForeignEntries(data.foreign);
       if(foreignEntries.length){
         const foreignSet = new Set(foreignEntries.map((item)=> item.rfid));
         rfids = rfids.filter((r)=> !foreignSet.has(r));
+        foreignSet.forEach((code)=> pendingCodes.delete(code));
       }
       validationDone = true;
       renderRFIDs();
@@ -153,7 +167,8 @@
   async function handleScannedCode(rawCode){
     const code = normalizeRfid(rawCode);
     if(!(code && code.length === 24)) return false;
-    if(rfids.includes(code)) return false;
+    if(rfids.includes(code) || pendingCodes.has(code)) return false;
+    pendingCodes.add(code);
     try{
       const res = await fetch('/registro/validate', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -167,14 +182,19 @@
       const isForeign = foreignEntries.some((item)=> item.rfid === code);
       if(isDup || isForeign){
         setValidationFeedback(rawDuplicates, foreignEntries);
+        pendingCodes.delete(code);
         return false;
       }
-      rfids.push(code);
+      if(!rfids.includes(code)){
+        rfids.push(code);
+      }
       validationDone = false;
       renderRFIDs();
       setValidationFeedback([], []);
+      pendingCodes.delete(code);
       return true;
     }catch{}
+    pendingCodes.delete(code);
     return false;
   }
 
@@ -187,6 +207,8 @@
       if(idxStr !== null){
         const idx = Number(idxStr);
         if(!Number.isNaN(idx)){
+          const code = rfids[idx];
+          if(code){ pendingCodes.delete(code); }
           rfids.splice(idx,1);
           renderRFIDs();
           validateRfids();
