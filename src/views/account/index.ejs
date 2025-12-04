@@ -54,15 +54,24 @@
       <form action="/cuenta/change-password" method="post" class="grid gap-4 sm:grid-cols-2">
         <label class="form-control">
           <span class="label-text">Actual</span>
-          <input class="input input-bordered" type="password" name="current_password" required />
+          <div class="flex items-center gap-2">
+            <input id="account-current-password" class="input input-bordered flex-1" type="password" name="current_password" required />
+            <button type="button" class="btn btn-xs btn-outline btn-circle" data-password-toggle="account-current-password" aria-label="Mostrar u ocultar contraseña" aria-pressed="false"><span class="inline-flex h-4 w-4 items-center justify-center" data-eye-icon></span></button>
+          </div>
         </label>
         <label class="form-control">
           <span class="label-text">Nueva</span>
-          <input class="input input-bordered" type="password" name="new_password" minlength="8" required />
+          <div class="flex items-center gap-2">
+            <input id="account-new-password" class="input input-bordered flex-1" type="password" name="new_password" minlength="8" required />
+            <button type="button" class="btn btn-xs btn-outline btn-circle" data-password-toggle="account-new-password" aria-label="Mostrar u ocultar contraseña" aria-pressed="false"><span class="inline-flex h-4 w-4 items-center justify-center" data-eye-icon></span></button>
+          </div>
         </label>
         <label class="form-control">
           <span class="label-text">Confirmar nueva contraseña</span>
-          <input class="input input-bordered" type="password" name="confirm_password" minlength="8" required />
+          <div class="flex items-center gap-2">
+            <input id="account-confirm-password" class="input input-bordered flex-1" type="password" name="confirm_password" minlength="8" required />
+            <button type="button" class="btn btn-xs btn-outline btn-circle" data-password-toggle="account-confirm-password" aria-label="Mostrar u ocultar contraseña" aria-pressed="false"><span class="inline-flex h-4 w-4 items-center justify-center" data-eye-icon></span></button>
+          </div>
         </label>
         <div class="sm:col-span-2">
           <button class="btn btn-primary">Actualizar contraseña</button>
@@ -77,3 +86,5 @@
     </div>
   </div>
 </div>
+
+<script src="/static/js/password-visibility.js?v=<%= assetVersion %>" defer></script>
