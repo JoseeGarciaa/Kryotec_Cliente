@@ -13,6 +13,43 @@
   const formEdit = qs('#form-edit');
   const ttlMin = formEdit && formEdit.dataset && formEdit.dataset.ttlMin ? Number(formEdit.dataset.ttlMin) : 0;
   const ttlMax = formEdit && formEdit.dataset && formEdit.dataset.ttlMax ? Number(formEdit.dataset.ttlMax) : 0;
+  function applyRoleExclusivity(select){
+    if(!(select instanceof HTMLSelectElement)) return;
+    const values = Array.from(select.selectedOptions).map((opt)=> opt.value);
+    const hasSuper = values.includes('super_admin');
+    const hasAdmin = values.includes('admin');
+    const exclusive = hasSuper ? 'super_admin' : (hasAdmin ? 'admin' : null);
+    Array.from(select.options).forEach((opt)=>{
+      const val = opt.value;
+      if(exclusive){
+        if(val === exclusive){
+          opt.selected = true;
+          opt.disabled = false;
+        } else {
+          opt.selected = false;
+          opt.disabled = true;
+        }
+      } else {
+        opt.disabled = false;
+      }
+    });
+    if(!exclusive){
+      const hasSelection = Array.from(select.selectedOptions).length>0;
+      if(!hasSelection){
+        const defaultOpt = Array.from(select.options).find((opt)=> opt.value === 'acondicionador');
+        if(defaultOpt){ defaultOpt.selected = true; }
+      }
+    }
+  }
+
+  function bindRoleSelect(select){
+    if(!(select instanceof HTMLSelectElement)) return;
+    select.addEventListener('change', ()=> applyRoleExclusivity(select));
+    applyRoleExclusivity(select);
+  }
+
+  const newRolesSelect = qs('#new-user-roles');
+  bindRoleSelect(newRolesSelect);
 
   if(btnNew && dlgNew){
     btnNew.addEventListener('click', ()=> dlgNew.showModal());
@@ -114,10 +151,13 @@
         roles = rol ? [rol.toLowerCase()] : [];
       }
       if (rolesSelect instanceof HTMLSelectElement) {
-        const target = roles.length ? roles : ['acondicionador'];
+        const sanitized = roles.includes('super_admin')
+          ? ['super_admin']
+          : (roles.includes('admin') ? ['admin'] : (roles.length ? roles : ['acondicionador']));
         Array.from(rolesSelect.options).forEach((opt) => {
-          opt.selected = target.includes(opt.value);
+          opt.selected = sanitized.includes(opt.value);
         });
+        applyRoleExclusivity(rolesSelect);
       }
       if(formEdit.sede_id){
         formEdit.sede_id.value = ds.sede || '';
@@ -164,4 +204,7 @@
       if(dlg && typeof dlg.close === 'function') dlg.close();
     });
   });
+
+  const editRolesSelect = qs('#edit-user-roles');
+  bindRoleSelect(editRolesSelect);
 })();

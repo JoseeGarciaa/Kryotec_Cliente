@@ -69,6 +69,12 @@ function parseRolesInput(rawRoles: unknown, fallback?: string | null): string[] 
     pushRole(rawRoles);
   }
   if (fallback) pushRole(fallback);
+  if (result.includes('super_admin')) {
+    return ['super_admin'];
+  }
+  if (result.includes('admin')) {
+    return ['admin'];
+  }
   if (!result.length) pushRole('acondicionador');
   const primary = ROLE_PRIORITY_ORDER.find((role) => result.includes(role)) || result[0] || 'acondicionador';
   return [primary, ...result.filter((role) => role !== primary)];
