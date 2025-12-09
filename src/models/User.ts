@@ -144,6 +144,10 @@ function hydrateUserRow(row: any): User {
 
 export const UsersModel = {
   async findByCorreo(client: PoolClient, correo: string): Promise<User | null> {
+    const normalizedCorreo = typeof correo === 'string'
+      ? correo.trim().toLowerCase()
+      : String(correo ?? '').trim().toLowerCase();
+    if (!normalizedCorreo) return null;
     const { rows } = await client.query<User>(
       `SELECT
          u.id,
@@ -166,9 +170,9 @@ export const UsersModel = {
       COALESCE(u.session_version, 0) AS session_version
        FROM usuarios u
   LEFT JOIN sedes s ON s.sede_id = u.sede_id
-      WHERE u.correo = $1
+      WHERE LOWER(TRIM(u.correo)) = $1
       LIMIT 1`,
-      [correo]
+      [normalizedCorreo]
     );
     return rows[0] ? hydrateUserRow(rows[0]) : null;
   },

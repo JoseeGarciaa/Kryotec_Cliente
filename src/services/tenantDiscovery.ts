@@ -5,6 +5,10 @@ import { ensureSecurityArtifacts } from './securityBootstrap';
 export type TenantUserMatch = { tenant: string; user: User };
 
 export async function findUserInAnyTenant(correo: string): Promise<TenantUserMatch[] | null> {
+  const normalizedCorreo = typeof correo === 'string'
+    ? correo.trim().toLowerCase()
+    : String(correo ?? '').trim().toLowerCase();
+  if (!normalizedCorreo) return null;
   const { rows } = await pool.query<{ schema_name: string }>(
     "SELECT schema_name FROM information_schema.schemata WHERE schema_name LIKE 'tenant\_%' ESCAPE '\\' ORDER BY schema_name"
   );
@@ -15,7 +19,7 @@ export async function findUserInAnyTenant(correo: string): Promise<TenantUserMat
     const tenant = r.schema_name;
     try {
       await ensureSecurityArtifacts(tenant);
-      const user = await withTenant(tenant, (client) => UsersModel.findByCorreo(client, correo));
+      const user = await withTenant(tenant, (client) => UsersModel.findByCorreo(client, normalizedCorreo));
       if (user) {
         console.log('[tenantDiscovery] found user in', tenant);
         matches.push({ tenant, user });

@@ -6,6 +6,7 @@ import { SedesModel } from '../models/Sede';
 import { normalizeRoleName, resolveEffectiveRole } from '../middleware/roles';
 import { normalizeSessionTtl, PASSWORD_POLICY_MESSAGE, validatePasswordStrength } from '../utils/passwordPolicy';
 import { config } from '../config';
+import { findUserInAnyTenant } from '../services/tenantDiscovery';
 
 function coerceSedeId(value: unknown): number | null {
   if (value === null || value === undefined) return null;
@@ -25,6 +26,13 @@ function coerceSedeId(value: unknown): number | null {
 
 const CANONICAL_ROLE_SET = new Set(['super_admin', 'admin', 'acondicionador', 'operador', 'bodeguero', 'inspeccionador']);
 const ROLE_PRIORITY_ORDER = ['super_admin', 'admin', 'acondicionador', 'operador', 'bodeguero', 'inspeccionador'] as const;
+
+function normalizeTenantSchema(tenant?: string | null): string | null {
+  if (!tenant) return null;
+  const trimmed = String(tenant).trim();
+  if (!trimmed) return null;
+  return trimmed.startsWith('tenant_') ? trimmed : `tenant_${trimmed}`;
+}
 
 function parseRolesInput(rawRoles: unknown, fallback?: string | null): string[] {
   const result: string[] = [];
@@ -123,16 +131,38 @@ export const AdminController = {
   // Crear usuario (form HTML)
   newUser: async (req: Request, res: Response) => {
     const { nombre, correo, telefono, password, rol, sede_id, sesion_ttl_minutos } = req.body as any;
-    const tenant = (req as any).user?.tenant as string;
+    const tenantRaw = (req as any).user?.tenant as string | undefined;
+    const tenant = normalizeTenantSchema(tenantRaw);
+    if (!tenant) {
+      return res.redirect('/administracion?error=Tenant+no+especificado');
+    }
     if (!nombre || !correo || !password) {
       return res.redirect('/administracion?error=Nombre,+correo+y+contraseña+requeridos');
     }
     try {
-      // Normalizamos correo para búsqueda (trim). Si la base usa citext o lower() en índice seguirá funcionando.
-      const correoNorm = (correo as string).trim();
+      // Normalizamos correo para búsqueda (trim + lower). Si la base usa citext o lower() en índice seguirá funcionando.
+      const correoInput = String(correo).trim();
+      const correoNorm = correoInput.toLowerCase();
+
+      const matches = await findUserInAnyTenant(correoNorm);
+      const currentTenantMatches = matches?.filter((match) => normalizeTenantSchema(match.tenant) === tenant) ?? [];
+      const otherTenantMatches = matches?.filter((match) => normalizeTenantSchema(match.tenant) !== tenant) ?? [];
+
+      if (otherTenantMatches.length) {
+        return res.redirect('/administracion?error=' + encodeURIComponent('usuario ya pertenece a otro esquema, por favor intentar con otro correo'));
+      }
+
+      if (currentTenantMatches.length) {
+        return res.redirect(`/administracion?error=Correo+ya+existe:+${encodeURIComponent(correoInput)}`);
+      }
       const exists = await withTenant(tenant, (client) => UsersModel.findByCorreo(client, correoNorm));
       if (exists) {
-        return res.redirect(`/administracion?error=Correo+ya+existe:+${encodeURIComponent(correoNorm)}`);
+        return res.redirect(`/administracion?error=Correo+ya+existe:+${encodeURIComponent(correoInput)}`);
+      }
+      const globalMatches = await findUserInAnyTenant(correoNorm);
+      const crossTenantDuplicate = Boolean(globalMatches?.some((match) => match.tenant !== tenant));
+      if (crossTenantDuplicate) {
+        return res.redirect('/administracion?error=' + encodeURIComponent('usuario ya pertenece a otro esquema, por favor intentar con otro correo'));
       }
       const sessionTtl = normalizeSessionTtl(sesion_ttl_minutos ?? config.security.defaultSessionMinutes);
       const initialPassword = String(password).trim();
@@ -148,7 +178,7 @@ export const AdminController = {
       }
       await withTenant(tenant, (client) => UsersModel.create(client, {
         nombre: nombre.trim(),
-        correo: correoNorm,
+        correo: correoInput,
         telefono,
         password: hashed,
         rol: primaryRole,
@@ -267,10 +297,13 @@ export const AdminController = {
   editUser: async (req: Request, res: Response) => {
     const id = Number(req.params.id);
     const { nombre, correo, telefono, password, rol, roles, activo, sede_id, sesion_ttl_minutos } = req.body as any;
-    const tenant = (req as any).user?.tenant as string;
+    const tenantRaw = (req as any).user?.tenant as string | undefined;
+    const tenant = normalizeTenantSchema(tenantRaw);
+    if (!tenant) return res.redirect('/administracion?error=Tenant+no+especificado');
     if (!id || !nombre || !correo) return res.redirect('/administracion?error=Datos+inválidos');
     try {
-      const correoNorm = (correo as string).trim();
+      const correoInput = String(correo).trim();
+      const correoNorm = correoInput.toLowerCase();
       // Verificar duplicidad si el correo cambia
       const existingWithCorreo = await withTenant(tenant, async (client) => UsersModel.findByCorreo(client, correoNorm));
       if (existingWithCorreo && existingWithCorreo.id !== id) {
@@ -279,6 +312,17 @@ export const AdminController = {
       // Obtener estado actual del usuario para validar reglas de último admin
       const currentUser = await withTenant(tenant, (client) => UsersModel.findById(client, id));
       if (!currentUser) return res.redirect('/administracion?error=Usuario+no+existe');
+
+      const currentCorreoNorm = (currentUser.correo || '').trim().toLowerCase();
+      const correoChanged = currentCorreoNorm !== correoNorm;
+      if (correoChanged) {
+        const matches = await findUserInAnyTenant(correoNorm);
+        const conflicts = matches?.filter((match) => normalizeTenantSchema(match.tenant) !== tenant || match.user.id !== id) ?? [];
+        const crossTenantConflict = conflicts.some((match) => normalizeTenantSchema(match.tenant) !== tenant);
+        if (crossTenantConflict) {
+          return res.redirect('/administracion?error=' + encodeURIComponent('usuario ya pertenece a otro esquema, por favor intentar con otro correo'));
+        }
+      }
 
       let hashed: string | null = null;
       if (password) {
@@ -318,7 +362,7 @@ export const AdminController = {
         }
         return UsersModel.update(client, id, {
           nombre: nombre.trim(),
-          correo: correoNorm,
+          correo: correoInput,
           telefono,
           password: null,
           rol: primaryRole,
