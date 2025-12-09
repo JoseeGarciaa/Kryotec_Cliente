@@ -248,7 +248,15 @@
       <input required name="nombre" placeholder="Nombre" class="input input-sm input-bordered w-full" />
       <input required name="correo" type="email" placeholder="Correo" class="input input-sm input-bordered w-full" />
       <input name="telefono" placeholder="Teléfono" class="input input-sm input-bordered w-full" />
-      <input required name="password" type="password" placeholder="Contraseña inicial" class="input input-sm input-bordered w-full" minlength="8" autocomplete="new-password" />
+      <label class="form-control">
+        <span class="label-text text-xs opacity-70">Contraseña inicial</span>
+        <div class="flex items-center gap-2">
+          <input id="admin-new-password" required name="password" type="password" placeholder="Contraseña inicial" class="input input-sm input-bordered flex-1" minlength="8" autocomplete="new-password" />
+          <button type="button" class="btn btn-xs btn-outline btn-circle" data-password-toggle="admin-new-password" aria-label="Mostrar u ocultar contraseña" aria-pressed="false">
+            <span class="inline-flex h-4 w-4 items-center justify-center" data-eye-icon></span>
+          </button>
+        </div>
+      </label>
       <p class="text-xs opacity-70"><%= passwordPolicy %></p>
       <label class="form-control">
         <span class="label-text text-xs opacity-70">Roles</span>
@@ -284,7 +292,15 @@
       <input required name="nombre" placeholder="Nombre" class="input input-sm input-bordered w-full" />
       <input required name="correo" type="email" placeholder="Correo" class="input input-sm input-bordered w-full" />
       <input name="telefono" placeholder="Teléfono" class="input input-sm input-bordered w-full" />
-      <input name="password" type="password" placeholder="Password (dejar vacío para no cambiar)" class="input input-sm input-bordered w-full" minlength="8" />
+      <label class="form-control">
+        <span class="label-text text-xs opacity-70">Contraseña (dejar vacío para no cambiar)</span>
+        <div class="flex items-center gap-2">
+          <input id="admin-edit-password" name="password" type="password" placeholder="Password (dejar vacío para no cambiar)" class="input input-sm input-bordered flex-1" minlength="8" autocomplete="new-password" />
+          <button type="button" class="btn btn-xs btn-outline btn-circle" data-password-toggle="admin-edit-password" aria-label="Mostrar u ocultar contraseña" aria-pressed="false">
+            <span class="inline-flex h-4 w-4 items-center justify-center" data-eye-icon></span>
+          </button>
+        </div>
+      </label>
       <label class="form-control">
         <span class="label-text text-xs opacity-70">Roles</span>
         <select name="roles" id="edit-user-roles" class="select select-sm select-bordered w-full" multiple size="6">
@@ -315,5 +331,5 @@
     </form>
   </div>
 </dialog>
-
+<script src="/static/js/password-visibility.js?v=<%= assetVersion %>" defer></script>
 <script src="/static/js/administracion.js?v=<%= assetVersion %>" defer></script>
