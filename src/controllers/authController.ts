@@ -106,6 +106,8 @@ export const AuthController = {
       const isFirstLogin = !user.ultimo_ingreso;
       let mustChangePassword = Boolean(user.debe_cambiar_contrasena || passwordExpired || isFirstLogin);
 
+      const effectiveRole = resolveEffectiveRole(user) || normalizeRoleName(user.rol) || user.rol;
+
       const sessionMeta = await withTenant(tenantSchema, async (client) => {
         if (passwordExpired && !user.debe_cambiar_contrasena) {
           await UsersModel.forcePasswordReset(client, user.id);
@@ -113,6 +115,16 @@ export const AuthController = {
         }
         await UsersModel.resetLoginState(client, user.id);
         await UsersModel.touchUltimoIngreso(client, user.id);
+        await UsersModel.logLogin(client, {
+          usuarioId: user.id,
+          correo: user.correo,
+          nombre: user.nombre,
+          rol: effectiveRole,
+          roles: user.roles,
+          tenantSchema,
+          sedeId: user.sede_id ?? null,
+          sedeNombre: user.sede_nombre ?? null,
+        });
         const sessionVersion = await UsersModel.bumpSessionVersion(client, user.id);
         return { sessionVersion };
       });
@@ -194,6 +206,8 @@ export const AuthController = {
             const isFirstLogin = !user.ultimo_ingreso;
             let mustChangePassword = Boolean(user.debe_cambiar_contrasena || passwordExpired || isFirstLogin);
 
+            const effectiveRole = resolveEffectiveRole(user) || normalizeRoleName(user.rol) || user.rol;
+
             const sessionMeta = await withTenant(tenant, async (client) => {
               if (passwordExpired && !user.debe_cambiar_contrasena) {
                 await UsersModel.forcePasswordReset(client, user.id);
@@ -201,6 +215,16 @@ export const AuthController = {
               }
               await UsersModel.resetLoginState(client, user.id);
               await UsersModel.touchUltimoIngreso(client, user.id);
+              await UsersModel.logLogin(client, {
+                usuarioId: user.id,
+                correo: user.correo,
+                nombre: user.nombre,
+                rol: effectiveRole,
+                roles: user.roles,
+                tenantSchema: tenant,
+                sedeId: user.sede_id ?? null,
+                sedeNombre: user.sede_nombre ?? null,
+              });
               const sessionVersion = await UsersModel.bumpSessionVersion(client, user.id);
               return { sessionVersion };
             });

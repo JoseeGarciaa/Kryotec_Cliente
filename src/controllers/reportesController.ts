@@ -12,6 +12,7 @@ const REPORT_KEYS: ReportKey[] = [
   'auditorias',
   'registro-inventario',
   'usuarios-sede',
+  'login-historial',
 ];
 
 const EXPORT_MAX_ROWS = 100_000;

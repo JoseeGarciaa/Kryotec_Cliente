@@ -8,7 +8,8 @@ export type ReportKey =
   | 'actividad-sede'
   | 'auditorias'
   | 'registro-inventario'
-  | 'usuarios-sede';
+  | 'usuarios-sede'
+  | 'login-historial';
 
 export type ColumnDef = {
   key: string;
@@ -67,6 +68,8 @@ export async function runReport(key: ReportKey, ctx: ReportContext): Promise<Rep
       return registroInventario(ctx);
     case 'usuarios-sede':
       return usuariosPorSede(ctx);
+    case 'login-historial':
+      return historialLogins(ctx);
     default:
       throw new Error(`Reporte desconocido: ${key}`);
   }
@@ -997,6 +1000,126 @@ async function usuariosPorSede(ctx: ReportContext): Promise<ReportDataset> {
       page: 1,
       pages: 1,
       pageSize: result.rows.length || 1,
+    },
+  };
+}
+
+async function historialLogins(ctx: ReportContext): Promise<ReportDataset> {
+  const { tenant, filters, pagination } = ctx;
+  const clauses: string[] = [];
+  const params: any[] = [];
+
+  if (filters.from instanceof Date && !Number.isNaN(filters.from.getTime())) {
+    const from = new Date(filters.from.getTime());
+    from.setHours(0, 0, 0, 0);
+    clauses.push(`hist.login_en >= $${params.length + 1}`);
+    params.push(from.toISOString());
+  }
+
+  if (filters.to instanceof Date && !Number.isNaN(filters.to.getTime())) {
+    const to = new Date(filters.to.getTime());
+    if (
+      to.getHours() === 0 &&
+      to.getMinutes() === 0 &&
+      to.getSeconds() === 0 &&
+      to.getMilliseconds() === 0
+    ) {
+      to.setHours(23, 59, 59, 999);
+    }
+    clauses.push(`hist.login_en <= $${params.length + 1}`);
+    params.push(to.toISOString());
+  }
+
+  if (typeof filters.sedeId === 'number' && Number.isFinite(filters.sedeId)) {
+    clauses.push(`COALESCE(hist.sede_id, u.sede_id) = $${params.length + 1}`);
+    params.push(filters.sedeId);
+  }
+
+  if (typeof filters.operarioId === 'number' && Number.isFinite(filters.operarioId)) {
+    clauses.push(`hist.usuario_id = $${params.length + 1}`);
+    params.push(filters.operarioId);
+  }
+
+  const where = clauses.length ? `WHERE ${clauses.join(' AND ')}` : '';
+  const pageSize = pagination.pageSize;
+  const offset = (pagination.page - 1) * pageSize;
+
+  const countSql = `
+    SELECT COUNT(*)::int AS total
+    FROM usuarios_login_historial hist
+    LEFT JOIN usuarios u ON u.id = hist.usuario_id
+    ${where};
+  `;
+
+  const dataSql = `
+    SELECT
+      hist.id,
+      hist.usuario_id,
+      hist.correo,
+      COALESCE(NULLIF(hist.nombre, ''), u.nombre, hist.correo) AS nombre,
+      COALESCE(NULLIF(hist.rol, ''), u.rol) AS rol_principal,
+      COALESCE(
+        NULLIF(array_to_string(hist.roles, ', '), ''),
+        (
+          SELECT array_to_string(array_agg(rol ORDER BY LOWER(TRIM(rol))), ', ')
+          FROM usuarios_roles ur
+          WHERE ur.usuario_id = hist.usuario_id
+        ),
+        ''
+      ) AS roles_detalle,
+      COALESCE(NULLIF(hist.sede_nombre, ''), sede.nombre, 'Sin sede') AS sede_nombre,
+      COALESCE(hist.sede_id, u.sede_id) AS sede_id,
+      hist.login_en
+    FROM usuarios_login_historial hist
+    LEFT JOIN usuarios u ON u.id = hist.usuario_id
+    LEFT JOIN sedes sede ON sede.sede_id = COALESCE(hist.sede_id, u.sede_id)
+    ${where}
+    ORDER BY hist.login_en DESC, hist.id DESC
+    LIMIT $${params.length + 1} OFFSET $${params.length + 2};
+  `;
+
+  const totalResult = await withTenant(tenant, (client) => client.query(countSql, params));
+  const totalRows = Number(totalResult.rows[0]?.total || 0);
+  const dataResult = await withTenant(tenant, (client) => client.query(dataSql, [...params, pageSize, offset]));
+
+  const uniqueUsers = new Set<number>();
+  const uniqueSedes = new Set<number | null>();
+
+  const rows = dataResult.rows.map((row: any) => {
+    if (typeof row.usuario_id === 'number') uniqueUsers.add(row.usuario_id);
+    uniqueSedes.add(typeof row.sede_id === 'number' ? row.sede_id : null);
+    return {
+      login_en: row.login_en,
+      correo: row.correo || '',
+      nombre: row.nombre || '',
+      rol: row.rol_principal || '',
+      roles: row.roles_detalle || '',
+      sede: row.sede_nombre || '',
+    };
+  });
+
+  const pages = totalRows > 0 ? Math.ceil(totalRows / pageSize) : 1;
+
+  return {
+    columns: [
+      { key: 'login_en', label: 'Fecha / hora', format: 'datetime' },
+      { key: 'correo', label: 'Correo', format: 'text' },
+      { key: 'nombre', label: 'Nombre', format: 'text' },
+      { key: 'rol', label: 'Rol principal', format: 'text' },
+      { key: 'roles', label: 'Roles asociados', format: 'text' },
+      { key: 'sede', label: 'Sede', format: 'text' },
+    ],
+    rows,
+    meta: {
+      total: totalRows,
+      page: pagination.page,
+      pages,
+      pageSize,
+    },
+    kpis: {
+      sesiones: totalRows,
+      usuarios: uniqueUsers.size,
+      sedes: Array.from(uniqueSedes).filter((v) => v !== null).length,
     },
   };
 }

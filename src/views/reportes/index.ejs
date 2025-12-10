@@ -114,6 +114,10 @@
           <input type="checkbox" name="report-toggle" data-report="usuarios-sede" class="checkbox checkbox-sm" />
           <span class="text-sm">Gestión de usuarios por sede</span>
         </label>
+        <label class="flex items-center gap-2 cursor-pointer">
+          <input type="checkbox" name="report-toggle" data-report="login-historial" class="checkbox checkbox-sm" checked />
+          <span class="text-sm">Historial de inicios de sesión</span>
+        </label>
       </div>
     </div>
   </section>
@@ -125,6 +129,7 @@
   <%- include('../partials/report-card', { code: 'auditorias', title: 'Auditorías registradas', subtitle: 'Bitácora de auditorías con campos antes/después.', hidden: true }) %>
   <%- include('../partials/report-card', { code: 'registro-inventario', title: 'Movimientos de inventario', subtitle: 'Entradas, salidas y movimientos por zona y sección.', hidden: true }) %>
   <%- include('../partials/report-card', { code: 'usuarios-sede', title: 'Gestión de usuarios por sede', subtitle: 'Altas, bajas y actividad administrativa por sede.', hidden: true }) %>
+  <%- include('../partials/report-card', { code: 'login-historial', title: 'Historial de inicios de sesión', subtitle: 'Registro de accesos exitosos con rol y sede asociados.' }) %>
 </div>
 
 <div id="reportes-config" data-combos='<%- JSON.stringify(combos || {}) %>' data-initial='<%- JSON.stringify(initial || {}) %>'></div>

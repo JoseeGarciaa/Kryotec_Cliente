@@ -488,4 +488,49 @@ export const UsersModel = {
     );
     return rows.map(r => r.password_hash);
   },
+
+  async logLogin(client: PoolClient, entry: {
+    usuarioId: number;
+    correo: string;
+    nombre?: string | null;
+    rol?: string | null;
+    roles?: string[] | null;
+    tenantSchema?: string | null;
+    sedeId?: number | null;
+    sedeNombre?: string | null;
+  }): Promise<void> {
+    const payload = {
+      usuarioId: entry.usuarioId,
+      correo: entry.correo,
+      nombre: entry.nombre ?? null,
+      rol: entry.rol ?? null,
+      roles: entry.roles && entry.roles.length ? entry.roles : null,
+      tenantSchema: entry.tenantSchema ?? null,
+      sedeId: entry.sedeId ?? null,
+      sedeNombre: entry.sedeNombre ?? null,
+    };
+    await client.query(
+      `INSERT INTO usuarios_login_historial (
+         usuario_id,
+         correo,
+         nombre,
+         rol,
+         roles,
+         tenant_schema,
+         sede_id,
+         sede_nombre
+       )
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
+      [
+        payload.usuarioId,
+        payload.correo,
+        payload.nombre,
+        payload.rol,
+        payload.roles,
+        payload.tenantSchema,
+        payload.sedeId,
+        payload.sedeNombre,
+      ]
+    );
+  },
 };
