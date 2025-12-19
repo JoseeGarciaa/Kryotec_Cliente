@@ -3902,7 +3902,7 @@ export const OperacionController = {
       const subEstadoNorm = normalizeBasic(r.sub_estado);
       const enBodega = estadoNorm.includes('en bodega') || subEstadoNorm.includes('en bodega');
       const enPreAcond = estadoNorm.replace(/\s+/g,'').includes('preacondicionamiento') || estadoNorm.includes('pre acond');
-      const subAtemper = subEstadoNorm.includes('atemperad');
+      const subAtemper = subEstadoNorm.includes('atemper');
       if (t === 'atemperamiento') {
         if (enPreAcond && subEstadoNorm.includes('congelado')) {
           ok.push({ rfid: code, nombre_unidad: r.nombre_unidad, nombre_modelo: r.nombre_modelo });
