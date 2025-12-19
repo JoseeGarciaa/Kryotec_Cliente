@@ -3595,7 +3595,8 @@ export const OperacionController = {
           const estadoNorm = normalize(cur?.estado);
           const subEstadoNorm = normalize(cur?.sub_estado);
           const enBodega = estadoNorm.includes('bodega');
-          const desdeAtemperamiento = estadoNorm === 'pre acondicionamiento' && (subEstadoNorm === 'atemperamiento' || subEstadoNorm === 'atemperado');
+          const desdeAtemperamiento = estadoNorm === 'pre acondicionamiento'
+            && (subEstadoNorm.includes('atemper') || subEstadoNorm === 'atemperado');
           const subEstadoTieneValor = !!subEstadoNorm;
           // Congelamiento: no aceptar si ya está en Congelamiento o si proviene de otra fase
           if (cur?.estado === 'Pre Acondicionamiento' && (cur?.sub_estado === 'Congelamiento' || cur?.sub_estado === 'Congelado')) {
