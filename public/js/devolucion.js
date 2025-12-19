@@ -63,6 +63,15 @@
       })
     : null;
 
+  function escapeHtml(str){
+    return String(str == null ? '' : str)
+      .replace(/&/g,'&amp;')
+      .replace(/</g,'&lt;')
+      .replace(/>/g,'&gt;')
+      .replace(/"/g,'&quot;')
+      .replace(/'/g,'&#39;');
+  }
+
   function ensureDecideLocation(){
     if(!decideLocationController) return Promise.resolve();
     return decideLocationController.ensure({ zonaId: selectedZonaId, seccionId: selectedSeccionId })
@@ -114,6 +123,19 @@
       if(piZona) piZona.value = selectedZonaId;
       if(piSeccion) piSeccion.value = selectedSeccionId;
     }
+  }
+
+  const REUSE_THRESHOLD_SEC = 24 * 60 * 60;
+  function formatRemainingLabel(totalSeconds){
+    const total = Math.max(0, Math.floor(Number(totalSeconds) || 0));
+    const days = Math.floor(total / 86400);
+    const hours = Math.floor((total % 86400) / 3600);
+    const minutes = Math.floor((total % 3600) / 60);
+    const pieces = [];
+    if(days){ pieces.push(`${days} día${days!==1?'s':''}`); }
+    if(hours){ pieces.push(`${hours} h`); }
+    if(!pieces.length || minutes){ pieces.push(`${minutes} min`); }
+    return pieces.join(' ');
   }
 
   function buildDefaultSedePrompt(payload){
@@ -199,23 +221,27 @@
     const displayName = caja.nombreCaja || code || '';
     const titleText = displayName && code && displayName !== code ? `${displayName} · ${code}` : displayName || code;
     // Formato de orden: si se conoce expected (>0) mostrar a/b, si no solo a
-    const ordenStrBase = (caja.orderNumero ? caja.orderNumero : (caja.orderId ? ('#'+caja.orderId) : '-'));
+    const cajaOrderId = (caja.orderId != null ? caja.orderId : (caja.order_id != null ? caja.order_id : null));
+    const ordenStrBase = (caja.orderNumero ? caja.orderNumero : (caja.order_num ? caja.order_num : (cajaOrderId != null ? (`#${cajaOrderId}`) : '-')));
     let ordenStr = ordenStrBase;
     const haveCount = (caja.orderCajaCount!=null && caja.orderCajaCount>=0);
     const haveExpected = (caja.orderCajaExpected!=null && caja.orderCajaExpected>0);
     const haveTotal = (caja.orderCajaTotal!=null && caja.orderCajaTotal>0);
     const denom = haveTotal ? caja.orderCajaTotal : (haveExpected ? caja.orderCajaExpected : null);
-    if(caja.orderId && haveCount){
+    if(cajaOrderId != null && haveCount){
       if(denom!=null){
         ordenStr = `${ordenStrBase} (${caja.orderCajaCount}/${denom})`;
       } else {
         ordenStr = `${ordenStrBase} (${caja.orderCajaCount})`;
       }
     }
+      const orderCliente = caja.orderCliente || caja.order_client || '';
+      const orderClienteLine = orderCliente ? `<div class='text-[10px] opacity-70'>Cliente: <span class='font-semibold'>${escapeHtml(orderCliente)}</span></div>` : '';
       return `<div class='caja-card rounded-lg border border-base-300/40 bg-base-200/10 p-3 flex flex-col gap-2 hover-border-primary/60 transition cursor-pointer' data-caja-id='${caja.id}' title='${titleText}'>
         <div class='text-[10px] uppercase opacity-60 tracking-wide'>Caja</div>
         <div class='font-semibold text-xs leading-tight break-all pr-2'>${displayName}</div>
-      <div class='text-[10px] opacity-70'>Orden: <span class='font-mono'>${ordenStr}</span></div>
+        <div class='text-[10px] opacity-70'>Orden: <span class='font-mono'>${escapeHtml(ordenStr)}</span></div>
+        ${orderClienteLine}
       <div class='flex flex-wrap gap-1 text-[9px] flex-1'>${compBadges || "<span class='badge badge-ghost badge-xs'>Sin items</span>"}</div>
       <div class='h-1.5 w-full bg-base-300/30 rounded-full overflow-hidden'>
         <div class='h-full bg-gradient-to-r from-primary via-primary to-primary/70' style='width:${progress.toFixed(1)}%' data-dev-caja-bar='${caja.id}'></div>
@@ -305,13 +331,15 @@
   function inferTipo(nombre){ const n=(nombre||'').toLowerCase(); if(n.includes('vip')) return 'vip'; if(n.includes('tic')) return 'tic'; if(n.includes('cube')||n.includes('cubo')) return 'cube'; return 'otro'; }
   function miniCardHTML(c){
     const ordenStr = (c.orderNumero ? c.orderNumero : (c.orderId ? ('#'+c.orderId) : (c.order_num ? c.order_num : (c.order_id ? ('#'+c.order_id) : '-'))));
+    const orderCliente = c.orderCliente || c.order_client || '';
     const code = c.codigoCaja || c.lote || '';
     const displayName = c.nombreCaja || code;
     const titleText = displayName && code && displayName !== code ? `${displayName} · ${code}` : displayName || code;
     return `<div class='text-xs'>
       <div class='flex items-center justify-between text-[10px] uppercase opacity-60 mb-1'><span>Caja</span><span class='font-mono'>${code}</span></div>
       <div class='font-semibold text-[11px] break-all mb-2' title='${titleText}'>${displayName}</div>
-      <div class='text-[10px] opacity-70 mb-1'>Orden: <span class='font-mono'>${ordenStr}</span></div>
+      <div class='text-[10px] opacity-70 mb-1'>Orden: <span class='font-mono'>${escapeHtml(ordenStr)}</span></div>
+      ${orderCliente ? `<div class='text-[10px] opacity-70 mb-1'>Cliente: <span class='font-semibold'>${escapeHtml(orderCliente)}</span></div>` : ''}
       <div class='flex flex-wrap gap-1 mb-2'>${(c.componentes||[]).map(it=>{ let cls='badge-ghost'; if(it.tipo==='vip') cls='badge-info'; else if(it.tipo==='tic') cls='badge-warning'; else if(it.tipo==='cube') cls='badge-accent'; return `<span class='badge ${cls} badge-xs'>${(it.tipo||'').toUpperCase()}</span>`; }).join('') || "<span class='badge badge-ghost badge-xs'>Sin items</span>"}</div>
       <div class='text-[10px] font-mono opacity-70'>${c.timer? (c.timer.completedAt? 'Listo' : 'Cronómetro activo') : 'Sin cronómetro'}</div>
       <div class='mt-2'><button class='btn btn-xs btn-primary btn-outline w-full' data-process-caja='${c.id}'>➜ Procesar devolución</button></div>
@@ -345,6 +373,7 @@
         nombreCaja: next.nombreCaja || entry.nombreCaja || null,
         orderId: next.orderId ?? next.order_id ?? entry.orderId ?? null,
         orderNumero: next.orderNumero ?? next.order_num ?? entry.orderNumero ?? null,
+          orderCliente: next.orderCliente ?? next.order_client ?? entry.orderCliente ?? null,
         timer: next.timer || null,
         componentes: Array.isArray(next.componentes) ? next.componentes : entry.componentes
       });
@@ -370,6 +399,7 @@
     if(multiCount) multiCount.textContent = String(entries.length);
       multiList.innerHTML = entries.map(entry=>{
       const ordenStr = entry.orderNumero ? entry.orderNumero : (entry.orderId ? ('#'+entry.orderId) : '-');
+      const orderCliente = entry.orderCliente || '';
       const code = entry.codigoCaja || '';
       const displayName = entry.nombreCaja || code;
       const titleText = displayName && code && displayName !== code ? `${displayName} · ${code}` : displayName || code;
@@ -379,7 +409,8 @@
           <button class='btn btn-ghost btn-xs' data-scan-remove='${entry.id}' title='Quitar'>✕</button>
         </div>
         <div class='text-xs font-semibold leading-tight break-all' title='${titleText}'>${displayName}</div>
-        <div class='text-[10px] opacity-70'>Orden: <span class='font-mono'>${ordenStr}</span></div>
+        <div class='text-[10px] opacity-70'>Orden: <span class='font-mono'>${escapeHtml(ordenStr)}</span></div>
+        ${orderCliente ? `<div class='text-[10px] opacity-70'>Cliente: <span class='font-semibold'>${escapeHtml(orderCliente)}</span></div>` : ''}
         <div class='flex flex-wrap gap-1 text-[9px]'>${componentesBadges(entry.componentes)}</div>
         <button class='btn btn-xs btn-primary w-full' data-scan-process='${entry.id}'>Procesar</button>
       </div>`;
@@ -554,14 +585,19 @@
       const j = await r.json();
       if(!j.ok){ if(scanMsg) scanMsg.textContent=j.error||'No elegible'; if(scanResult) scanResult.classList.add('hidden'); return; }
       const reusable = !!j.reusable;
-      const pct = Math.round((j.remaining_ratio||0)*100);
+      const remainingSeconds = Number(j.seconds_remaining) || 0;
+      const timeLabel = formatRemainingLabel(remainingSeconds);
+      const belowThreshold = remainingSeconds < REUSE_THRESHOLD_SEC;
       let html = '';
       if(reusable){
-        if(decideMsg) decideMsg.textContent = `Queda ${pct}% del cronómetro. ¿Deseas reutilizar la caja (volver a Acond · Lista para Despacho) o enviarla a Bodega · Pendiente a Inspección?`;
+        if(decideMsg) decideMsg.textContent = `Restan ${timeLabel} del cronómetro. ¿Deseas reutilizar la caja (volver a Acond · Lista para Despacho) o enviarla a Bodega · Pendiente a Inspección?`;
         html = `<button class='btn btn-primary btn-sm flex-1' data-act='reuse' data-id='${id}'>Reutilizar</button>
     <button class='btn btn-outline btn-sm flex-1' data-act='insp' data-id='${id}'>Pendiente a Inspección</button>`;
       } else {
-        if(decideMsg) decideMsg.textContent = `Queda ${pct}% del cronómetro. No es posible reutilizar. ¿Deseas enviarla a Bodega · Pendiente a Inspección?`;
+        const reason = belowThreshold
+          ? `Restan ${timeLabel} del cronómetro (menos de 24 horas).`
+          : `Restan ${timeLabel} del cronómetro.`;
+        if(decideMsg) decideMsg.textContent = `${reason} No es posible reutilizar. ¿Deseas enviarla a Bodega · Pendiente a Inspección?`;
         html = `<button class='btn btn-error btn-sm flex-1' data-act='insp' data-id='${id}'>Enviar a Pendiente a Inspección</button>`;
       }
       if(decideActions) decideActions.innerHTML = html;

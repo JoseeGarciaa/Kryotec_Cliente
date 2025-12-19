@@ -243,9 +243,18 @@
     const code = caja.codigoCaja||'';
     const displayName = caja.nombreCaja || code || 'Caja';
     const titleText = displayName && code && displayName !== code ? `${displayName} · ${code}` : displayName || code || 'Caja';
+    const orderNumero = caja.orderNumero || (caja.orderId ? `#${caja.orderId}` : '');
+    const orderCliente = caja.orderCliente || '';
+    const orderBlock = (orderNumero || orderCliente)
+      ? `<div class='text-[10px] opacity-70 leading-snug space-y-0.5'>
+          ${orderNumero ? `<div>Orden: <span class='font-mono'>${escapeAttr(orderNumero)}</span></div>` : ''}
+          ${orderCliente ? `<div>Cliente: <span class='font-semibold'>${escapeAttr(orderCliente)}</span></div>` : ''}
+        </div>`
+      : '';
     return `<div class='caja-card rounded-lg border border-base-300/40 bg-base-200/10 p-3 flex flex-col gap-2 hover:border-primary/60 transition' data-caja-card='${caja.id}' data-caja-id='${caja.id}' title='${titleText}'>
       <div class='text-[10px] uppercase opacity-60 tracking-wide'>Caja</div>
       <div class='font-semibold text-xs leading-tight break-all pr-2'>${displayName}</div>
+      ${orderBlock}
       <div class='flex flex-col gap-1 text-[9px] flex-1'>${componentTiles}</div>
       <div class='timer-progress h-1.5 w-full bg-base-300/30 rounded-full overflow-hidden'>
         <div class='timer-bar h-full bg-gradient-to-r from-primary via-primary to-primary/70' style='width:${pct.toFixed(1)}%' data-caja-bar='${caja.id}'></div>

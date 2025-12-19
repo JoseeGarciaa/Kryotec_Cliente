@@ -508,11 +508,13 @@
         const filtered = focusListoCajaId != null
           ? listoDespacho.filter(i => String(i.caja_id||i.cajaId||i.cajaID) === String(focusListoCajaId))
           : (filterValue
-              ? listoDespacho.filter(i =>
-                  (i.codigo||'').toLowerCase().includes(filterValue) ||
-                  (i.nombre||'').toLowerCase().includes(filterValue) ||
-                  (i.lote||'').toLowerCase().includes(filterValue))
-              : listoDespacho);
+            ? listoDespacho.filter(i =>
+              (i.codigo||'').toLowerCase().includes(filterValue) ||
+              (i.nombre||'').toLowerCase().includes(filterValue) ||
+              (i.lote||'').toLowerCase().includes(filterValue) ||
+              (i.order_num||'').toLowerCase().includes(filterValue) ||
+              (i.order_client||'').toLowerCase().includes(filterValue))
+            : listoDespacho);
         listoTotalCount = listoDespacho.length;
         listoFilteredCount = filtered.length;
         const rows = filtered.map(item => {
@@ -549,14 +551,26 @@
               ? listoDespacho.filter(i =>
                   (i.codigo||'').toLowerCase().includes(filterValue) ||
                   (i.nombre||'').toLowerCase().includes(filterValue) ||
-                  (i.lote||'').toLowerCase().includes(filterValue))
+                  (i.lote||'').toLowerCase().includes(filterValue) ||
+                  (i.order_num||'').toLowerCase().includes(filterValue) ||
+                  (i.order_client||'').toLowerCase().includes(filterValue))
               : listoDespacho);
         const groupsMap = new Map();
         filtered.forEach(it=>{
           const cajaId = it.caja_id || it.cajaId || it.cajaID || it.caja;
           const key = cajaId ? `id:${cajaId}` : `lote:${it.lote}`;
           if(!groupsMap.has(key)){
-            groupsMap.set(key, { lote: it.lote, cajaId: cajaId || it.lote, timers: [], componentes: [], categorias: {} });
+            groupsMap.set(key, {
+              lote: it.lote,
+              cajaId: cajaId || it.lote,
+              timers: [],
+              componentes: [],
+              categorias: {},
+              items: [],
+              orderId: it.order_id ?? null,
+              orderNumero: it.order_num ?? (it.order_id != null ? `#${it.order_id}` : null),
+              orderCliente: it.order_client || ''
+            });
           }
           const g = groupsMap.get(key);
           if(it.cronometro && it.cronometro.startsAt && it.cronometro.endsAt){
@@ -564,7 +578,11 @@
           }
           const tipo = (it.categoria||'').toLowerCase();
           g.componentes.push({ tipo, codigo: it.codigo, nombreUnidad: it.nombre_unidad || null });
+          g.items.push({ codigo: it.codigo });
           g.categorias[tipo] = (g.categorias[tipo]||0)+1;
+          if(g.orderId == null && it.order_id != null){ g.orderId = it.order_id; }
+          if(!g.orderNumero && (it.order_num || it.order_id != null)){ g.orderNumero = it.order_num || `#${it.order_id}`; }
+          if(!g.orderCliente && it.order_client){ g.orderCliente = it.order_client; }
         });
         const groups = Array.from(groupsMap.values()).map(g=>{
           const t = g.timers.find(ti=> ti && ti.startsAt && ti.endsAt) || null;
@@ -579,7 +597,10 @@
             nombreCaja,
             estado: 'Lista para Despacho',
             timer: g.timer ? { startsAt: g.timer.startsAt, endsAt: g.timer.endsAt, completedAt: g.timer.completedAt } : null,
-            componentes: g.componentes
+            componentes: g.componentes,
+            orderId: g.orderId ?? null,
+            orderNumero: g.orderNumero || null,
+            orderCliente: g.orderCliente || ''
           };
           return cajaCardHTML(fakeCaja);
         }).join('');
@@ -650,6 +671,14 @@
       ...tics.map(()=>`<span class='badge badge-warning badge-xs font-semibold'>TIC</span>`),
       ...cubes.map(()=>`<span class='badge badge-accent badge-xs font-semibold'>CUBE</span>`)
     ].join(' ');
+    const orderNumero = c.orderNumero || (c.orderId ? `#${c.orderId}` : '');
+    const orderCliente = c.orderCliente || '';
+    const orderBlock = (orderNumero || orderCliente)
+      ? `<div class='text-[10px] opacity-70 leading-snug space-y-0.5'>
+          <div>Orden: <span class='font-mono'>${orderNumero ? safeHTML(orderNumero) : '-'}</span></div>
+          ${orderCliente ? `<div>Cliente: <span class='font-semibold'>${safeHTML(orderCliente)}</span></div>` : ''}
+        </div>`
+      : '';
     // Timer badge used inside bottom row (not top-right now)
     let timerBadge='';
     if(c.timer && c.timer.startsAt && c.timer.endsAt && !c.timer.completedAt){
@@ -679,6 +708,7 @@
   return `<div class='caja-card rounded-lg border border-base-300/40 bg-base-200/10 p-3 flex flex-col gap-2 hover:border-primary/60 transition' data-caja-id='${safeHTML(c.id)}' title='${safeHTML(titleText)}'>
         <div class='text-[10px] uppercase opacity-60 tracking-wide'>Caja</div>
   <div class='font-semibold text-xs leading-tight break-all pr-2'>${safeHTML(displayName)}</div>
+  ${orderBlock}
         <div class='flex flex-wrap gap-1 text-[9px] flex-1'>${compBadges || "<span class='badge badge-ghost badge-xs'>Sin items</span>"}</div>
         <div class='timer-progress h-1.5 w-full bg-base-300/30 rounded-full overflow-hidden'>
           <div class='timer-bar h-full bg-gradient-to-r from-primary via-primary to-primary/70' style='width:${pct.toFixed(1)}%' data-caja-bar='${safeHTML(c.id)}'></div>
@@ -1035,7 +1065,8 @@
           timer: tItem ? { startsAt: tItem.cronometro.startsAt, endsAt: tItem.cronometro.endsAt, completedAt: tItem.cronometro.completedAt } : null,
           componentes: items.map(it=> ({ tipo: (it.categoria||'').toLowerCase(), codigo: it.codigo })),
           orderId: (tItem && (tItem.order_id!=null)) ? tItem.order_id : (items[0] && items[0].order_id!=null ? items[0].order_id : null),
-          orderNumero: (tItem && tItem.order_num) ? tItem.order_num : (items[0] && items[0].order_num ? items[0].order_num : null)
+          orderNumero: (tItem && tItem.order_num) ? tItem.order_num : (items[0] && items[0].order_num ? items[0].order_num : null),
+          orderCliente: (tItem && tItem.order_client) ? tItem.order_client : (items[0] && items[0].order_client ? items[0].order_client : '')
         };
       }
     }
@@ -1224,6 +1255,14 @@
         }
       }
     }
+    const orderNumero = item.order_num || (item.order_id != null ? `#${item.order_id}` : '');
+    const orderCliente = item.order_client || '';
+    const orderBlock = (orderNumero || orderCliente)
+      ? `<div class="text-[10px] opacity-70 leading-snug space-y-0.5">
+          ${orderNumero ? `<div>Orden: <span class="font-mono">${safeHTML(orderNumero)}</span></div>` : ''}
+          ${orderCliente ? `<div>Cliente: <span class="font-semibold">${safeHTML(orderCliente)}</span></div>` : ''}
+        </div>`
+      : '';
     return `<div class="card bg-base-100 shadow-sm border border-base-200 p-2" data-listo-rfid="${safeHTML(item.codigo)}">
       <div class="flex items-start justify-between mb-1">
         <span class="font-mono text-[10px]">${safeHTML(item.codigo)}</span>
@@ -1231,6 +1270,7 @@
       </div>
       <div class="text-[11px] font-semibold leading-tight mb-1">${safeHTML(item.nombre||'-')}</div>
       <div class="text-[10px] opacity-70 mb-1">${safeHTML(item.estado||'')}</div>
+      ${orderBlock}
       <div class="text-[10px] text-right">${chrono}</div>
     </div>`;
   }

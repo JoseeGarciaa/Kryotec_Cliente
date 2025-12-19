@@ -47,8 +47,6 @@
   const selectZona = qs('#scan-zona');
   const selectSeccion = qs('#scan-seccion');
   const locationHint = qs('#scan-location-hint');
-  const keepLoteRow = qs('#keep-lote-row');
-  const chkKeepLote = qs('#chk-keep-lote');
   // Nuevos controles de cronómetro dentro del modal de escaneo
   const scanTimerBox = qs('#scan-timer-box');
   const scanStartTimer = qs('#scan-start-timer');
@@ -635,14 +633,11 @@
       wrapper && wrapper.classList.remove('hidden');
     }
   }catch{}
-  // Show keep-lote checkbox only when moving to atemperamiento
-  if(keepLoteRow){ keepLoteRow.classList.toggle('hidden', target!=='atemperamiento'); }
-  if(chkKeepLote){ chkKeepLote.checked = false; }
   // Mostrar caja de cronómetro si es atemperamiento
   if(scanTimerBox){ scanTimerBox.classList.toggle('hidden', target!=='atemperamiento'); }
   if(scanStartTimer){ scanStartTimer.checked = true; }
-  // No se deshabilita cronómetro al conservar lote
-    ensureLocationSelectors();
+  // Cronómetro disponible únicamente al pasar a atemperamiento
+  ensureLocationSelectors();
     dlg?.showModal?.();
     setTimeout(()=>scanInput?.focus?.(), 50);
   }
@@ -816,16 +811,12 @@
     selectedSeccionId = selectSeccion.value || '';
   });
 
-  // Cambiar mensaje cuando usuario marca conservar lote (no se puede crear lote nuevo)
-  // Ya no se necesita manejo de deshabilitado
-
   btnConfirm?.addEventListener('click', async ()=>{
     if(scanMode==='lote'){
       if(target!=='atemperamiento'){ msg.textContent='El modo lote solo aplica al paso a Atemperamiento.'; return; }
       if(!loteDetected){ msg.textContent='Escanee una TIC válida para identificar el lote.'; return; }
     }
     if(!valid.length){ msg.textContent = scanMode==='lote' ? 'Escanee la TIC congelada del lote.' : 'No hay RFIDs válidos.'; return; }
-    const keepLote = chkKeepLote && !chkKeepLote.classList.contains('hidden') && chkKeepLote.checked && target==='atemperamiento';
     const zonaId = selectZona ? String(selectZona.value || '').trim() : '';
     const seccionId = selectSeccion ? String(selectSeccion.value || '').trim() : '';
     selectedZonaId = zonaId;
@@ -835,13 +826,13 @@
       const extra = allowTransfer ? { allowSedeTransfer: true } : {};
       try {
         if(scanMode==='lote' && target==='atemperamiento'){
-          const payload = { lote: loteDetected, keepLote, zona_id: zonaId, seccion_id: seccionId, ...extra };
+          const payload = { lote: loteDetected, zona_id: zonaId, seccion_id: seccionId, ...extra };
           const r = await fetch('/operacion/preacond/lote/move', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload) });
           const data = await r.json().catch(()=>({ ok:false }));
           if(r.ok && data.ok){ data.moved = data.moved || (loteItemsCache.map(it=>it.rfid)); }
           return { httpOk: r.ok, data };
         }
-        const payload = { target, rfids: valid, keepLote, zona_id: zonaId, seccion_id: seccionId, ...extra };
+        const payload = { target, rfids: valid, zona_id: zonaId, seccion_id: seccionId, ...extra };
         const r = await fetch('/operacion/preacond/scan', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload) });
         const data = await r.json().catch(()=>({ ok:false }));
         return { httpOk: r.ok, data };
@@ -873,9 +864,7 @@
       const minutes = Number(scanTimerMin?.value||'0');
       let totalMinutes = (isFinite(hours)?Math.max(0,hours):0)*60 + (isFinite(minutes)?Math.max(0,minutes):0);
       if(totalMinutes<=0){ totalMinutes = 30; } // fallback
-      // Lógica: si NO conservar lote -> sólo iniciar para los recién movidos que no tengan lote asignado (se generará uno)
-      // si conservar lote -> simplemente iniciar timers item-level sobre esos RFIDs (manteniendo su lote) sin agrupar? Mejor: iniciar group timer igualmente y no sobreescribir lote existente.
-      // Para simplificar: usamos endpoint group start, pasándole la lista (no tocará lotes existentes por lógica backend: sólo asigna si vacío)
+      // El cronómetro agrupa los recién movidos; el backend asignará un nuevo lote a quienes no lo tengan
       await startSectionTimer('atemperamiento', '', totalMinutes, movedRfids);
     } else {
       await loadData();

@@ -169,10 +169,6 @@
       <p id="scan-location-hint" class="text-xs opacity-60"></p>
       <!-- Resumen lote -->
       <div id="scan-lote-summary" class="hidden border border-base-300/40 rounded-lg p-3 bg-base-200/30 text-sm max-h-64 overflow-auto"></div>
-  <label id="keep-lote-row" class="hidden items-center gap-2">
-        <input id="chk-keep-lote" type="checkbox" class="checkbox checkbox-sm" />
-        <span class="text-sm">Conservar lote al pasar a Atemperamiento</span>
-      </label>
       <!-- Cronómetro inmediato al pasar a Atemperamiento -->
       <div id="scan-timer-box" class="hidden border border-base-300/40 rounded-lg p-3 mt-2 bg-base-200/30">
         <label class="flex items-center gap-2 text-sm">
@@ -189,7 +185,7 @@
             <input id="scan-timer-min" type="number" min="0" step="1" placeholder="Ej. 30" class="input input-bordered input-sm" />
           </label>
         </div>
-  <div class="text-xs opacity-60 mt-2" id="scan-timer-hint">Al confirmar: se conservarán los lotes existentes y se asignará un nuevo lote solo a TICs sin lote. Desmarca para no iniciar ahora.</div>
+  <div class="text-xs opacity-60 mt-2" id="scan-timer-hint">Al confirmar: las TICs movidas recibirán un nuevo lote automáticamente junto con el cronómetro. Desmarca para no iniciar ahora.</div>
       </div>
     </div>
 

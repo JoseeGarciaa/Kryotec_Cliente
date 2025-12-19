@@ -19,24 +19,17 @@
     const hasSuper = values.includes('super_admin');
     const hasAdmin = values.includes('admin');
     const exclusive = hasSuper ? 'super_admin' : (hasAdmin ? 'admin' : null);
-    Array.from(select.options).forEach((opt)=>{
-      const val = opt.value;
+    const options = Array.from(select.options);
+    options.forEach((opt)=>{
+      opt.disabled = false;
       if(exclusive){
-        if(val === exclusive){
-          opt.selected = true;
-          opt.disabled = false;
-        } else {
-          opt.selected = false;
-          opt.disabled = true;
-        }
-      } else {
-        opt.disabled = false;
+        opt.selected = opt.value === exclusive;
       }
     });
     if(!exclusive){
-      const hasSelection = Array.from(select.selectedOptions).length>0;
+      const hasSelection = options.some((opt)=> opt.selected);
       if(!hasSelection){
-        const defaultOpt = Array.from(select.options).find((opt)=> opt.value === 'acondicionador');
+        const defaultOpt = options.find((opt)=> opt.value === 'acondicionador');
         if(defaultOpt){ defaultOpt.selected = true; }
       }
     }
@@ -44,6 +37,38 @@
 
   function bindRoleSelect(select){
     if(!(select instanceof HTMLSelectElement)) return;
+    if(select.dataset.rolesBound === 'true') return;
+    select.dataset.rolesBound = 'true';
+    // Toggle roles on click so users do not need modifier keys
+    const handleMouseDown = (event) => {
+      if(event.button !== 0) return;
+      const option = event.target;
+      if(!(option instanceof HTMLOptionElement)) return;
+      event.preventDefault();
+      if(select.disabled || option.disabled) return;
+      const options = Array.from(select.options);
+      const wasSelected = option.selected;
+      const isExclusive = option.value === 'admin' || option.value === 'super_admin';
+      if(isExclusive){
+        options.forEach((opt)=>{
+          if(opt === option){
+            opt.selected = !wasSelected;
+          } else {
+            opt.selected = false;
+          }
+        });
+      } else {
+        options.forEach((opt)=>{
+          if(opt.value === 'admin' || opt.value === 'super_admin'){
+            opt.selected = false;
+          }
+        });
+        option.selected = !wasSelected;
+      }
+      applyRoleExclusivity(select);
+      select.dispatchEvent(new Event('change', { bubbles: true }));
+    };
+    select.addEventListener('mousedown', handleMouseDown);
     select.addEventListener('change', ()=> applyRoleExclusivity(select));
     applyRoleExclusivity(select);
   }
