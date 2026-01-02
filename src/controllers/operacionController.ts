@@ -5369,13 +5369,17 @@ export const OperacionController = {
   acondDespachoMove: async (req: Request, res: Response) => {
     const tenant = (req as any).user?.tenant;
     const sedeId = getRequestSedeId(req);
-    const { rfid, durationSec, order_id, allowIncomplete } = req.body as any;
-    const allowIncompleteFlag = allowIncomplete === true;
+    const { rfid, durationSec: durationSecRaw, order_id } = req.body as any;
     const allowSedeTransferFlag = resolveAllowSedeTransferFlag(req, req.body?.allowSedeTransfer);
     const code = typeof rfid === 'string' ? rfid.trim() : '';
-    const dur = Number(durationSec);
+    const durationProvided = durationSecRaw !== undefined && durationSecRaw !== null && durationSecRaw !== '';
+    const parsedDuration = durationProvided ? Number(durationSecRaw) : NaN;
+    if(durationProvided && (!Number.isFinite(parsedDuration) || parsedDuration <= 0)){
+      return res.status(400).json({ ok:false, error:'durationSec debe ser mayor a 0 cuando se especifica' });
+    }
+    const durationOverride = durationProvided ? Math.round(parsedDuration) : null;
     if(code.length !== 24) return res.status(400).json({ ok:false, error:'RFID inválido' });
-    if(!Number.isFinite(dur) || dur <= 0) return res.status(400).json({ ok:false, error:'durationSec requerido (>0)' });
+    let responseTimerDuration: number | null = null;
     try {
       const cajaInfoQ = await withTenant(tenant, (c)=> c.query(
         `SELECT c.caja_id, c.lote, c.order_id
@@ -5434,15 +5438,10 @@ export const OperacionController = {
     const timerQ = await c.query(`SELECT active, started_at, duration_sec FROM acond_caja_timers WHERE caja_id=$1`, [cajaId]);
     const timerRow = timerQ.rowCount ? timerQ.rows[0] : null;
     const timerActive = timerRow ? timerRow.active === true : false;
-    if(timerActive && !allowIncompleteFlag){ await c.query('ROLLBACK'); return res.status(400).json({ ok:false, error:'Cronometro en progreso: espera a que termine (Ensamblado) antes de despachar' }); }
       // Verificar que TODOS los items estén Ensamblado (no permitir mover si quedan en Ensamblaje)
       const estadoItems = await c.query(`SELECT ic.sub_estado FROM acond_caja_items aci JOIN inventario_credocubes ic ON ic.rfid=aci.rfid WHERE aci.caja_id=$1`, [cajaId]);
       if(!estadoItems.rowCount){ await c.query('ROLLBACK'); return res.status(400).json({ ok:false, error:'Caja sin items' }); }
       const allEnsamblado = estadoItems.rows.every((r: any) => r.sub_estado==='Ensamblado');
-      if(!allEnsamblado && !allowIncompleteFlag){
-        await c.query('ROLLBACK');
-        return res.status(400).json({ ok:false, error:'Caja no está completamente Ensamblada' });
-      }
           // Detectar si existe columna litraje (para evitar abortar transacción por error)
           const colQ = await c.query(`SELECT 1 FROM information_schema.columns WHERE table_name='modelos' AND column_name='litraje' LIMIT 1`);
           const litrajeExists = !!colQ.rowCount;
@@ -5492,7 +5491,7 @@ export const OperacionController = {
               }
             }
           }
-          // Arranque obligatorio de cronómetro de despacho: crear/actualizar timer de caja
+          // Cronómetro de despacho: si se solicita una nueva duración la reiniciamos, de lo contrario conservamos el existente
           await c.query(`CREATE TABLE IF NOT EXISTS acond_caja_timers (
               caja_id int PRIMARY KEY REFERENCES acond_cajas(caja_id) ON DELETE CASCADE,
               started_at timestamptz,
@@ -5500,11 +5499,16 @@ export const OperacionController = {
               active boolean NOT NULL DEFAULT false,
               updated_at timestamptz NOT NULL DEFAULT NOW()
             )`);
-          await c.query(`INSERT INTO acond_caja_timers(caja_id, started_at, duration_sec, active, updated_at)
-              VALUES($1,NOW(),$2,true,NOW())
-            ON CONFLICT (caja_id) DO UPDATE SET started_at=NOW(), duration_sec=EXCLUDED.duration_sec, active=true, updated_at=NOW()`,[cajaId,dur]);
+          if(durationOverride != null){
+            await c.query(`INSERT INTO acond_caja_timers(caja_id, started_at, duration_sec, active, updated_at)
+                VALUES($1,NOW(),$2,true,NOW())
+              ON CONFLICT (caja_id) DO UPDATE SET started_at=NOW(), duration_sec=EXCLUDED.duration_sec, active=true, updated_at=NOW()`,[cajaId,durationOverride]);
+            responseTimerDuration = durationOverride;
+          } else {
+            responseTimerDuration = timerRow && Number.isFinite(Number(timerRow.duration_sec)) ? Number(timerRow.duration_sec) : null;
+          }
       // Flujo simplificado: al iniciar cronómetro se pasa directamente a 'Lista para Despacho'
-          const estadoFiltro = allowIncompleteFlag ? "IN ('Ensamblado','Ensamblaje')" : "='Ensamblado'";
+          const estadoFiltro = "IN ('Ensamblado','Ensamblaje')";
           const upd = await c.query(
             `UPDATE inventario_credocubes ic
                 SET sub_estado='Lista para Despacho',
@@ -5528,7 +5532,8 @@ export const OperacionController = {
             }
           }
           await c.query('COMMIT');
-          res.json({ ok:true, caja_id: cajaId, lote, moved: upd.rowCount, timer: { durationSec: dur }, forced: allowIncompleteFlag });
+          const timerPayload = responseTimerDuration != null ? { durationSec: responseTimerDuration } : null;
+          res.json({ ok:true, caja_id: cajaId, lote, moved: upd.rowCount, timer: timerPayload, timerActive });
         } catch(e){ await c.query('ROLLBACK'); throw e; }
       }, { allowCrossSedeTransfer: transferCheck.allowCrossTransfer });
     } catch(e:any){

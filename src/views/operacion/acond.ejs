@@ -225,18 +225,9 @@
       <div id="despacho-queue-list" class="flex flex-col gap-2 max-h-56 overflow-auto custom-scroll"></div>
     </div>
     <div class="mb-4">
-      <div class="text-xs mb-1 opacity-70">Duracion cronometro (aplica a todas las cajas seleccionadas)</div>
-      <div class="grid grid-cols-2 gap-3">
-        <label class="form-control">
-          <span class="label-text text-xs">Horas</span>
-          <input id="despacho-hr" type="number" min="0" step="1" placeholder="0" class="input input-bordered input-sm" />
-        </label>
-        <label class="form-control">
-          <span class="label-text text-xs">Minutos</span>
-          <input id="despacho-min" type="number" min="0" step="1" placeholder="30" class="input input-bordered input-sm" />
-        </label>
+      <div class="rounded-lg border border-base-300/40 bg-base-200/40 px-3 py-2 text-xs leading-relaxed">
+        El cronómetro activo en Ensamblaje se mantiene al mover las cajas a Lista para Despacho. No es necesario definir una nueva duración.
       </div>
-      <div id="despacho-timer-hint" class="text-xs opacity-60 mt-1">Ingresa un total mayor a 0 (horas*60 + minutos) para habilitar el boton.</div>
     </div>
     <div class="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-3">
       <label class="form-control">

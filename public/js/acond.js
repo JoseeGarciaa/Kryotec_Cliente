@@ -43,7 +43,6 @@
   let scanValidationController = null;
   let scanNegativeWarningEl = null;
   let viewMode = localStorage.getItem('acondViewMode') || 'cards';  // persist across reloads
-  let pollingTimer = null;
   let tickingTimer = null;
   let pollInterval = null; // usado por startPolling
   let serverNowOffsetMs = 0; // serverNow - clientNow to sync timers
@@ -563,7 +562,7 @@
             groupsMap.set(key, {
               lote: it.lote,
               cajaId: cajaId || it.lote,
-              timers: [],
+              timer: null,
               componentes: [],
               categorias: {},
               items: [],
@@ -573,8 +572,8 @@
             });
           }
           const g = groupsMap.get(key);
-          if(it.cronometro && it.cronometro.startsAt && it.cronometro.endsAt){
-            g.timers.push(it.cronometro);
+          if(!g.timer && it.cronometro && it.cronometro.startsAt && it.cronometro.endsAt){
+            g.timer = it.cronometro;
           }
           const tipo = (it.categoria||'').toLowerCase();
           g.componentes.push({ tipo, codigo: it.codigo, nombreUnidad: it.nombre_unidad || null });
@@ -584,10 +583,7 @@
           if(!g.orderNumero && (it.order_num || it.order_id != null)){ g.orderNumero = it.order_num || `#${it.order_id}`; }
           if(!g.orderCliente && it.order_client){ g.orderCliente = it.order_client; }
         });
-        const groups = Array.from(groupsMap.values()).map(g=>{
-          const t = g.timers.find(ti=> ti && ti.startsAt && ti.endsAt) || null;
-          return { ...g, timers: t ? [t] : [], timer: t };
-        });
+        const groups = Array.from(groupsMap.values());
         grid.innerHTML = groups.map(g => {
           const cubeComp = g.componentes.find(comp => comp.tipo === 'cube' && comp.nombreUnidad);
           const nombreCaja = cubeComp?.nombreUnidad || g.lote || (`CAJA-${g.cajaId}`);
@@ -602,7 +598,7 @@
             orderNumero: g.orderNumero || null,
             orderCliente: g.orderCliente || ''
           };
-          return cajaCardHTML(fakeCaja);
+          return cajaCardHTML(fakeCaja, { hideTimerUI: false, hideTimerActions: true, listTimer: g.timer });
         }).join('');
       }
     }
@@ -657,10 +653,33 @@
   }
   }
 
-  function cajaCardHTML(c){
-    const remaining = msRemaining(c);
-    const timerText = timerDisplay(remaining, c.timer?.completedAt);
-    const progress = timerProgressPct(c);
+  function cajaCardHTML(c, options){
+    const opts = options || {};
+    const hideTimerUI = opts.hideTimerUI === true;
+    const listTimer = opts.listTimer || null;
+    const listTimerOnly = hideTimerUI && listTimer;
+    const cardTimer = options?.listTimer ? {
+      ...options.listTimer,
+      startsAt: options.listTimer.startsAt,
+      endsAt: options.listTimer.endsAt,
+      completedAt: options.listTimer.completedAt || null
+    } : c.timer;
+    const remaining = cardTimer ? (()=>{
+      if(!cardTimer.endsAt) return 0;
+      const endMs = new Date(cardTimer.endsAt).getTime();
+      const nowMs = Date.now() + serverNowOffsetMs;
+      return endMs - nowMs;
+    })() : msRemaining(c);
+    const timerText = timerDisplay(remaining, cardTimer?.completedAt);
+    const progress = cardTimer ? (()=>{
+      if(!cardTimer.startsAt || !cardTimer.endsAt) return 0;
+      const startMs = new Date(cardTimer.startsAt).getTime();
+      const endMs = new Date(cardTimer.endsAt).getTime();
+      if(endMs <= startMs) return 100;
+      const total = endMs - startMs;
+      const elapsed = Math.max(0, Math.min(total, (Date.now() + serverNowOffsetMs) - startMs));
+      return (elapsed / total) * 100;
+    })() : timerProgressPct(c);
     // === Pretty legacy style card ===
     const comps = (c.componentes||[]);
     const vip = comps.filter(x=>x.tipo==='vip');
@@ -680,28 +699,43 @@
         </div>`
       : '';
     // Timer badge used inside bottom row (not top-right now)
-    let timerBadge='';
-    if(c.timer && c.timer.startsAt && c.timer.endsAt && !c.timer.completedAt){
-      timerBadge = `<span class='badge badge-neutral badge-xs flex items-center gap-1' data-caja-timer-started='${new Date(c.timer.startsAt).getTime()}' data-caja-timer-duration='${Math.round((new Date(c.timer.endsAt).getTime() - new Date(c.timer.startsAt).getTime())/1000)}' data-caja-id='${safeHTML(c.id)}'>
-          <span id='tm-caja-${safeHTML(c.id)}' class='font-mono whitespace-nowrap tabular-nums'>${timerText}</span>
-          <button class='btn btn-ghost btn-xs px-1 h-4 shrink-0 stop-caja-timer' data-caja='${safeHTML(c.id)}' title='Cancelar'>✕</button>
-        </span>`;
-    } else if(c.timer && c.timer.completedAt){
-  timerBadge = `<span class='badge badge-success badge-xs'>Listo</span>`;
-    } else {
-      // Si el sub_estado de todos los componentes es Ensamblado (o caja ya está Ensamblado) mostrar 'Listo'
-      const allEnsamblado = (c.componentes||[]).length>0 ? (c.componentes.every(()=> true) && (c.estado==='Ensamblado' || /Ensamblado/i.test(c.sub_estado||''))) : /Ensamblado/i.test(c.sub_estado||c.estado||'');
-      if(allEnsamblado || /Ensamblado/i.test(c.estado||'')){
+    let timerSection = '';
+    if(!hideTimerUI){
+      let timerBadge='';
+      const cardTimer = listTimer ? listTimer : c.timer;
+      if(cardTimer && cardTimer.startsAt && cardTimer.endsAt && !cardTimer.completedAt){
+        const startMs = new Date(cardTimer.startsAt).getTime();
+        const endMs = new Date(cardTimer.endsAt).getTime();
+        const durationSec = Math.round((endMs - startMs)/1000);
+        const showActions = !opts.hideTimerActions && !listTimer;
+        timerBadge = `<span class='badge badge-neutral badge-xs flex items-center gap-1' data-caja-timer-started='${startMs}' data-caja-timer-duration='${durationSec}' data-caja-id='${safeHTML(c.id)}'>
+            <span id='tm-caja-${safeHTML(c.id)}' class='font-mono whitespace-nowrap tabular-nums'>${timerText}</span>
+            ${showActions ? `<button class='btn btn-ghost btn-xs px-1 h-4 shrink-0 stop-caja-timer' data-caja='${safeHTML(c.id)}' title='Cancelar'>✕</button>` : ''}
+          </span>`;
+      } else if(cardTimer && cardTimer.completedAt){
         timerBadge = `<span class='badge badge-success badge-xs'>Listo</span>`;
       } else {
-        // Sin cronómetro: ofrecer botón para iniciarlo nuevamente
-        timerBadge = `
-          <span class='badge badge-outline badge-xs opacity-60'>Sin cronómetro</span>
-          <button class='btn btn-ghost btn-xs px-1 h-4 shrink-0' data-action='timer-start' data-caja-id='${safeHTML(c.id)}' title='Iniciar'>▶</button>
-        `;
+        const allEnsamblado = (c.componentes||[]).length>0 ? (c.componentes.every(()=> true) && (c.estado==='Ensamblado' || /Ensamblado/i.test(c.sub_estado||''))) : /Ensamblado/i.test(c.sub_estado||c.estado||'');
+        if(allEnsamblado || /Ensamblado/i.test(c.estado||'')){
+          timerBadge = `<span class='badge badge-success badge-xs'>Listo</span>`;
+        } else {
+          const showActions = !opts.hideTimerActions && !listTimer;
+          timerBadge = `
+            <span class='badge badge-outline badge-xs opacity-60'>Sin cronómetro</span>
+            ${showActions ? `<button class='btn btn-ghost btn-xs px-1 h-4 shrink-0' data-action='timer-start' data-caja-id='${safeHTML(c.id)}' title='Iniciar'>▶</button>` : ''}
+          `;
+        }
       }
+      const pct = Math.min(100, Math.max(0, progress));
+      timerSection = `
+        <div class='timer-progress h-1.5 w-full bg-base-300/30 rounded-full overflow-hidden'>
+          <div class='timer-bar h-full bg-gradient-to-r from-primary via-primary to-primary/70' style='width:${pct.toFixed(1)}%' data-caja-bar='${safeHTML(c.id)}'></div>
+        </div>
+        <div class='flex items-center justify-between text-[10px] font-mono opacity-70'>
+          <span class='inline-flex items-center gap-1'>${timerBadge}</span>
+          <span class='opacity-50'>restante</span>
+        </div>`;
     }
-    const pct = Math.min(100, Math.max(0, progress));
     const code = c.codigoCaja || '';
     const displayName = c.nombreCaja || code || 'Caja';
     const titleText = displayName && code && displayName !== code ? `${displayName} · ${code}` : displayName || code || 'Caja';
@@ -710,13 +744,7 @@
   <div class='font-semibold text-xs leading-tight break-all pr-2'>${safeHTML(displayName)}</div>
   ${orderBlock}
         <div class='flex flex-wrap gap-1 text-[9px] flex-1'>${compBadges || "<span class='badge badge-ghost badge-xs'>Sin items</span>"}</div>
-        <div class='timer-progress h-1.5 w-full bg-base-300/30 rounded-full overflow-hidden'>
-          <div class='timer-bar h-full bg-gradient-to-r from-primary via-primary to-primary/70' style='width:${pct.toFixed(1)}%' data-caja-bar='${safeHTML(c.id)}'></div>
-        </div>
-        <div class='flex items-center justify-between text-[10px] font-mono opacity-70'>
-          <span class='inline-flex items-center gap-1'>${timerBadge}</span>
-          <span class='opacity-50'>restante</span>
-        </div>
+        ${timerSection}
       </div>`;
   }
 
@@ -880,34 +908,8 @@
     if(pollInterval) clearInterval(pollInterval);
     pollInterval = setInterval(()=>{ loadData(); }, 12000);
     // local lightweight ticking of visible countdown (every second) without hitting server
-    setInterval(()=>{
-      const timersByCaja = {};
-      listoDespacho.forEach(it=>{ if(it.caja_id && it.cronometro && it.cronometro.startsAt && it.cronometro.endsAt){ if(!timersByCaja[it.caja_id]) timersByCaja[it.caja_id]=it.cronometro; }});
-      document.querySelectorAll('[data-timer-chrono]').forEach(el=>{
-        if(!(el instanceof HTMLElement)) return;
-        const cajaId = el.getAttribute('data-caja-id');
-        const t = cajaId ? timersByCaja[cajaId] : null;
-        if(!t) return;
-        const now = Date.now() + serverNowOffsetMs;
-        const end = new Date(t.endsAt).getTime();
-        const remainingMs = end - now;
-        const label = el.getAttribute('data-label');
-        const text = timerDisplay(remainingMs, t.completedAt);
-        el.textContent = label ? `${label} ${text}` : text;
-        const sec = Math.floor(remainingMs/1000);
-        let cls = 'badge-info';
-        if(sec <= 0){
-          cls = 'badge-error';
-        } else if(sec <= 60){
-          cls = 'badge-error';
-        } else if(sec <= 300){
-          cls = 'badge-warning';
-        }
-        el.className = `badge ${cls} badge-xs font-mono`;
-      });
-    },1000);
   }
-  function stopPolling(){ if(pollingTimer) clearInterval(pollingTimer); pollingTimer = null; }
+  function stopPolling(){ if(pollInterval) clearInterval(pollInterval); pollInterval = null; }
 
   function ensureTicking(){
     if(tickingTimer) return; // already ticking
@@ -956,32 +958,6 @@
           bar.classList.toggle('bg-warning', remSec>0 && remSec<=60);
         }
       });
-      // Timers de despacho en tarjetas agrupadas (data-timer-chrono)
-      document.querySelectorAll('[data-timer-chrono]').forEach(el=>{
-        if(!(el instanceof HTMLElement)) return;
-        const cajaId = el.getAttribute('data-caja-id');
-        if(!cajaId) return;
-        const items = listoDespacho.filter(it=> String(it.caja_id)===String(cajaId));
-        const tIt = items.find(it=> it.cronometro && (it.cronometro.startsAt||it.cronometro.endsAt));
-        if(!tIt || !tIt.cronometro.startsAt || !tIt.cronometro.endsAt) return;
-        const now = Date.now() + serverNowOffsetMs;
-        const end = new Date(tIt.cronometro.endsAt).getTime();
-        const label = el.getAttribute('data-label');
-        const remainingMs = end - now;
-        const text = timerDisplay(remainingMs, tIt.cronometro.completedAt);
-        el.textContent = label ? `${label} ${text}` : text;
-        el.classList.remove('badge-error','badge-warning','badge-info');
-        const remSec = Math.floor(remainingMs/1000);
-        if(remSec <= 0){
-          el.classList.add('badge-error');
-        } else if(remSec<=60){
-          el.classList.add('badge-error');
-        } else if(remSec<=300){
-          el.classList.add('badge-warning');
-        } else {
-          el.classList.add('badge-info');
-        }
-      });
   // Auto-completar cajas cuyo cronómetro llegó a cero
   autoCompleteTimers();
       // Actualizar si modal de detalle está visible
@@ -1019,35 +995,16 @@
           .catch(()=>{ autoCompleteFired.delete(key); });
       }
     });
-    // Despacho timers (cajas en Despachando dentro de listoDespacho)
-    const dispatchTimers = new Map();
-    listoDespacho.forEach(it=>{
-      if(it.caja_id && it.cronometro && it.cronometro.startsAt && it.cronometro.endsAt && !it.cronometro.completedAt){
-        // usamos el primero
-        if(!dispatchTimers.has(it.caja_id)) dispatchTimers.set(it.caja_id, it.cronometro);
-      }
-    });
-    dispatchTimers.forEach((t, cajaId)=>{
-      const end = new Date(t.endsAt).getTime();
-      const now = Date.now() + serverNowOffsetMs;
-      const remaining = end - now;
-      const key = 'desp-' + cajaId;
-      if(remaining <= 0 && !autoCompleteFired.has(key)){
-        autoCompleteFired.add(key);
-        fetch('/operacion/acond/caja/timer/complete', {
-          method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ caja_id: cajaId })
-        }).then(()=>{ loadData(); })
-          .catch(()=>{ autoCompleteFired.delete(key); });
-      }
-    });
   }
 
   // ========================= MODAL DETALLE =========================
   // Nueva implementación alineada al markup real (#modal-caja-detalle)
   function openCajaDetalle(id){
     let caja = cajas.find(c=> String(c.id) === String(id));
+    let allowTimerActions = true;
     // Si no está en 'cajas' (ensamblaje), intentar construir desde lista para despacho
     if(!caja){
+      allowTimerActions = false;
       let items = listoDespacho.filter(it => String(it.caja_id) === String(id));
       if(!items.length){
         // fallback: quizá el lote quedó pero filtrado; intentar por lote igual a id formateado
@@ -1121,10 +1078,12 @@
     if(timerBox){
       let html='';
       if(!caja.timer){
-        html = `<div class="flex items-center gap-2">
+        html = allowTimerActions
+          ? `<div class="flex items-center gap-2">
           <span class="text-sm opacity-60 italic">(Sin cronómetro)</span>
           <button class="btn btn-xs btn-primary" data-action="timer-start" data-caja-id="${safeHTML(caja.id)}">Iniciar</button>
-        </div>`;
+        </div>`
+          : '<div class="text-sm opacity-60 italic">(Cronómetro gestionado en Ensamblaje)</div>';
       } else if(caja.timer.completedAt){
   html = '<div class="badge badge-success badge-sm">Cronómetro Listo</div>';
       } else if(caja.timer.startsAt && caja.timer.endsAt){
@@ -1138,7 +1097,9 @@
           </div>
         </div>`;
       } else {
-        html = '<div class="text-sm opacity-60 italic">(Cronómetro sin iniciar)</div>';
+        html = allowTimerActions
+          ? '<div class="text-sm opacity-60 italic">(Cronómetro sin iniciar)</div>'
+          : '<div class="text-sm opacity-60 italic">(Cronómetro gestionado en Ensamblaje)</div>';
       }
       timerBox.innerHTML = html;
     }
@@ -1243,18 +1204,7 @@
   }
 
   function listoCardHTML(item){
-    let chrono='-';
-    if(item.cronometro && item.cronometro.startsAt && item.cronometro.endsAt){
-      const now = Date.now() + serverNowOffsetMs;
-      const start = item.cronometro.startsAt ? new Date(item.cronometro.startsAt).getTime() : null;
-      const end = item.cronometro.endsAt ? new Date(item.cronometro.endsAt).getTime() : null;
-      if(start && end){
-  if(item.cronometro.completedAt || now >= end){ chrono='Listo'; }
-        else {
-          const rem=end-now; const sec=Math.max(0,Math.floor(rem/1000)); const m=Math.floor(sec/60); const s=sec%60; chrono=`${m}m ${s}s`;
-        }
-      }
-    }
+    const chronoLabel = 'Cronómetro en Ensamblaje';
     const orderNumero = item.order_num || (item.order_id != null ? `#${item.order_id}` : '');
     const orderCliente = item.order_client || '';
     const orderBlock = (orderNumero || orderCliente)
@@ -1271,35 +1221,13 @@
       <div class="text-[11px] font-semibold leading-tight mb-1">${safeHTML(item.nombre||'-')}</div>
       <div class="text-[10px] opacity-70 mb-1">${safeHTML(item.estado||'')}</div>
       ${orderBlock}
-      <div class="text-[10px] text-right">${chrono}</div>
+      <div class="text-[10px] text-right opacity-60">${chronoLabel}</div>
     </div>`;
   }
   // Card agrupada por caja
   function listoCajaCardHTML(group){
-    // Solo mostrar tiempo restante sin estado Completado
-    let badgeHTML = '<span class="badge badge-ghost badge-xs">Sin timer</span>'; let actionsHTML='';
-    const timer = group.timers && group.timers.length ? group.timers[0] : null;
-    if(timer && timer.startsAt && timer.endsAt){
-      const now = Date.now() + serverNowOffsetMs;
-      const end = new Date(timer.endsAt).getTime();
-      if(now < end){
-        const remMs = end-now; const sec = Math.max(0, Math.floor(remMs/1000));
-        const h = Math.floor(sec/3600); const m = Math.floor((sec%3600)/60); const s = sec%60;
-        const hh = String(h).padStart(2,'0'); const mm = String(m).padStart(2,'0'); const ss = String(s).padStart(2,'0');
-        const colorClass = sec<=60 ? 'badge-error' : (sec<=300 ? 'badge-warning' : 'badge-info');
-        badgeHTML = `<span class="badge ${colorClass} badge-xs font-mono whitespace-nowrap tabular-nums" data-timer-chrono data-label="Despachando" data-caja-id="${safeHTML(group.cajaId)}">${hh}:${mm}:${ss}</span>`;
-        actionsHTML = `<div class="flex gap-1" data-timer-actions data-caja-id="${safeHTML(group.cajaId)}">
-            <button class="btn btn-ghost btn-xs" data-action="timer-clear" data-caja-id="${safeHTML(group.cajaId)}" title="Reiniciar"><span class="material-icons text-[14px]">restart_alt</span></button>
-          </div>`;
-      } else {
-        badgeHTML = `<span class="badge badge-success badge-xs font-mono">Lista para Despacho</span>`;
-        actionsHTML = `<div class="flex gap-1" data-timer-actions data-caja-id="${safeHTML(group.cajaId)}">
-            <button class="btn btn-ghost btn-xs" data-action="timer-start" data-caja-id="${safeHTML(group.cajaId)}" title="Iniciar"><span class="material-icons text-[14px]">play_arrow</span></button>
-          </div>`;
-      }
-    } else {
-      actionsHTML = `<button class="btn btn-ghost btn-xs" data-action="timer-start" data-caja-id="${safeHTML(group.cajaId)}" title="Iniciar"><span class="material-icons text-[14px]">play_arrow</span></button>`;
-    }
+    const badgeHTML = '<span class="badge badge-ghost badge-xs">Cronómetro en Ensamblaje</span>';
+    const actionsHTML = '<span class="text-[10px] opacity-50">Sin acciones</span>';
     const categoriaBadges = Object.entries(group.categorias).sort().map(([k,v])=>`<span class="badge badge-ghost badge-xs">${k} x${v}</span>`).join(' ');
     const codes = group.items.slice(0,8).map(it=>`<span class="badge badge-neutral badge-xs font-mono" title="${safeHTML(it.codigo)}">${safeHTML(it.codigo.slice(-6))}</span>`).join(' ');
     return `<div class="card bg-base-100 shadow-sm border border-base-200 p-2 cursor-pointer hover:border-primary/60 transition" data-listo-caja="${safeHTML(group.lote)}" data-caja-id="${safeHTML(group.cajaId)}">
@@ -2076,6 +2004,7 @@
     }
 
     function computeDurationSec(){
+      if(!hrInput && !minInput) return 0;
       const hrs = Number(hrInput?.value || '0');
       const mins = Number(minInput?.value || '0');
       const totalMin = (Number.isFinite(hrs) ? hrs : 0) * 60 + (Number.isFinite(mins) ? mins : 0);
@@ -2083,8 +2012,7 @@
     }
 
     function updateConfirmState(){
-      const durationSec = computeDurationSec();
-      const ready = queue.length && durationSec > 0;
+      const ready = queue.length > 0;
       if(confirmBtn){
         confirmBtn.disabled = !ready;
       }
@@ -2172,24 +2100,21 @@
         const isSelected = String(entry.cajaId) === String(selectedCajaId);
         const orderLabel = entry.orderNum ? entry.orderNum : (entry.orderId ? `#${entry.orderId}` : '-');
         const pendLabel = entry.pendientes != null ? entry.pendientes : '?';
-        const needsForce = (!entry.allEnsamblado || entry.timerActive);
         const pendValue = safeHTML(String(pendLabel));
         const badges = [];
         if(!entry.allEnsamblado){ badges.push(`<span class="badge badge-error badge-xs text-white">Pend ${pendValue}</span>`); }
         if(entry.timerActive){ badges.push('<span class="badge badge-info badge-xs text-white">Cronometro activo</span>'); }
-        if(needsForce && entry.force){ badges.push('<span class="badge badge-warning badge-xs text-black">Forzado</span>'); }
         const badgesHtml = badges.length
           ? `<div class="flex flex-wrap items-center justify-start sm:justify-end gap-1 text-[9px] font-semibold">${badges.join('')}</div>`
           : '';
-        const warnHtmlParts = [];
-        const warnPlainParts = [];
-        if(!entry.allEnsamblado){ warnHtmlParts.push('<span>La caja tiene componentes pendientes o en Ensamblaje.</span>'); warnPlainParts.push('Componentes pendientes.'); }
-        if(entry.timerActive){ warnHtmlParts.push('<span>Cronometro en progreso.</span>'); warnPlainParts.push('Cronometro activo.'); }
-        const warnings = needsForce
-          ? `<div class="mt-3 text-[11px] text-warning flex flex-wrap items-center gap-2">${warnHtmlParts.join(' ')}<button type="button" class="btn btn-ghost btn-xs text-warning hover:bg-warning/10" data-toggle-force="${safeHTML(entry.cajaId)}">${entry.force ? 'Cancelar forzar' : 'Permitir mover incompleta'}</button></div>`
+        const warnParts = [];
+        if(!entry.allEnsamblado){ warnParts.push('La caja tiene componentes pendientes o en Ensamblaje.'); }
+        if(entry.timerActive){ warnParts.push('Cronómetro en progreso, se conservará en Lista para Despacho.'); }
+        const warnings = warnParts.length
+          ? `<div class="mt-3 text-[11px] text-warning flex flex-wrap items-center gap-2">${warnParts.map(p=>`<span>${safeHTML(p)}</span>`).join('')}</div>`
           : '';
-        const collapsedNotice = (!isSelected && needsForce)
-          ? `<div class="px-3 pb-3 text-[10px] text-warning">${warnPlainParts.join(' ')}</div>`
+        const collapsedNotice = (!isSelected && warnParts.length)
+          ? `<div class="px-3 pb-3 text-[10px] text-warning">${warnParts.map(safeHTML).join(' ')}</div>`
           : '';
         const componentsMarkup = formatComponents(entry);
         const details = isSelected
@@ -2229,25 +2154,6 @@
       renderQueue();
     }
 
-    function toggleForce(cajaId){
-      const entry = queue.find(item => String(item.cajaId) === String(cajaId));
-      if(!entry) return;
-      const needsForce = (!entry.allEnsamblado || entry.timerActive);
-      if(!needsForce) return;
-      entry.force = !entry.force;
-      renderQueue();
-      if(msg){
-        const reasons = [];
-        if(!entry.allEnsamblado) reasons.push('componentes pendientes');
-        if(entry.timerActive) reasons.push('cronometro activo');
-        if(entry.force){
-          msg.textContent = `Caja ${entry.lote} marcada para mover (${reasons.join(' y ')}).`;
-        } else {
-          msg.textContent = `Caja ${entry.lote} requiere completar ${reasons.join(' y ')} o habilitar el forzado.`;
-        }
-      }
-    }
-
     async function lookup(code){
       if(!code || pendingRfids.has(code)) return;
       pendingRfids.add(code);
@@ -2282,7 +2188,6 @@
           return [];
         })();
         let entry = queue.find(item => String(item.cajaId) === String(cajaId));
-        const needsForce = (!isComplete || timerActive);
         if(!entry){
           entry = {
             cajaId,
@@ -2296,8 +2201,7 @@
             rfids: [],
             allEnsamblado: isComplete,
             timer: data.timer || null,
-            timerActive,
-            force: !needsForce
+            timerActive
           };
           queue.push(entry);
         } else {
@@ -2311,21 +2215,18 @@
           entry.allEnsamblado = isComplete;
           entry.timer = data.timer || entry.timer;
           entry.timerActive = timerActive;
-          if(!needsForce) entry.force = true;
         }
         if(!entry.rfids.includes(code)) entry.rfids.push(code);
         seenRfids.add(code);
         selectedCajaId = entry.cajaId;
         renderQueue();
         if(msg){
-          if(needsForce){
-            const reasons = [];
-            if(!isComplete) reasons.push(`${entry.pendientes ?? 'algunos'} pendientes`);
-            if(timerActive) reasons.push('cronometro activo');
-            msg.textContent = `Caja ${entry.lote} tiene ${reasons.join(' y ')}. Usa "Permitir mover incompleta" para forzar.`;
-          } else {
-            msg.textContent = `Caja ${entry.lote} lista (${entry.total || 0} items).`;
-          }
+          const notes = [];
+          if(!isComplete) notes.push(`${entry.pendientes ?? 'algunos'} pendientes`);
+          if(timerActive) notes.push('cronometro activo');
+          msg.textContent = notes.length
+            ? `Caja ${entry.lote} se moverá con ${notes.join(' y ')}.`
+            : `Caja ${entry.lote} lista (${entry.total || 0} items).`;
         }
       } catch(err){
         console.error('[Acond] despacho lookup error', err);
@@ -2369,11 +2270,6 @@
 
     confirmBtn?.addEventListener('click', async ()=>{
       const durationSec = computeDurationSec();
-      if(durationSec <= 0){
-        if(msg){ msg.textContent = 'Define una duracion valida antes de marcar.'; }
-        updateConfirmState();
-        return;
-      }
       if(!queue.length){
         if(msg){ msg.textContent = 'No hay cajas escaneadas.'; }
         return;
@@ -2397,31 +2293,18 @@
           errors.push(`Caja ${entry.lote}: sin RFID para mover.`);
           continue;
         }
-        const needsForce = (!entry.allEnsamblado || entry.timerActive);
-        if(needsForce && !entry.force){
-          errors.push(`Caja ${entry.lote}: habilita "Permitir mover incompleta".`);
-          continue;
-        }
-        const reasons = [];
-        if(!entry.allEnsamblado) reasons.push('componentes pendientes');
-        if(entry.timerActive) reasons.push('cronometro en progreso');
-        if(needsForce){
-          const proceed = window.confirm(`La caja ${entry.lote} tiene ${reasons.join(' y ')}. Deseas moverla de todas formas?`);
-          if(!proceed){
-            errors.push(`Caja ${entry.lote}: cancelada por el usuario.`);
-            continue;
-          }
-        }
-        const attempt = await postJSONWithSedeTransfer('/operacion/acond/despacho/move', { rfid, durationSec, allowIncomplete: needsForce, zona_id: selectedZonaId, seccion_id: selectedSeccionId }, {
+        const movePayload = { rfid, zona_id: selectedZonaId, seccion_id: selectedSeccionId };
+        if(durationSec > 0){ movePayload.durationSec = durationSec; }
+        const attempt = await postJSONWithSedeTransfer('/operacion/acond/despacho/move', movePayload, {
           promptMessage: (data) => data?.confirm || data?.error || `La caja ${entry.lote} pertenece a otra sede. ¿Deseas trasladarla a tu sede actual?`
         });
         if(attempt.cancelled){
           errors.push(`Caja ${entry.lote}: operación cancelada por el usuario.`);
           continue;
         }
-        const payload = attempt.data || {};
-        if(!attempt.httpOk || payload.ok === false){
-          const message = payload.error || payload.message || `Error (${attempt.status || 0})`;
+        const attemptPayload = attempt.data || {};
+        if(!attempt.httpOk || attemptPayload.ok === false){
+          const message = attemptPayload.error || attemptPayload.message || `Error (${attempt.status || 0})`;
           errors.push(`Caja ${entry.lote}: ${message}`);
           continue;
         }
@@ -2462,14 +2345,6 @@
       if(removeBtn){
         const id = removeBtn.getAttribute('data-remove-caja');
         if(id) removeCaja(id);
-        ev.preventDefault();
-        ev.stopPropagation();
-        return;
-      }
-      const toggle = ev.target.closest('[data-toggle-force]');
-      if(toggle){
-        const id = toggle.getAttribute('data-toggle-force');
-        if(id) toggleForce(id);
         ev.preventDefault();
         ev.stopPropagation();
         return;
