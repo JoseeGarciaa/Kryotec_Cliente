@@ -48,6 +48,17 @@ const inferLitrajeFromRow = (row: any): string | null => {
   );
 };
 
+const ensuredTempColumnsTenants = new Set<string>();
+const ensureInventarioTempColumns = async (tenant: string) => {
+  if (!tenant || ensuredTempColumnsTenants.has(tenant)) return;
+  await withTenant(tenant, async (client) => {
+    await client.query(`ALTER TABLE inventario_credocubes ADD COLUMN IF NOT EXISTS temp_salida_c numeric(5,2)`);
+    await client.query(`ALTER TABLE inventario_credocubes ADD COLUMN IF NOT EXISTS temp_llegada_c numeric(5,2)`);
+    await client.query(`ALTER TABLE inventario_credocubes ADD COLUMN IF NOT EXISTS sensor_id text`);
+  });
+  ensuredTempColumnsTenants.add(tenant);
+};
+
 // Debug control for kanbanData verbosity
 const KANBAN_DEBUG = process.env.KANBAN_DEBUG === '1';
 let lastKanbanLog = 0; // rate-limit logs (ms)
@@ -1514,7 +1525,7 @@ export const OperacionController = {
             await c.query(
               `UPDATE inventario_credocubes ic
                   SET estado='Acondicionamiento',
-                      sub_estado='Lista para Despacho',
+                      sub_estado='Ensamblaje',
                       sede_id = COALESCE($2::int, ic.sede_id)
                 WHERE ic.rfid = ANY($1::text[])
                   AND ic.estado='Operación'`,
@@ -1557,12 +1568,29 @@ export const OperacionController = {
   devolucionCajaToPendInsp: async (req: Request, res: Response) => {
     const tenant = (req as any).user?.tenant;
     const sedeId = getRequestSedeId(req);
-    const { caja_id, durationSec } = req.body as any;
+    const { caja_id, durationSec, temp_llegada_c: tempLlegadaRaw } = req.body as any;
     const cajaId = Number(caja_id);
   const dur = Number(durationSec);
     const allowSedeTransferFlag = resolveAllowSedeTransferFlag(req, req.body?.allowSedeTransfer);
     if(!Number.isFinite(cajaId) || cajaId<=0) return res.status(400).json({ ok:false, error:'caja_id inválido' });
     try {
+      await ensureInventarioTempColumns(tenant);
+      const normalizeTemp = (input: any): number | undefined => {
+        if(input === undefined || input === null || input === '') return undefined;
+        const text = String(input).trim().replace(',', '.');
+        if(!text) return undefined;
+        const num = Number(text);
+        if(!Number.isFinite(num)) return NaN;
+        return Math.round(num * 100) / 100;
+      };
+      const tempLlegadaResult = normalizeTemp(tempLlegadaRaw);
+      if(tempLlegadaResult === undefined){
+        return res.status(400).json({ ok:false, error:'Debes ingresar la temperatura de llegada (°C).' });
+      }
+      if(Number.isNaN(tempLlegadaResult)){
+        return res.status(400).json({ ok:false, error:'Temperatura de llegada inválida.' });
+      }
+      const tempLlegadaValue = tempLlegadaResult;
       // Validar elegibilidad primero
       const eligQ = await withTenant(tenant, (c)=> c.query(
         `SELECT COUNT(*)::int AS total,
@@ -1618,12 +1646,13 @@ export const OperacionController = {
             `UPDATE inventario_credocubes ic
                 SET estado='En bodega',
                     sub_estado='Pendiente a Inspección',
+                    temp_llegada_c=$5,
                     zona_id = $3,
                     seccion_id = $4,
                     sede_id = COALESCE($2::int, ic.sede_id)
               WHERE ic.rfid = ANY($1::text[])
                 AND ic.estado='Operación'`,
-            [rfids, targetSede, zonaParam, seccionParam]
+            [rfids, targetSede, zonaParam, seccionParam, tempLlegadaValue]
           );
           await c.query(`UPDATE acond_caja_timers SET active=false, started_at=NULL, duration_sec=NULL, updated_at=NOW() WHERE caja_id=$1`, [cajaId]);
           await c.query(`UPDATE operacion_caja_timers SET active=false, started_at=NULL, duration_sec=NULL, updated_at=NOW() WHERE caja_id=$1`, [cajaId]);
@@ -1651,7 +1680,7 @@ export const OperacionController = {
           await c.query('COMMIT');
         } catch(e){ await c.query('ROLLBACK'); throw e; }
       }, { allowCrossSedeTransfer: transferCheck.allowCrossTransfer });
-      res.json({ ok:true });
+      res.json({ ok:true, temp_llegada_c: tempLlegadaValue });
     } catch(e:any){ res.status(500).json({ ok:false, error: e.message||'Error enviando a Pendiente a Inspección' }); }
   },
   devolucionValidate: async (req: Request, res: Response) => {
@@ -1780,7 +1809,7 @@ export const OperacionController = {
           await c.query(
             `UPDATE inventario_credocubes ic
                 SET estado='Acondicionamiento',
-                    sub_estado='Lista para Despacho',
+                    sub_estado='Ensamblaje',
                     zona_id = $3,
                     seccion_id = $4,
                     sede_id = COALESCE($2::int, ic.sede_id)
@@ -2540,7 +2569,12 @@ export const OperacionController = {
           // 1) Devolver a En bodega sólo los RFIDs de esta caja cuyo estado actual sea Inspección
           const upd = await c.query(
             `UPDATE inventario_credocubes ic
-                SET estado='En bodega', sub_estado=NULL, lote=NULL,
+                SET estado='En bodega',
+                    sub_estado=NULL,
+                    lote=NULL,
+                    temp_salida_c=NULL,
+                    temp_llegada_c=NULL,
+                    sensor_id=NULL,
                     sede_id = COALESCE($2::int, ic.sede_id)
               WHERE ic.rfid IN (SELECT rfid FROM acond_caja_items WHERE caja_id=$1)
                 AND LOWER(ic.estado) IN ('inspeccion','inspección')
@@ -2625,6 +2659,9 @@ export const OperacionController = {
                 SET estado='En bodega',
                     sub_estado=NULL,
                     lote=NULL,
+                    temp_salida_c=NULL,
+                    temp_llegada_c=NULL,
+                    sensor_id=NULL,
                     sede_id = COALESCE($2::int, ic.sede_id)
               WHERE ic.rfid = ANY($1::text[])
             RETURNING ic.rfid`,
@@ -4287,6 +4324,7 @@ export const OperacionController = {
     const tenant = (req as any).user?.tenant;
     const sedeId = getRequestSedeId(req);
     try {
+      await ensureInventarioTempColumns(tenant);
       // Ensure tables for cajas
       await withTenant(tenant, async (c) => {
        // Migrate from public to tenant schema if needed (avoid duplicates across schemas)
@@ -4461,7 +4499,8 @@ export const OperacionController = {
           const itemsParams: any[] = [cajasRows.map(r=>r.caja_id)];
           const itemsSede = pushSedeFilter(itemsParams, sedeId);
           const itemsQ = await withTenant(tenant, (c) => c.query(
-            `SELECT c.caja_id, aci.rol, ic.rfid, ic.sub_estado, ic.nombre_unidad, m.litraje
+                `SELECT c.caja_id, aci.rol, ic.rfid, ic.sub_estado, ic.nombre_unidad, m.litraje,
+                  ic.temp_salida_c, ic.temp_llegada_c, ic.sensor_id
                FROM acond_caja_items aci
                JOIN acond_cajas c ON c.caja_id = aci.caja_id
                JOIN inventario_credocubes ic ON ic.rfid = aci.rfid
@@ -4507,7 +4546,8 @@ export const OperacionController = {
             const itemsParams2: any[] = [cajasRows.map(r=>r.caja_id)];
             const itemsSede2 = pushSedeFilter(itemsParams2, sedeId);
               const itemsQ = await withTenant(tenant, (c) => c.query(
-                `SELECT c.caja_id, aci.rol, ic.rfid, ic.sub_estado, ic.nombre_unidad
+                `SELECT c.caja_id, aci.rol, ic.rfid, ic.sub_estado, ic.nombre_unidad,
+                        ic.temp_salida_c, ic.temp_llegada_c, ic.sensor_id
                  FROM acond_caja_items aci
                  JOIN acond_cajas c ON c.caja_id = aci.caja_id
                  JOIN inventario_credocubes ic ON ic.rfid = aci.rfid
@@ -4524,6 +4564,7 @@ export const OperacionController = {
     const listoSede = pushSedeFilter(listoParams, sedeId);
   const listoRows = await withTenant(tenant, (c)=> c.query(
     `SELECT ic.rfid, ic.nombre_unidad, ic.lote, ic.estado, ic.sub_estado, NOW() AS updated_at, m.nombre_modelo,
+      ic.temp_salida_c, ic.temp_llegada_c, ic.sensor_id,
       act.started_at AS timer_started_at, act.duration_sec AS timer_duration_sec, act.active AS timer_active,
       c.lote AS caja_lote, c.caja_id, c.order_id, o.numero_orden AS order_num, o.cliente AS order_client
     FROM inventario_credocubes ic
@@ -4541,10 +4582,20 @@ export const OperacionController = {
   const nowIso = nowRes.rows[0]?.now;
   const nowMs = nowIso ? new Date(nowIso).getTime() : Date.now();
   // Map caja items by caja_id for componentes list
-  const componentesPorCaja: Record<string, { tipo:string; codigo:string; sub_estado?:string; nombreUnidad?:string|null }[]> = {};
+  const componentesPorCaja: Record<string, { tipo:string; codigo:string; sub_estado?:string; nombreUnidad?:string|null; tempSalidaC?: number | null; tempLlegadaC?: number | null; sensorId?: string | null }[]> = {};
   for(const it of cajaItemsRows){
-    const arr = componentesPorCaja[it.caja_id] || (componentesPorCaja[it.caja_id] = [] as { tipo:string; codigo:string; sub_estado?:string; nombreUnidad?:string|null }[]);
-    arr.push({ tipo: it.rol, codigo: it.rfid, sub_estado: (it as any).sub_estado, nombreUnidad: (it as any).nombre_unidad || null });
+    const arr = componentesPorCaja[it.caja_id] || (componentesPorCaja[it.caja_id] = [] as { tipo:string; codigo:string; sub_estado?:string; nombreUnidad?:string|null; tempSalidaC?: number | null; tempLlegadaC?: number | null; sensorId?: string | null }[]);
+    const tempSalida = it.temp_salida_c !== null && it.temp_salida_c !== undefined ? Number(it.temp_salida_c) : null;
+    const tempLlegada = it.temp_llegada_c !== null && it.temp_llegada_c !== undefined ? Number(it.temp_llegada_c) : null;
+    arr.push({
+      tipo: it.rol,
+      codigo: it.rfid,
+      sub_estado: (it as any).sub_estado,
+      nombreUnidad: (it as any).nombre_unidad || null,
+      tempSalidaC: Number.isFinite(tempSalida) ? tempSalida : null,
+      tempLlegadaC: Number.isFinite(tempLlegada) ? tempLlegada : null,
+      sensorId: (it as any).sensor_id ? String((it as any).sensor_id) : null
+    });
   }
   const cajasUI = cajasRows.map(r => {
     let startsAt: string | null = r.timer_started_at || null;
@@ -4561,6 +4612,9 @@ export const OperacionController = {
     const allEnsamblado = comps.length>0 && comps.every((cmp) => cmp.sub_estado==='Ensamblado');
     const cubeComp = comps.find((cmp) => cmp.tipo === 'cube' && cmp.nombreUnidad);
     const nombreCaja = cubeComp?.nombreUnidad?.trim() || r.lote || `Caja #${r.caja_id}`;
+    const tempSalida = comps.find((cmp) => cmp.tempSalidaC != null)?.tempSalidaC ?? null;
+    const tempLlegada = comps.find((cmp) => cmp.tempLlegadaC != null)?.tempLlegadaC ?? null;
+    const sensorId = comps.find((cmp) => cmp.sensorId)?.sensorId || null;
     return {
       id: r.caja_id,
       codigoCaja: r.lote || `Caja #${r.caja_id}`,
@@ -4572,7 +4626,10 @@ export const OperacionController = {
       orderNumero: (r as any).order_num ?? null,
       orderCliente: (r as any).order_client ?? null,
       timer: startsAt ? { startsAt, endsAt, completedAt } : null,
-      componentes: componentesPorCaja[r.caja_id] || []
+      componentes: componentesPorCaja[r.caja_id] || [],
+      tempSalidaC: tempSalida,
+      tempLlegadaC: tempLlegada,
+      sensorId
     };
   });
   const listoDespacho = listoRows.rows.map(r => {
@@ -4595,6 +4652,9 @@ export const OperacionController = {
     if(/vip/.test(modeloLower)) categoriaSimple = 'vip';
     else if(/tic/.test(modeloLower)) categoriaSimple = 'tic';
     else if(/cube/.test(modeloLower)) categoriaSimple = 'cube';
+    const tempSalidaVal = r.temp_salida_c !== null && r.temp_salida_c !== undefined ? Number(r.temp_salida_c) : null;
+    const tempLlegadaVal = r.temp_llegada_c !== null && r.temp_llegada_c !== undefined ? Number(r.temp_llegada_c) : null;
+    const sensorIdVal = r.sensor_id ? String(r.sensor_id) : null;
     return {
       caja_id: r.caja_id,
       codigo: r.rfid,
@@ -4608,7 +4668,10 @@ export const OperacionController = {
       cronometro: startsAt ? { startsAt, endsAt, completedAt } : null,
       order_id: (r as any).order_id ?? null,
       order_num: (r as any).order_num ?? null,
-      order_client: (r as any).order_client ?? null
+      order_client: (r as any).order_client ?? null,
+      temp_salida_c: Number.isFinite(tempSalidaVal) ? tempSalidaVal : null,
+      temp_llegada_c: Number.isFinite(tempLlegadaVal) ? tempLlegadaVal : null,
+      sensor_id: sensorIdVal
     };
   });
   res.json({ ok:true, now: nowIso, serverNow: nowIso, disponibles: { tics: tics.rows, cubes: cubes.rows, vips: vips.rows }, cajas: cajasUI, listoDespacho });
@@ -5204,15 +5267,19 @@ export const OperacionController = {
       // 2. Traer componentes actuales + litraje/rol (fallback si columna litraje no existe)
       let currentQ:any; let litrajeDisponible = true;
       try {
-        currentQ = await withTenant(tenant, (c)=> c.query(
+           currentQ = await withTenant(tenant, (c)=> c.query(
           `SELECT aci.rfid,
-                  CASE WHEN m.nombre_modelo ILIKE '%cube%' THEN 'cube'
-                       WHEN m.nombre_modelo ILIKE '%vip%' THEN 'vip'
-                       WHEN m.nombre_modelo ILIKE '%tic%' THEN 'tic'
-                       ELSE 'tic' END AS rol,
-                  m.litraje,
-                  m.nombre_modelo,
-                  ic.estado, ic.sub_estado
+               CASE WHEN m.nombre_modelo ILIKE '%cube%' THEN 'cube'
+                 WHEN m.nombre_modelo ILIKE '%vip%' THEN 'vip'
+                 WHEN m.nombre_modelo ILIKE '%tic%' THEN 'tic'
+                 ELSE 'tic' END AS rol,
+               m.litraje,
+               m.nombre_modelo,
+               ic.estado,
+               ic.sub_estado,
+               ic.temp_salida_c,
+               ic.temp_llegada_c,
+               ic.sensor_id
              FROM acond_caja_items aci
              JOIN inventario_credocubes ic ON ic.rfid = aci.rfid
              JOIN modelos m ON m.modelo_id = ic.modelo_id
@@ -5227,7 +5294,11 @@ export const OperacionController = {
                          WHEN m.nombre_modelo ILIKE '%tic%' THEN 'tic'
                     ELSE 'tic' END AS rol,
                   m.nombre_modelo,
-                    ic.estado, ic.sub_estado
+                    ic.estado,
+                    ic.sub_estado,
+                    ic.temp_salida_c,
+                    ic.temp_llegada_c,
+                    ic.sensor_id
                FROM acond_caja_items aci
                JOIN inventario_credocubes ic ON ic.rfid = aci.rfid
                JOIN modelos m ON m.modelo_id = ic.modelo_id
@@ -5286,28 +5357,36 @@ export const OperacionController = {
         // recargar
           let recQ;
           if(litrajeDisponible){
-            recQ = await withTenant(tenant, (c)=> c.query(
-              `SELECT aci.rfid,
-                      CASE WHEN m.nombre_modelo ILIKE '%cube%' THEN 'cube'
-                           WHEN m.nombre_modelo ILIKE '%vip%' THEN 'vip'
-                           WHEN m.nombre_modelo ILIKE '%tic%' THEN 'tic'
-                           ELSE 'tic' END AS rol,
-                      m.litraje,
-                      m.nombre_modelo,
-                      ic.estado, ic.sub_estado
-                 FROM acond_caja_items aci
-                 JOIN inventario_credocubes ic ON ic.rfid = aci.rfid
-                 JOIN modelos m ON m.modelo_id = ic.modelo_id
-                WHERE aci.caja_id=$1`, [cajaId]));
+              recQ = await withTenant(tenant, (c)=> c.query(
+                `SELECT aci.rfid,
+                  CASE WHEN m.nombre_modelo ILIKE '%cube%' THEN 'cube'
+                    WHEN m.nombre_modelo ILIKE '%vip%' THEN 'vip'
+                    WHEN m.nombre_modelo ILIKE '%tic%' THEN 'tic'
+                    ELSE 'tic' END AS rol,
+                  m.litraje,
+                  m.nombre_modelo,
+                  ic.estado,
+                  ic.sub_estado,
+                  ic.temp_salida_c,
+                  ic.temp_llegada_c,
+                  ic.sensor_id
+                FROM acond_caja_items aci
+                JOIN inventario_credocubes ic ON ic.rfid = aci.rfid
+                JOIN modelos m ON m.modelo_id = ic.modelo_id
+               WHERE aci.caja_id=$1`, [cajaId]));
           } else {
             recQ = await withTenant(tenant, (c)=> c.query(
               `SELECT aci.rfid,
                       CASE WHEN m.nombre_modelo ILIKE '%cube%' THEN 'cube'
                            WHEN m.nombre_modelo ILIKE '%vip%' THEN 'vip'
                            WHEN m.nombre_modelo ILIKE '%tic%' THEN 'tic'
-                           ELSE 'tic' END AS rol,
-                      m.nombre_modelo,
-                      ic.estado, ic.sub_estado
+                    ELSE 'tic' END AS rol,
+                  m.nombre_modelo,
+                  ic.estado,
+                  ic.sub_estado,
+                  ic.temp_salida_c,
+                  ic.temp_llegada_c,
+                  ic.sensor_id
                  FROM acond_caja_items aci
                  JOIN inventario_credocubes ic ON ic.rfid = aci.rfid
                  JOIN modelos m ON m.modelo_id = ic.modelo_id
@@ -5319,6 +5398,38 @@ export const OperacionController = {
       let listos = 0;
       for(const r of rows){ if(r.sub_estado==='Lista para Despacho' || r.sub_estado==='Listo') listos++; }
       const pendientes = total - listos;
+      let tempSalidaVal: number | null = null;
+      let tempSalidaMixed = false;
+      let tempLlegadaVal: number | null = null;
+      let tempLlegadaMixed = false;
+      let sensorVal: string | null = null;
+      let sensorMixed = false;
+      for(const r of rows){
+        if(!tempSalidaMixed && r.temp_salida_c !== null && r.temp_salida_c !== undefined){
+          const numeric = Number(r.temp_salida_c);
+          if(Number.isFinite(numeric)){
+            if(tempSalidaVal === null){ tempSalidaVal = numeric; }
+            else if(Math.abs(tempSalidaVal - numeric) > 0.001){ tempSalidaVal = null; tempSalidaMixed = true; }
+          }
+        }
+        if(!tempLlegadaMixed && r.temp_llegada_c !== null && r.temp_llegada_c !== undefined){
+          const numeric = Number(r.temp_llegada_c);
+          if(Number.isFinite(numeric)){
+            if(tempLlegadaVal === null){ tempLlegadaVal = numeric; }
+            else if(Math.abs(tempLlegadaVal - numeric) > 0.001){ tempLlegadaVal = null; tempLlegadaMixed = true; }
+          }
+        }
+        if(!sensorMixed && r.sensor_id){
+          const trimmed = String(r.sensor_id).trim();
+          if(trimmed){
+            if(sensorVal === null){ sensorVal = trimmed; }
+            else if(sensorVal !== trimmed){ sensorVal = null; sensorMixed = true; }
+          }
+        }
+      }
+      const tempSalidaCaja = tempSalidaMixed ? null : tempSalidaVal;
+      const tempLlegadaCaja = tempLlegadaMixed ? null : tempLlegadaVal;
+      const sensorCaja = sensorMixed ? null : sensorVal;
       let timer = null;
       const timerQ = await withTenant(tenant, (c)=> c.query(
         `SELECT started_at, duration_sec, active FROM acond_caja_timers WHERE caja_id=$1`,
@@ -5359,7 +5470,10 @@ export const OperacionController = {
         pendientes,
         total,
         allEnsamblado,
-        componentesOcultos: !allEnsamblado
+        componentesOcultos: !allEnsamblado,
+        temp_salida_c: tempSalidaCaja,
+        temp_llegada_c: tempLlegadaCaja,
+        sensor_id: sensorCaja
       });
     } catch(e:any){
       res.status(500).json({ ok:false, error: e.message||'Error lookup' });
@@ -5369,7 +5483,7 @@ export const OperacionController = {
   acondDespachoMove: async (req: Request, res: Response) => {
     const tenant = (req as any).user?.tenant;
     const sedeId = getRequestSedeId(req);
-    const { rfid, durationSec: durationSecRaw, order_id } = req.body as any;
+    const { rfid, durationSec: durationSecRaw, order_id, temp_salida_c: tempSalidaRaw, sensor_id: sensorIdRaw } = req.body as any;
     const allowSedeTransferFlag = resolveAllowSedeTransferFlag(req, req.body?.allowSedeTransfer);
     const code = typeof rfid === 'string' ? rfid.trim() : '';
     const durationProvided = durationSecRaw !== undefined && durationSecRaw !== null && durationSecRaw !== '';
@@ -5379,8 +5493,32 @@ export const OperacionController = {
     }
     const durationOverride = durationProvided ? Math.round(parsedDuration) : null;
     if(code.length !== 24) return res.status(400).json({ ok:false, error:'RFID inválido' });
+    const normalizeTemp = (input: any): number | undefined => {
+      if(input === undefined || input === null || input === '') return undefined;
+      const text = String(input).trim().replace(',', '.');
+      if(!text) return undefined;
+      const num = Number(text);
+      if(!Number.isFinite(num)) return NaN;
+      return Math.round(num * 100) / 100;
+    };
+    const tempSalidaResult = normalizeTemp(tempSalidaRaw);
+    if(tempSalidaResult === undefined){
+      return res.status(400).json({ ok:false, error:'Debes ingresar la temperatura de salida (°C).' });
+    }
+    if(Number.isNaN(tempSalidaResult)){
+      return res.status(400).json({ ok:false, error:'Temperatura de salida inválida.' });
+    }
+    const tempSalidaValue = tempSalidaResult;
+    let sensorId = typeof sensorIdRaw === 'string' ? sensorIdRaw.trim() : '';
+    if(!sensorId){
+      return res.status(400).json({ ok:false, error:'Debes ingresar el serial del sensor.' });
+    }
+    if(sensorId.length > 120){
+      sensorId = sensorId.slice(0, 120);
+    }
     let responseTimerDuration: number | null = null;
     try {
+      await ensureInventarioTempColumns(tenant);
       const cajaInfoQ = await withTenant(tenant, (c)=> c.query(
         `SELECT c.caja_id, c.lote, c.order_id
            FROM acond_caja_items aci
@@ -5512,10 +5650,12 @@ export const OperacionController = {
           const upd = await c.query(
             `UPDATE inventario_credocubes ic
                 SET sub_estado='Lista para Despacho',
+                    temp_salida_c=$3,
+                    sensor_id=$4,
                     sede_id = COALESCE($2::int, ic.sede_id)
                WHERE ic.rfid IN (SELECT rfid FROM acond_caja_items WHERE caja_id=$1)
                  AND ic.estado='Acondicionamiento'
-                 AND ic.sub_estado ${estadoFiltro}`, [cajaId, targetSede]);
+                 AND ic.sub_estado ${estadoFiltro}`, [cajaId, targetSede, tempSalidaValue, sensorId]);
           // Si viene order_id y la caja no tiene uno asignado todavía, asociarlo
           if(order_id!=null && cajaOrderId==null){
             const parsed = Number(order_id);
@@ -5533,7 +5673,7 @@ export const OperacionController = {
           }
           await c.query('COMMIT');
           const timerPayload = responseTimerDuration != null ? { durationSec: responseTimerDuration } : null;
-          res.json({ ok:true, caja_id: cajaId, lote, moved: upd.rowCount, timer: timerPayload, timerActive });
+          res.json({ ok:true, caja_id: cajaId, lote, moved: upd.rowCount, timer: timerPayload, timerActive, temp_salida_c: tempSalidaValue, sensor_id: sensorId });
         } catch(e){ await c.query('ROLLBACK'); throw e; }
       }, { allowCrossSedeTransfer: transferCheck.allowCrossTransfer });
     } catch(e:any){
@@ -5637,6 +5777,7 @@ export const OperacionController = {
     let val = typeof code === 'string' ? code.trim() : '';
     if(!val) return res.status(400).json({ ok:false, error:'Código requerido' });
     try {
+      await ensureInventarioTempColumns(tenant);
       // Resolve caja_id
       let cajaRow: any = null;
       if(val.length === 24){
@@ -5652,7 +5793,7 @@ export const OperacionController = {
       if(!cajaRow) return res.status(404).json({ ok:false, error:'Caja no encontrada' });
       const cajaId = cajaRow.caja_id;
       const itemsQ = await withTenant(tenant, (c)=> c.query(
-        `SELECT aci.rol, ic.rfid, ic.estado, ic.sub_estado, m.nombre_modelo
+        `SELECT aci.rol, ic.rfid, ic.estado, ic.sub_estado, m.nombre_modelo, ic.temp_salida_c, ic.temp_llegada_c, ic.sensor_id
            FROM acond_caja_items aci
            JOIN inventario_credocubes ic ON ic.rfid = aci.rfid
            JOIN modelos m ON m.modelo_id = ic.modelo_id
@@ -5670,6 +5811,38 @@ export const OperacionController = {
       let timerRow: any = null;
       if(timerSingleQ.rowCount) timerRow = timerSingleQ.rows[0];
       const items = itemsQ.rows as any[];
+      let tempSalidaVal: number | null = null;
+      let tempSalidaMixed = false;
+      let tempLlegadaVal: number | null = null;
+      let tempLlegadaMixed = false;
+      let sensorVal: string | null = null;
+      let sensorMixed = false;
+      for(const it of items){
+        if(!tempSalidaMixed && it.temp_salida_c !== null && it.temp_salida_c !== undefined){
+          const numeric = Number(it.temp_salida_c);
+          if(Number.isFinite(numeric)){
+            if(tempSalidaVal === null){ tempSalidaVal = numeric; }
+            else if(Math.abs(tempSalidaVal - numeric) > 0.001){ tempSalidaVal = null; tempSalidaMixed = true; }
+          }
+        }
+        if(!tempLlegadaMixed && it.temp_llegada_c !== null && it.temp_llegada_c !== undefined){
+          const numeric = Number(it.temp_llegada_c);
+          if(Number.isFinite(numeric)){
+            if(tempLlegadaVal === null){ tempLlegadaVal = numeric; }
+            else if(Math.abs(tempLlegadaVal - numeric) > 0.001){ tempLlegadaVal = null; tempLlegadaMixed = true; }
+          }
+        }
+        if(!sensorMixed && it.sensor_id){
+          const trimmed = String(it.sensor_id).trim();
+          if(trimmed){
+            if(sensorVal === null){ sensorVal = trimmed; }
+            else if(sensorVal !== trimmed){ sensorVal = null; sensorMixed = true; }
+          }
+        }
+      }
+      const tempSalidaCaja = tempSalidaMixed ? null : tempSalidaVal;
+      const tempLlegadaCaja = tempLlegadaMixed ? null : tempLlegadaVal;
+      const sensorCaja = sensorMixed ? null : sensorVal;
       const allListo = items.every(i => i.estado==='Acondicionamiento' && (i.sub_estado==='Lista para Despacho' || i.sub_estado==='Listo'));
       const allOperacion = items.every(i => i.estado==='Operación');
       let timer: any = null;
@@ -5681,7 +5854,7 @@ export const OperacionController = {
   // Fetch order info for caja
   const orderQ = await withTenant(tenant, (c)=> c.query(`SELECT c.order_id, o.numero_orden AS order_num FROM acond_cajas c LEFT JOIN ordenes o ON o.id = c.order_id WHERE c.caja_id=$1`, [cajaId]));
   const orderRow = orderQ.rowCount ? orderQ.rows[0] as any : { order_id: null, order_num: null };
-  res.json({ ok:true, caja: { id: cajaId, lote: cajaRow.lote, items, allListo, allOperacion, timer, order_id: orderRow.order_id ?? null, order_num: orderRow.order_num ?? null } });
+  res.json({ ok:true, caja: { id: cajaId, lote: cajaRow.lote, items, allListo, allOperacion, timer, order_id: orderRow.order_id ?? null, order_num: orderRow.order_num ?? null, temp_salida_c: tempSalidaCaja, temp_llegada_c: tempLlegadaCaja, sensor_id: sensorCaja } });
     } catch(e:any){
       res.status(500).json({ ok:false, error: e.message||'Error lookup' });
     }

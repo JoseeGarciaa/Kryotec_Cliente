@@ -5,7 +5,7 @@
     <div class="lg:col-span-2 rounded-xl border border-base-300/50 bg-base-200/5 p-5">
       <div class="flex items-center gap-2 mb-4">
   <span id="dev-spin" class="loading loading-spinner loading-xs hidden"></span>
-  <span class="text-sm opacity-60">Listado de cajas activas. Procesa la devolución: si el cronómetro tiene &gt;50% restante vuelve a Acondicionamiento (Lista para Despacho); si no, va a Inspección.</span>
+  <span class="text-sm opacity-60">Listado de cajas activas. Procesa la devolución: si el cronómetro tiene &gt;50% restante vuelve a Acondicionamiento (Items en Ensamblaje); si no, va a Inspección.</span>
       </div>
       <div id="dev-caja-grid" class="grid gap-4 sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-4"></div>
       <div class="mt-6">
@@ -101,6 +101,14 @@
         </select>
       </label>
       <p id="dev-pi-location-hint" class="text-[11px] opacity-70 min-h-[16px]"></p>
+    </div>
+    <div class="grid gap-2 text-xs">
+      <label class="form-control">
+        <span class="label-text text-[11px] opacity-70">Temperatura de llegada (°C)</span>
+        <input id="dev-pi-temp" type="number" inputmode="decimal" step="0.1" class="input input-sm input-bordered" placeholder="Ej. 3.2" />
+      </label>
+      <div class="text-[11px] opacity-70">Sensor registrado: <span id="dev-pi-sensor" class="font-mono">-</span></div>
+      <div id="dev-pi-salida-wrap" class="text-[11px] opacity-70 hidden">Temp salida registrada: <span id="dev-pi-salida" class="font-mono">-</span></div>
     </div>
     <div class="text-[11px] opacity-70">Se moverá la caja a "En bodega · Pendiente a Inspección" solo al aceptar.</div>
     <div class="flex gap-2 pt-2">

@@ -41,6 +41,10 @@
   const piZona = qs('#dev-pi-zona');
   const piSeccion = qs('#dev-pi-seccion');
   const piLocationHint = qs('#dev-pi-location-hint');
+  const piTemp = qs('#dev-pi-temp');
+  const piSensor = qs('#dev-pi-sensor');
+  const piSalidaWrap = qs('#dev-pi-salida-wrap');
+  const piSalidaValue = qs('#dev-pi-salida');
   let piCajaId = null;
   let data = { cajas: [], serverNow: null, ordenes: {} };
   let serverOffset = 0; // serverNow - Date.now()
@@ -70,6 +74,16 @@
       .replace(/>/g,'&gt;')
       .replace(/"/g,'&quot;')
       .replace(/'/g,'&#39;');
+  }
+
+  function formatTempValue(value){
+    if(value === null || value === undefined || value === '') return '';
+    const num = Number(value);
+    if(Number.isFinite(num)){
+      const rounded = Math.round(num * 100) / 100;
+      return Number.isInteger(rounded) ? String(rounded) : String(rounded);
+    }
+    return String(value).trim();
   }
 
   function ensureDecideLocation(){
@@ -430,6 +444,13 @@
   function addScannedCaja(caja, code){
     const key = String(caja.id);
     if(scannedCajas.has(key)){
+      const existing = scannedCajas.get(key);
+      if(existing){
+        existing.tempSalida = caja.tempSalida ?? caja.temp_salida_c ?? existing.tempSalida ?? null;
+        existing.tempLlegada = caja.tempLlegada ?? caja.temp_llegada_c ?? existing.tempLlegada ?? null;
+        existing.sensorId = caja.sensorId ?? caja.sensor_id ?? existing.sensorId ?? '';
+        scannedCajas.set(key, existing);
+      }
       if(scanMsg) scanMsg.textContent = 'Caja ya escaneada';
       return false;
     }
@@ -441,7 +462,10 @@
       orderNumero: caja.orderNumero ?? caja.order_num ?? null,
       timer: caja.timer || null,
       componentes: Array.isArray(caja.componentes) ? caja.componentes : [],
-      code
+      code,
+      tempSalida: caja.tempSalida ?? caja.temp_salida_c ?? null,
+      tempLlegada: caja.tempLlegada ?? caja.temp_llegada_c ?? null,
+      sensorId: caja.sensorId ?? caja.sensor_id ?? ''
     });
     scannedCodes.add(code);
     renderScannedList();
@@ -493,6 +517,14 @@
       if(!j.ok){ if(scanMsg) scanMsg.textContent = j.error || 'No encontrado'; return false; }
       const cajaId = j.caja.id;
       let caja = (data.cajas||[]).find(c=> String(c.id)===String(cajaId));
+      const parseTemp = (value) => {
+        if(value === null || value === undefined || value === '') return null;
+        const num = Number(value);
+        return Number.isFinite(num) ? num : null;
+      };
+      const tempSalidaVal = parseTemp(j.caja.temp_salida_c);
+      const tempLlegadaVal = parseTemp(j.caja.temp_llegada_c);
+      const sensorText = j.caja.sensor_id != null ? String(j.caja.sensor_id).trim() : '';
       if(!caja){
         const cubeItem = (j.caja.items||[]).find(it=> inferTipo(it.nombre_modelo||it.nombre||'') === 'cube');
         const nombreCaja = j.caja.nombre_caja || j.caja.nombreCaja || cubeItem?.nombre_modelo || null;
@@ -503,7 +535,10 @@
           orderId: j.caja.order_id || null,
           orderNumero: j.caja.order_num || null,
           timer: j.caja.timer ? { startsAt: j.caja.timer.startsAt, endsAt: j.caja.timer.endsAt, completedAt: j.caja.timer.active===false? j.caja.timer.endsAt:null } : null,
-          componentes: (j.caja.items||[]).map(it=> ({ codigo: it.rfid, tipo: inferTipo(it.nombre_modelo||it.nombre||'') }))
+          componentes: (j.caja.items||[]).map(it=> ({ codigo: it.rfid, tipo: inferTipo(it.nombre_modelo||it.nombre||'') })),
+          tempSalida: tempSalidaVal,
+          tempLlegada: tempLlegadaVal,
+          sensorId: sensorText
         };
       }
       const items = (j.caja.items||[]);
@@ -512,6 +547,9 @@
         if(scanMsg) scanMsg.textContent='Caja no elegible: requiere Operación · Tránsito';
         return false;
       }
+      caja.tempSalida = tempSalidaVal;
+      caja.tempLlegada = tempLlegadaVal;
+      caja.sensorId = sensorText;
       const added = addScannedCaja(caja, code);
       if(scanCardBox) scanCardBox.innerHTML = miniCardHTML(caja);
       if(scanExtra) scanExtra.textContent = `Items: ${(caja.componentes||[]).length} · ID ${caja.id}`;
@@ -590,7 +628,7 @@
       const belowThreshold = remainingSeconds < REUSE_THRESHOLD_SEC;
       let html = '';
       if(reusable){
-        if(decideMsg) decideMsg.textContent = `Restan ${timeLabel} del cronómetro. ¿Deseas reutilizar la caja (volver a Acond · Lista para Despacho) o enviarla a Bodega · Pendiente a Inspección?`;
+        if(decideMsg) decideMsg.textContent = `Restan ${timeLabel} del cronómetro. ¿Deseas reutilizar la caja (volver a Acond · Ensamblaje) o enviarla a Bodega · Pendiente a Inspección?`;
         html = `<button class='btn btn-primary btn-sm flex-1' data-act='reuse' data-id='${id}'>Reutilizar</button>
     <button class='btn btn-outline btn-sm flex-1' data-act='insp' data-id='${id}'>Pendiente a Inspección</button>`;
       } else {
@@ -636,7 +674,7 @@
             const message = payload.error || payload.message || `Error (${attempt.status || 0})`;
             throw new Error(message);
           }
-          if(scanMsg) scanMsg.textContent='Caja enviada a Acondicionamiento · Lista para Despacho';
+          if(scanMsg) scanMsg.textContent='Caja enviada a Acondicionamiento · Ensamblaje';
           await load();
           removeScanned(id);
           clearScanUI('');
@@ -645,6 +683,23 @@
           piCajaId = id;
           syncPiLocationFromDecide();
           ensurePiLocation();
+          const entry = scannedCajas.get(String(id));
+          const sensorDisplay = entry && entry.sensorId ? entry.sensorId : '';
+          if(piSensor){ piSensor.textContent = sensorDisplay || '-'; }
+          const salidaDisplay = entry ? formatTempValue(entry.tempSalida) : '';
+          if(piSalidaValue){
+            if(salidaDisplay){
+              piSalidaValue.textContent = salidaDisplay;
+              piSalidaWrap && piSalidaWrap.classList.remove('hidden');
+            } else {
+              piSalidaValue.textContent = '-';
+              piSalidaWrap && piSalidaWrap.classList.add('hidden');
+            }
+          }
+          if(piTemp){
+            const llegadaDisplay = entry ? formatTempValue(entry.tempLlegada) : '';
+            piTemp.value = llegadaDisplay;
+          }
           try { piDlg.showModal(); } catch { piDlg.classList.remove('hidden'); }
         }
         try{ modal.close(); }catch{ modal.classList.add('hidden'); }
@@ -667,11 +722,21 @@
     try {
       const cajaLabel = cajaLabelById(currentId);
       const locationPayload = capturePiLocation();
+      const tempInput = piTemp ? String(piTemp.value || '').trim() : '';
+      const tempNumber = tempInput ? Number(tempInput.replace(',', '.')) : NaN;
+      if(!Number.isFinite(tempNumber)){
+        shouldReset = false;
+        if(scanMsg) scanMsg.textContent = 'Ingresa una temperatura de llegada válida.';
+        piTemp && piTemp.focus();
+        return;
+      }
+      const tempNormalized = Math.round(tempNumber * 100) / 100;
       const attempt = await postJSONWithSedeTransfer('/operacion/devolucion/to-pend-insp', {
         caja_id: currentId,
         durationSec: sec,
         zona_id: locationPayload.zona_id,
-        seccion_id: locationPayload.seccion_id
+        seccion_id: locationPayload.seccion_id,
+        temp_llegada_c: tempNormalized
       }, {
         promptMessage: (payload) => payload?.confirm || payload?.error || `La caja ${cajaLabel} pertenece a otra sede. ¿Deseas trasladarla a tu sede actual?`
       });
@@ -696,11 +761,22 @@
         piCajaId=null;
         piHours && (piHours.value='');
         piMins && (piMins.value='');
+        piTemp && (piTemp.value='');
+        if(piSensor) piSensor.textContent = '-';
+        if(piSalidaWrap) piSalidaWrap.classList.add('hidden');
         try{ piDlg.close(); }catch{ piDlg.classList.add('hidden'); }
       }
     }
   });
-  piCancel?.addEventListener('click', ()=>{ piCajaId=null; piHours && (piHours.value=''); piMins && (piMins.value=''); try{ piDlg.close(); }catch{ piDlg.classList.add('hidden'); } });
+  piCancel?.addEventListener('click', ()=>{
+    piCajaId=null;
+    piHours && (piHours.value='');
+    piMins && (piMins.value='');
+    piTemp && (piTemp.value='');
+    if(piSensor) piSensor.textContent='-';
+    if(piSalidaWrap) piSalidaWrap.classList.add('hidden');
+    try{ piDlg.close(); }catch{ piDlg.classList.add('hidden'); }
+  });
 
   // Cerrar con X
   decideClose?.addEventListener('click', (e)=>{ e.preventDefault(); try{ decideDlg.close(); }catch{ decideDlg.classList.add('hidden'); } });

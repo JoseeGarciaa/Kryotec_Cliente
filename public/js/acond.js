@@ -1976,6 +1976,26 @@
     let selectedZonaId = '';
     let selectedSeccionId = '';
 
+    const toTempInputString = (value) => {
+      if(value === undefined || value === null || value === '') return '';
+      const num = Number(value);
+      if(Number.isFinite(num)) return String(num);
+      return String(value).trim();
+    };
+    const toSensorString = (value) => {
+      if(value === undefined || value === null) return '';
+      return String(value).trim();
+    };
+    const hasTempAndSensor = (entry) => {
+      if(!entry) return false;
+      const tempRaw = entry.tempSalida != null ? String(entry.tempSalida).trim() : '';
+      if(!tempRaw) return false;
+      const tempNum = Number(tempRaw.replace(',', '.'));
+      if(!Number.isFinite(tempNum)) return false;
+      const sensorText = entry.sensorId != null ? String(entry.sensorId).trim() : '';
+      return sensorText.length > 0;
+    };
+
     let queue = [];
     let selectedCajaId = null;
     const seenRfids = new Set();
@@ -2012,7 +2032,7 @@
     }
 
     function updateConfirmState(){
-      const ready = queue.length > 0;
+      const ready = queue.length > 0 && queue.every(hasTempAndSensor);
       if(confirmBtn){
         confirmBtn.disabled = !ready;
       }
@@ -2113,12 +2133,31 @@
         const warnings = warnParts.length
           ? `<div class="mt-3 text-[11px] text-warning flex flex-wrap items-center gap-2">${warnParts.map(p=>`<span>${safeHTML(p)}</span>`).join('')}</div>`
           : '';
-        const collapsedNotice = (!isSelected && warnParts.length)
-          ? `<div class="px-3 pb-3 text-[10px] text-warning">${warnParts.map(safeHTML).join(' ')}</div>`
-          : '';
+        const tempSalidaText = toTempInputString(entry.tempSalida);
+        const sensorText = toSensorString(entry.sensorId);
+        const summaryPieces = [];
+        if(tempSalidaText){ summaryPieces.push(`<span>Temp salida: <strong>${safeHTML(tempSalidaText)}°C</strong></span>`); }
+        if(sensorText){ summaryPieces.push(`<span>Sensor: ${safeHTML(sensorText)}</span>`); }
+        const collapsedParts = [];
+        if(warnParts.length){ collapsedParts.push(`<div class="px-3 pb-1 text-[10px] text-warning">${warnParts.map(safeHTML).join(' ')}</div>`); }
+        if(summaryPieces.length){ collapsedParts.push(`<div class="px-3 pb-3 text-[10px] opacity-70 flex flex-wrap gap-2">${summaryPieces.join('<span class="opacity-40">·</span>')}</div>`); }
+        const collapsedNotice = !isSelected ? collapsedParts.join('') : '';
         const componentsMarkup = formatComponents(entry);
+        const tempForm = `<div class="mt-3 space-y-2 text-xs">
+          <div class="grid gap-3 sm:grid-cols-2">
+            <label class="form-control">
+              <span class="label-text text-[11px] uppercase opacity-70">Temp salida (°C)</span>
+              <input type="number" inputmode="decimal" step="0.1" class="input input-sm input-bordered" data-field="temp_salida" data-caja="${safeHTML(entry.cajaId)}" value="${safeHTML(tempSalidaText)}" placeholder="Ej. 2.5" />
+            </label>
+            <label class="form-control">
+              <span class="label-text text-[11px] uppercase opacity-70">Sensor / Serial</span>
+              <input type="text" class="input input-sm input-bordered" data-field="sensor_id" data-caja="${safeHTML(entry.cajaId)}" value="${safeHTML(sensorText)}" placeholder="Ej. S123456" maxlength="120" />
+            </label>
+          </div>
+          <p class="text-[11px] opacity-60">Aplicaremos estos datos a todos los componentes cuando marques la caja como Lista.</p>
+        </div>`;
         const details = isSelected
-          ? `<div class="px-3 pb-3 space-y-3">${componentsMarkup}${warnings}</div>`
+          ? `<div class="px-3 pb-3 space-y-3">${componentsMarkup}${warnings}${tempForm}</div>`
           : collapsedNotice;
         return `<div class="border rounded-lg ${isSelected ? 'border-primary bg-base-200/40' : 'border-base-300/60 bg-base-200/10'} cursor-pointer transition-colors" data-select-caja="${safeHTML(entry.cajaId)}">
           <div class="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-2 px-3 py-2">
@@ -2187,6 +2226,8 @@
           }
           return [];
         })();
+        const incomingTempSalida = toTempInputString(data.temp_salida_c);
+        const incomingSensor = toSensorString(data.sensor_id);
         let entry = queue.find(item => String(item.cajaId) === String(cajaId));
         if(!entry){
           entry = {
@@ -2201,7 +2242,9 @@
             rfids: [],
             allEnsamblado: isComplete,
             timer: data.timer || null,
-            timerActive
+            timerActive,
+            tempSalida: incomingTempSalida,
+            sensorId: incomingSensor
           };
           queue.push(entry);
         } else {
@@ -2215,6 +2258,12 @@
           entry.allEnsamblado = isComplete;
           entry.timer = data.timer || entry.timer;
           entry.timerActive = timerActive;
+          if((entry.tempSalida == null || String(entry.tempSalida).trim() === '') && incomingTempSalida){
+            entry.tempSalida = incomingTempSalida;
+          }
+          if((entry.sensorId == null || String(entry.sensorId).trim() === '') && incomingSensor){
+            entry.sensorId = incomingSensor;
+          }
         }
         if(!entry.rfids.includes(code)) entry.rfids.push(code);
         seenRfids.add(code);
@@ -2282,6 +2331,11 @@
         selectedZonaId = selectZona ? String(selectZona.value || '') : '';
         selectedSeccionId = selectSeccion ? String(selectSeccion.value || '') : '';
       }
+      if(queue.some(entry => !hasTempAndSensor(entry))){
+        if(msg){ msg.textContent = 'Completa temperatura de salida y sensor para todas las cajas.'; }
+        updateConfirmState();
+        return;
+      }
       confirmBtn.disabled = true;
       if(msg){ msg.textContent = 'Marcando cajas...'; }
       const errors = [];
@@ -2293,7 +2347,20 @@
           errors.push(`Caja ${entry.lote}: sin RFID para mover.`);
           continue;
         }
-        const movePayload = { rfid, zona_id: selectedZonaId, seccion_id: selectedSeccionId };
+        const tempText = entry.tempSalida != null ? String(entry.tempSalida).trim() : '';
+        const tempNumber = Number(tempText.replace(',', '.'));
+        if(!Number.isFinite(tempNumber)){
+          errors.push(`Caja ${entry.lote}: temperatura de salida inválida.`);
+          continue;
+        }
+        const normalizedTemp = Math.round(tempNumber * 100) / 100;
+        let sensorValue = entry.sensorId != null ? String(entry.sensorId).trim() : '';
+        if(!sensorValue){
+          errors.push(`Caja ${entry.lote}: debes ingresar el serial del sensor.`);
+          continue;
+        }
+        if(sensorValue.length > 120){ sensorValue = sensorValue.slice(0, 120); }
+        const movePayload = { rfid, zona_id: selectedZonaId, seccion_id: selectedSeccionId, temp_salida_c: normalizedTemp, sensor_id: sensorValue };
         if(durationSec > 0){ movePayload.durationSec = durationSec; }
         const attempt = await postJSONWithSedeTransfer('/operacion/acond/despacho/move', movePayload, {
           promptMessage: (data) => data?.confirm || data?.error || `La caja ${entry.lote} pertenece a otra sede. ¿Deseas trasladarla a tu sede actual?`
@@ -2349,11 +2416,32 @@
         ev.stopPropagation();
         return;
       }
+      if(ev.target.closest('[data-field], input, textarea, select, .form-control label')){
+        return;
+      }
       const card = ev.target.closest('[data-select-caja]');
       if(card){
         const id = card.getAttribute('data-select-caja');
         if(id) setSelectedCaja(id);
       }
+    });
+
+    queueList?.addEventListener('input', ev => {
+      const target = ev.target;
+      if(!target || typeof target.getAttribute !== 'function') return;
+      const fieldName = target.getAttribute('data-field');
+      if(!fieldName) return;
+      const cajaAttr = target.getAttribute('data-caja');
+      if(!cajaAttr) return;
+      const entry = queue.find(item => String(item.cajaId) === String(cajaAttr));
+      if(!entry) return;
+      const value = target.value ?? '';
+      if(fieldName === 'temp_salida'){
+        entry.tempSalida = value;
+      } else if(fieldName === 'sensor_id'){
+        entry.sensorId = value;
+      }
+      updateConfirmState();
     });
 
     input?.addEventListener('input', async ()=>{
