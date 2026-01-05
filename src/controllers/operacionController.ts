@@ -49,6 +49,7 @@ const inferLitrajeFromRow = (row: any): string | null => {
 };
 
 const ensuredTempColumnsTenants = new Set<string>();
+const ensuredCajaOrdenesTenants = new Set<string>();
 const ensureInventarioTempColumns = async (tenant: string) => {
   if (!tenant || ensuredTempColumnsTenants.has(tenant)) return;
   await withTenant(tenant, async (client) => {
@@ -57,6 +58,316 @@ const ensureInventarioTempColumns = async (tenant: string) => {
     await client.query(`ALTER TABLE inventario_credocubes ADD COLUMN IF NOT EXISTS sensor_id text`);
   });
   ensuredTempColumnsTenants.add(tenant);
+};
+
+const ensureCajaOrdenesTable = async (tenant: string) => {
+  if (!tenant || ensuredCajaOrdenesTenants.has(tenant)) return;
+  await withTenant(tenant, async (client) => {
+    await client.query(`DO $$
+    DECLARE target_schema text := current_schema();
+    BEGIN
+      IF EXISTS (
+        SELECT 1 FROM pg_class c
+        JOIN pg_namespace n ON n.oid = c.relnamespace
+       WHERE c.relname = 'acond_caja_ordenes'
+         AND n.nspname = 'public'
+      ) AND NOT EXISTS (
+        SELECT 1 FROM pg_class c
+        JOIN pg_namespace n ON n.oid = c.relnamespace
+       WHERE c.relname = 'acond_caja_ordenes'
+         AND n.nspname = target_schema
+      ) THEN
+        EXECUTE format('ALTER TABLE %I.%I SET SCHEMA %I', 'public', 'acond_caja_ordenes', target_schema);
+      END IF;
+    END $$;`);
+    await client.query(`CREATE TABLE IF NOT EXISTS acond_caja_ordenes (
+      caja_id int NOT NULL REFERENCES acond_cajas(caja_id) ON DELETE CASCADE,
+      order_id bigint NOT NULL REFERENCES ordenes(id) ON DELETE CASCADE,
+      created_at timestamptz NOT NULL DEFAULT NOW(),
+      PRIMARY KEY (caja_id, order_id)
+    )`);
+    await client.query(`DO $$
+    DECLARE
+      target_schema text := current_schema();
+      pk_name text;
+      pk_uses_old boolean;
+      pk_uses_new boolean;
+      has_order_id boolean;
+      has_orden_id boolean;
+      has_created_at boolean;
+      has_creado_en boolean;
+      has_null_order boolean;
+    BEGIN
+      IF to_regclass(format('%I.%I', target_schema, 'acond_caja_ordenes')) IS NULL THEN
+        RETURN;
+      END IF;
+
+      SELECT conname INTO pk_name
+        FROM pg_constraint
+       WHERE conrelid = format('%I.%I', target_schema, 'acond_caja_ordenes')::regclass
+         AND contype = 'p'
+       LIMIT 1;
+
+      IF pk_name IS NOT NULL THEN
+        SELECT EXISTS(
+          SELECT 1 FROM information_schema.constraint_column_usage
+           WHERE constraint_name = pk_name
+             AND table_schema = target_schema
+             AND table_name = 'acond_caja_ordenes'
+             AND column_name = 'orden_id'
+        ) INTO pk_uses_old;
+        IF pk_uses_old THEN
+          EXECUTE format('ALTER TABLE %I.%I DROP CONSTRAINT %I', target_schema, 'acond_caja_ordenes', pk_name);
+          pk_name := NULL;
+        END IF;
+      END IF;
+
+      SELECT EXISTS(
+        SELECT 1 FROM information_schema.columns
+         WHERE table_schema = target_schema
+           AND table_name = 'acond_caja_ordenes'
+           AND column_name = 'order_id'
+      ) INTO has_order_id;
+      SELECT EXISTS(
+        SELECT 1 FROM information_schema.columns
+         WHERE table_schema = target_schema
+           AND table_name = 'acond_caja_ordenes'
+           AND column_name = 'orden_id'
+      ) INTO has_orden_id;
+      SELECT EXISTS(
+        SELECT 1 FROM information_schema.columns
+         WHERE table_schema = target_schema
+           AND table_name = 'acond_caja_ordenes'
+           AND column_name = 'created_at'
+      ) INTO has_created_at;
+      SELECT EXISTS(
+        SELECT 1 FROM information_schema.columns
+         WHERE table_schema = target_schema
+           AND table_name = 'acond_caja_ordenes'
+           AND column_name = 'creado_en'
+      ) INTO has_creado_en;
+
+      IF has_orden_id AND NOT has_order_id THEN
+        EXECUTE format('ALTER TABLE %I.%I RENAME COLUMN orden_id TO order_id', target_schema, 'acond_caja_ordenes');
+        has_order_id := TRUE;
+        has_orden_id := FALSE;
+      END IF;
+
+      IF has_creado_en AND NOT has_created_at THEN
+        EXECUTE format('ALTER TABLE %I.%I RENAME COLUMN creado_en TO created_at', target_schema, 'acond_caja_ordenes');
+        has_created_at := TRUE;
+        has_creado_en := FALSE;
+      END IF;
+
+      IF has_orden_id AND has_order_id THEN
+        EXECUTE format('UPDATE %I.%I SET order_id = COALESCE(order_id, orden_id)', target_schema, 'acond_caja_ordenes');
+        EXECUTE format('DROP INDEX IF EXISTS %I.%I', target_schema, 'acond_caja_ordenes_orden_idx');
+        IF EXISTS (
+          SELECT 1 FROM pg_constraint
+           WHERE conrelid = format('%I.%I', target_schema, 'acond_caja_ordenes')::regclass
+             AND conname = 'acond_caja_ordenes_orden_fk'
+        ) THEN
+          EXECUTE format('ALTER TABLE %I.%I DROP CONSTRAINT acond_caja_ordenes_orden_fk', target_schema, 'acond_caja_ordenes');
+        END IF;
+        EXECUTE format('ALTER TABLE %I.%I DROP COLUMN orden_id', target_schema, 'acond_caja_ordenes');
+        has_orden_id := FALSE;
+      END IF;
+
+      IF NOT has_order_id THEN
+        EXECUTE format('ALTER TABLE %I.%I ADD COLUMN order_id bigint', target_schema, 'acond_caja_ordenes');
+        has_order_id := TRUE;
+      END IF;
+
+      IF has_creado_en AND has_created_at THEN
+        EXECUTE format('UPDATE %I.%I SET created_at = COALESCE(created_at, creado_en)', target_schema, 'acond_caja_ordenes');
+        EXECUTE format('ALTER TABLE %I.%I DROP COLUMN creado_en', target_schema, 'acond_caja_ordenes');
+        has_creado_en := FALSE;
+      ELSIF NOT has_created_at THEN
+        EXECUTE format('ALTER TABLE %I.%I ADD COLUMN created_at timestamptz DEFAULT NOW()', target_schema, 'acond_caja_ordenes');
+        has_created_at := TRUE;
+      END IF;
+
+      IF has_order_id THEN
+        EXECUTE format('UPDATE %I.%I AS cao SET order_id = c.order_id FROM %I.%I AS c WHERE cao.caja_id = c.caja_id AND cao.order_id IS NULL AND c.order_id IS NOT NULL', target_schema, 'acond_caja_ordenes', target_schema, 'acond_cajas');
+        BEGIN
+          EXECUTE format('ALTER TABLE %I.%I ALTER COLUMN order_id TYPE bigint USING order_id::bigint', target_schema, 'acond_caja_ordenes');
+        EXCEPTION WHEN others THEN
+        END;
+        EXECUTE format('SELECT EXISTS (SELECT 1 FROM %I.%I WHERE order_id IS NULL LIMIT 1)', target_schema, 'acond_caja_ordenes') INTO has_null_order;
+        IF NOT has_null_order THEN
+          EXECUTE format('ALTER TABLE %I.%I ALTER COLUMN order_id SET NOT NULL', target_schema, 'acond_caja_ordenes');
+        END IF;
+      END IF;
+
+      IF has_created_at THEN
+        EXECUTE format('ALTER TABLE %I.%I ALTER COLUMN created_at SET DEFAULT NOW()', target_schema, 'acond_caja_ordenes');
+        EXECUTE format('UPDATE %I.%I SET created_at = NOW() WHERE created_at IS NULL', target_schema, 'acond_caja_ordenes');
+      END IF;
+
+      IF EXISTS (
+        SELECT 1 FROM pg_constraint
+         WHERE conrelid = format('%I.%I', target_schema, 'acond_caja_ordenes')::regclass
+           AND conname = 'acond_caja_ordenes_order_id_fkey'
+      ) THEN
+        EXECUTE format('ALTER TABLE %I.%I DROP CONSTRAINT acond_caja_ordenes_order_id_fkey', target_schema, 'acond_caja_ordenes');
+      END IF;
+      IF EXISTS (
+        SELECT 1 FROM pg_constraint
+         WHERE conrelid = format('%I.%I', target_schema, 'acond_caja_ordenes')::regclass
+           AND conname = 'acond_caja_ordenes_caja_id_fkey'
+      ) THEN
+        EXECUTE format('ALTER TABLE %I.%I DROP CONSTRAINT acond_caja_ordenes_caja_id_fkey', target_schema, 'acond_caja_ordenes');
+      END IF;
+
+      IF pk_name IS NOT NULL THEN
+        SELECT EXISTS(
+          SELECT 1 FROM information_schema.constraint_column_usage
+           WHERE constraint_name = pk_name
+             AND table_schema = target_schema
+             AND table_name = 'acond_caja_ordenes'
+             AND column_name = 'order_id'
+        ) INTO pk_uses_new;
+        IF NOT pk_uses_new THEN
+          EXECUTE format('ALTER TABLE %I.%I DROP CONSTRAINT %I', target_schema, 'acond_caja_ordenes', pk_name);
+          pk_name := NULL;
+        END IF;
+      END IF;
+
+      IF pk_name IS NULL THEN
+        EXECUTE format('ALTER TABLE %I.%I ADD PRIMARY KEY (caja_id, order_id)', target_schema, 'acond_caja_ordenes');
+      END IF;
+
+      EXECUTE format('ALTER TABLE %I.%I ADD CONSTRAINT acond_caja_ordenes_caja_id_fkey FOREIGN KEY (caja_id) REFERENCES %I.acond_cajas(caja_id) ON DELETE CASCADE', target_schema, 'acond_caja_ordenes', target_schema);
+      EXECUTE format('ALTER TABLE %I.%I ADD CONSTRAINT acond_caja_ordenes_order_id_fkey FOREIGN KEY (order_id) REFERENCES %I.ordenes(id) ON DELETE CASCADE', target_schema, 'acond_caja_ordenes', target_schema);
+    END $$;`);
+    await client.query(`CREATE INDEX IF NOT EXISTS acond_caja_ordenes_order_idx ON acond_caja_ordenes(order_id)`);
+    await client.query(`CREATE INDEX IF NOT EXISTS acond_caja_ordenes_created_idx ON acond_caja_ordenes(created_at)`);
+  });
+  ensuredCajaOrdenesTenants.add(tenant);
+};
+
+const pushUniqueOrderId = (target: number[], value: any) => {
+  if (value === null || value === undefined) return;
+  const asNumber = Number(value);
+  if (!Number.isFinite(asNumber)) return;
+  const normalized = Math.trunc(asNumber);
+  if (normalized <= 0) return;
+  if (!target.includes(normalized)) target.push(normalized);
+};
+
+const collectCajaOrderIds = async (client: { query: (sql: string, params?: any[]) => Promise<{ rows: any[]; rowCount?: number }> }, cajaId: number): Promise<number[]> => {
+  const orderIds: number[] = [];
+  const directRes = await client.query(
+    `SELECT DISTINCT src.order_id::bigint AS order_id
+       FROM (
+         SELECT cao.order_id
+           FROM acond_caja_ordenes cao
+          WHERE cao.caja_id = $1
+         UNION ALL
+         SELECT c.order_id
+           FROM acond_cajas c
+          WHERE c.caja_id = $1
+       ) src
+      WHERE src.order_id IS NOT NULL`,
+    [cajaId]
+  );
+  for (const row of directRes.rows as any[]) {
+    pushUniqueOrderId(orderIds, row?.order_id);
+  }
+  const invNumbersRes = await client.query(
+    `SELECT DISTINCT ic.numero_orden
+       FROM inventario_credocubes ic
+       JOIN acond_caja_items aci ON aci.rfid = ic.rfid
+      WHERE aci.caja_id = $1
+        AND ic.numero_orden IS NOT NULL
+        AND ic.numero_orden <> ''`,
+    [cajaId]
+  );
+  if (invNumbersRes.rowCount) {
+    const numeros = (invNumbersRes.rows as any[])
+      .map((r) => (r?.numero_orden !== null && r?.numero_orden !== undefined ? String(r.numero_orden) : null))
+      .filter((val): val is string => !!val && val.trim().length > 0);
+    if (numeros.length) {
+      const invOrderIdsRes = await client.query(
+        `SELECT id
+           FROM ordenes
+          WHERE numero_orden = ANY($1::text[])`,
+        [numeros]
+      );
+      for (const row of invOrderIdsRes.rows as any[]) {
+        pushUniqueOrderId(orderIds, row?.id);
+      }
+    }
+  }
+  return orderIds;
+};
+
+const disableOrdersByIds = async (client: { query: (sql: string, params?: any[]) => Promise<any> }, orderIds: number[]) => {
+  if (!orderIds.length) return;
+  await client.query(
+    `UPDATE ordenes
+        SET estado_orden = false,
+            habilitada = false
+      WHERE id = ANY($1::bigint[])`,
+    [orderIds]
+  );
+};
+
+type CajaOrdenResumen = {
+  orderId: number;
+  numeroOrden: string | null;
+  cliente: string | null;
+};
+
+const fetchCajaOrdenes = async (tenant: string, cajaIds: number[]): Promise<Map<number, CajaOrdenResumen[]>> => {
+  const map = new Map<number, CajaOrdenResumen[]>();
+  if (!tenant || cajaIds.length === 0) return map;
+  await ensureCajaOrdenesTable(tenant);
+  const rows = await withTenant(tenant, (client) =>
+    client.query<{
+      caja_id: number | string;
+      order_id: number | string;
+      numero_orden: string | null;
+      cliente: string | null;
+    }>(
+      `SELECT src.caja_id, src.order_id, o.numero_orden, o.cliente
+         FROM (
+           SELECT cao.caja_id, cao.order_id, cao.created_at
+             FROM acond_caja_ordenes cao
+            WHERE cao.caja_id = ANY($1::int[])
+           UNION ALL
+           SELECT c.caja_id, c.order_id, c.created_at
+             FROM acond_cajas c
+            WHERE c.caja_id = ANY($1::int[])
+              AND c.order_id IS NOT NULL
+              AND NOT EXISTS (
+                SELECT 1 FROM acond_caja_ordenes cao2
+                 WHERE cao2.caja_id = c.caja_id AND cao2.order_id = c.order_id
+              )
+         ) src
+         LEFT JOIN ordenes o ON o.id = src.order_id
+        ORDER BY src.caja_id ASC, src.created_at ASC, src.order_id ASC`,
+      [cajaIds]
+    )
+  );
+  for (const row of rows.rows) {
+    if (!row) continue;
+    const cajaId = Number(row.caja_id);
+    const orderId = Number(row.order_id);
+    if (!Number.isFinite(cajaId) || !Number.isFinite(orderId)) continue;
+    const numeroOrden = row.numero_orden != null ? String(row.numero_orden) : null;
+    const cliente = row.cliente != null ? String(row.cliente) : null;
+    const list = map.get(cajaId) || [];
+    if (!list.find((entry) => entry.orderId === orderId)) {
+      list.push({
+        orderId,
+        numeroOrden,
+        cliente,
+      });
+      map.set(cajaId, list);
+    }
+  }
+  return map;
 };
 
 // Debug control for kanbanData verbosity
@@ -1221,40 +1532,70 @@ export const OperacionController = {
         const cubeComp = (c.componentes||[]).find((cmp:any) => cmp?.tipo === 'cube' && cmp?.nombreUnidad);
         c.nombreCaja = cubeComp?.nombreUnidad?.trim() || c.codigoCaja;
       });
+      const cajaIds = cajas.map((c:any)=> Number(c.id)).filter((id)=> Number.isFinite(id));
+      const ordersMap = cajaIds.length ? await fetchCajaOrdenes(tenant, cajaIds) : new Map<number, CajaOrdenResumen[]>();
+      cajas.forEach((c:any) => {
+        const list = ordersMap.get(Number(c.id)) || [];
+        c.orders = list;
+        if(list.length){
+          if(c.orderId == null && list[0].orderId != null) c.orderId = list[0].orderId;
+          if(!c.orderNumero && list[0].numeroOrden) c.orderNumero = list[0].numeroOrden;
+          if(!c.orderCliente && list[0].cliente) c.orderCliente = list[0].cliente;
+        } else {
+          c.orders = [];
+        }
+      });
       // ==== Agregación por orden (conteo de cajas y esperado) ====
-      // Obtener order_id únicos
-      const orderIds = [...new Set(cajas.filter(c=> c.orderId).map(c=> c.orderId))];
+      const orderCounts = new Map<number, number>();
+      cajas.forEach((c:any) => {
+        const entries: CajaOrdenResumen[] = Array.isArray(c.orders) && c.orders.length
+          ? c.orders
+          : (c.orderId ? [{ orderId: c.orderId, numeroOrden: null, cliente: null }] : []);
+        entries.forEach((entry: CajaOrdenResumen) => {
+          if(entry.orderId == null) return;
+          orderCounts.set(entry.orderId, (orderCounts.get(entry.orderId) || 0) + 1);
+        });
+      });
+      const orderIds = Array.from(orderCounts.keys());
       let ordenesInfo: Record<string, { order_id:number; numero_orden:string|null; cliente:string|null; cajas:number; expected:number|null; totalCajas:number|null; }> = {};
       if(orderIds.length){
-        // Contar cajas por order_id (ya las tenemos en memoria) y traer expected (cantidad) y numero_orden
-        const counts: Record<string, number> = {};
-        cajas.forEach(c=>{
-          if(c.orderId){
-            const key = String(c.orderId);
-            counts[key] = (counts[key]||0)+1;
-          }
-        });
         const totalsQ = await withTenant(tenant, (c)=> c.query(
-          `SELECT order_id, COUNT(*)::int AS total_cajas
-             FROM acond_cajas
-            WHERE order_id = ANY($1::int[])
-         GROUP BY order_id`,
+          `SELECT src.order_id, COUNT(*)::int AS total_cajas
+             FROM (
+               SELECT cao.order_id
+                 FROM acond_caja_ordenes cao
+                WHERE cao.order_id = ANY($1::bigint[])
+               UNION ALL
+               SELECT c.order_id
+                 FROM acond_cajas c
+                WHERE c.order_id = ANY($1::bigint[])
+                  AND c.order_id IS NOT NULL
+                  AND NOT EXISTS (
+                    SELECT 1 FROM acond_caja_ordenes cao2
+                     WHERE cao2.caja_id = c.caja_id
+                       AND cao2.order_id = c.order_id
+                  )
+             ) src
+         GROUP BY src.order_id`,
           [orderIds]
         ));
         const totalsMap = new Map<string, number>();
         for(const row of totalsQ.rows as any[]){
-          if(row.order_id!=null){
-            totalsMap.set(String(row.order_id), Number(row.total_cajas)||0);
+          const rawId = Number(row.order_id);
+          if(Number.isFinite(rawId)){
+            totalsMap.set(String(rawId), Number(row.total_cajas)||0);
           }
         }
-        const ordRows = await withTenant(tenant, (c)=> c.query(`SELECT id, numero_orden, cantidad, cliente FROM ordenes WHERE id = ANY($1::int[])`, [orderIds]));
+        const ordRows = await withTenant(tenant, (c)=> c.query(`SELECT id, numero_orden, cantidad, cliente FROM ordenes WHERE id = ANY($1::bigint[])`, [orderIds]));
         for(const r of ordRows.rows as any[]){
-          const key = String(r.id);
+          const rawId = Number(r.id);
+          if(!Number.isFinite(rawId)) continue;
+          const key = String(rawId);
           ordenesInfo[key] = {
-            order_id: r.id,
+            order_id: rawId,
             numero_orden: r.numero_orden||null,
             cliente: r.cliente || null,
-            cajas: counts[key]||0,
+            cajas: orderCounts.get(rawId) || 0,
             expected: (r.cantidad!=null? Number(r.cantidad): null),
             totalCajas: totalsMap.has(key) ? (totalsMap.get(key) || 0) : null
           };
@@ -1266,7 +1607,7 @@ export const OperacionController = {
               order_id: rawId,
               numero_orden: null,
               cliente: null,
-              cajas: counts[key]||0,
+              cajas: orderCounts.get(rawId) || 0,
               expected: null,
               totalCajas: totalsMap.has(key) ? (totalsMap.get(key) || 0) : null
             };
@@ -1274,16 +1615,23 @@ export const OperacionController = {
             ordenesInfo[key].totalCajas = totalsMap.get(key) || 0;
           }
         }
-        // Enriquecer cada caja con contadores
-        cajas.forEach(c=>{
-          if(!c.orderId) return;
-          const meta = ordenesInfo[String(c.orderId)];
-          if(!meta) return;
-          c.orderCajaCount = meta.cajas;
-          c.orderCajaExpected = meta.expected;
-          c.orderCajaTotal = meta.totalCajas;
-          c.orderNumero = meta.numero_orden || c.orderNumero;
-          c.orderCliente = meta.cliente || c.orderCliente;
+        cajas.forEach((c:any)=>{
+          const entries = Array.isArray(c.orders) ? c.orders : [];
+          entries.forEach((entry: CajaOrdenResumen)=>{
+            if(entry.orderId == null) return;
+            const meta = ordenesInfo[String(entry.orderId)];
+            if(!meta) return;
+            entry.numeroOrden = entry.numeroOrden ?? meta.numero_orden ?? null;
+            entry.cliente = entry.cliente ?? meta.cliente ?? null;
+          });
+          if(entries.length){
+            const primaryEntry = entries[0];
+            if(primaryEntry){
+              if(c.orderId == null && primaryEntry.orderId != null) c.orderId = primaryEntry.orderId;
+              if(!c.orderNumero && primaryEntry.numeroOrden) c.orderNumero = primaryEntry.numeroOrden;
+              if(!c.orderCliente && primaryEntry.cliente) c.orderCliente = primaryEntry.cliente;
+            }
+          }
         });
       }
       res.json({ ok:true, serverNow: nowIso, pendientes, cajas, ordenes: ordenesInfo, stats:{ cubes: statsRow.cubes, vips: statsRow.vips, tics: statsRow.tics, total: (statsRow.cubes||0)+(statsRow.vips||0)+(statsRow.tics||0) } });
@@ -1297,6 +1645,7 @@ export const OperacionController = {
     const cajaId = Number(caja_id);
     if(!Number.isFinite(cajaId) || cajaId<=0) return res.status(400).json({ ok:false, error:'caja_id inválido' });
     const allowSedeTransferFlag = resolveAllowSedeTransferFlag(req, req.body?.allowSedeTransfer);
+    await ensureCajaOrdenesTable(tenant);
     try {
       const itemsQ = await withTenant(tenant, (c)=> c.query(
         `SELECT rfid FROM acond_caja_items WHERE caja_id=$1`,
@@ -1327,6 +1676,7 @@ export const OperacionController = {
         await c.query(`ALTER TABLE ordenes ADD COLUMN IF NOT EXISTS habilitada boolean NOT NULL DEFAULT true`);
         await c.query('BEGIN');
         try {
+          const orderIds = await collectCajaOrderIds(c, cajaId);
           await c.query(
             `UPDATE inventario_credocubes ic
                 SET estado='En bodega',
@@ -1336,9 +1686,11 @@ export const OperacionController = {
               WHERE ic.rfid = ANY($1::text[])`,
             [rfids, targetSede]
           );
+          await disableOrdersByIds(c, orderIds);
           await c.query(`DELETE FROM acond_caja_timers WHERE caja_id=$1`, [cajaId]);
           await c.query(`DELETE FROM operacion_caja_timers WHERE caja_id=$1`, [cajaId]);
           await c.query(`DELETE FROM acond_caja_items WHERE caja_id=$1`, [cajaId]);
+          await c.query(`DELETE FROM acond_caja_ordenes WHERE caja_id=$1`, [cajaId]);
           await c.query(`DELETE FROM acond_cajas WHERE caja_id=$1`, [cajaId]);
           await c.query('COMMIT');
           res.json({ ok:true, caja_id: cajaId, items: rfids.length, caja_deleted: true });
@@ -1460,6 +1812,7 @@ export const OperacionController = {
     const cajaId = Number(caja_id);
     if(!Number.isFinite(cajaId) || cajaId<=0) return res.status(400).json({ ok:false, error:'caja_id inválido' });
     const allowSedeTransferFlag = resolveAllowSedeTransferFlag(req, req.body?.allowSedeTransfer);
+    await ensureCajaOrdenesTable(tenant);
     let trackedRfids: string[] = [];
     try {
       const eligQ = await withTenant(tenant, (c)=> c.query(
@@ -1519,8 +1872,8 @@ export const OperacionController = {
         await c.query('BEGIN');
         try {
           const targetSede = transferCheck.targetSede;
-          const orderRow = await c.query(`SELECT order_id FROM acond_cajas WHERE caja_id=$1 FOR UPDATE`, [cajaId]);
-          const orderId = orderRow.rowCount ? orderRow.rows[0].order_id : null;
+          await c.query(`SELECT order_id FROM acond_cajas WHERE caja_id=$1 FOR UPDATE`, [cajaId]);
+          const orderIds = await collectCajaOrderIds(c, cajaId);
           if(decide==='reuse'){
             await c.query(
               `UPDATE inventario_credocubes ic
@@ -1551,9 +1904,7 @@ export const OperacionController = {
                updated_at timestamptz NOT NULL DEFAULT NOW()
             )`);
           }
-          if(orderId){
-            await c.query(`UPDATE ordenes SET estado_orden = false, habilitada = false WHERE id = $1`, [orderId]);
-          }
+          await disableOrdersByIds(c, orderIds);
           await c.query('COMMIT');
         } catch(e){ await c.query('ROLLBACK'); throw e; }
       }, { allowCrossSedeTransfer: transferCheck.allowCrossTransfer });
@@ -1571,8 +1922,10 @@ export const OperacionController = {
     const { caja_id, durationSec, temp_llegada_c: tempLlegadaRaw } = req.body as any;
     const cajaId = Number(caja_id);
   const dur = Number(durationSec);
+    const orderId = parseOptionalNumber((req.body as any)?.order_id ?? (req.body as any)?.orderId);
     const allowSedeTransferFlag = resolveAllowSedeTransferFlag(req, req.body?.allowSedeTransfer);
     if(!Number.isFinite(cajaId) || cajaId<=0) return res.status(400).json({ ok:false, error:'caja_id inválido' });
+    await ensureCajaOrdenesTable(tenant);
     try {
       await ensureInventarioTempColumns(tenant);
       const normalizeTemp = (input: any): number | undefined => {
@@ -1640,8 +1993,8 @@ export const OperacionController = {
         await c.query(`ALTER TABLE ordenes ADD COLUMN IF NOT EXISTS estado_orden boolean DEFAULT true`);
         await c.query('BEGIN');
         try {
-          const orderRow = await c.query(`SELECT order_id FROM acond_cajas WHERE caja_id=$1 FOR UPDATE`, [cajaId]);
-          const orderId = orderRow.rowCount ? orderRow.rows[0].order_id : null;
+          await c.query(`SELECT order_id FROM acond_cajas WHERE caja_id=$1 FOR UPDATE`, [cajaId]);
+          const orderIds = await collectCajaOrderIds(c, cajaId);
           await c.query(
             `UPDATE inventario_credocubes ic
                 SET estado='En bodega',
@@ -1664,6 +2017,7 @@ export const OperacionController = {
              updated_at timestamptz NOT NULL DEFAULT NOW()
           )`);
           if(Number.isFinite(dur) && dur>0){
+            await disableOrdersByIds(c, orderIds);
             await c.query(
               `INSERT INTO pend_insp_caja_timers(caja_id, started_at, duration_sec, active, updated_at)
                  VALUES ($1, NOW(), $2, true, NOW())
@@ -1753,6 +2107,7 @@ export const OperacionController = {
     const { caja_id } = req.body as any; const cajaId = Number(caja_id);
     const allowSedeTransferFlag = resolveAllowSedeTransferFlag(req, req.body?.allowSedeTransfer);
     if(!Number.isFinite(cajaId) || cajaId<=0) return res.status(400).json({ ok:false, error:'caja_id invalido' });
+    await ensureCajaOrdenesTable(tenant);
     try {
       const eligQ = await withTenant(tenant, (c)=> c.query(
         `SELECT COUNT(*)::int AS total,
@@ -1804,8 +2159,8 @@ export const OperacionController = {
         await c.query(`ALTER TABLE ordenes ADD COLUMN IF NOT EXISTS habilitada boolean NOT NULL DEFAULT true`);
         await c.query('BEGIN');
         try {
-          const orderRow = await c.query(`SELECT order_id FROM acond_cajas WHERE caja_id=$1 FOR UPDATE`, [cajaId]);
-          const orderId = orderRow.rowCount ? orderRow.rows[0].order_id : null;
+          await c.query(`SELECT order_id FROM acond_cajas WHERE caja_id=$1 FOR UPDATE`, [cajaId]);
+          const orderIds = await collectCajaOrderIds(c, cajaId);
           await c.query(
             `UPDATE inventario_credocubes ic
                 SET estado='Acondicionamiento',
@@ -1819,9 +2174,7 @@ export const OperacionController = {
           );
           await c.query(`UPDATE inventario_credocubes SET numero_orden=NULL WHERE rfid = ANY($1::text[])`, [rfids]);
           await c.query(`UPDATE acond_cajas SET order_id = NULL WHERE caja_id=$1`, [cajaId]);
-          if(orderId){
-            await c.query(`UPDATE ordenes SET estado_orden = false, habilitada = false WHERE id = $1`, [orderId]);
-          }
+          await disableOrdersByIds(c, orderIds);
           await c.query('COMMIT');
         } catch(e){ await c.query('ROLLBACK'); throw e; }
       }, { allowCrossSedeTransfer: transferCheck.allowCrossTransfer });
@@ -1836,6 +2189,7 @@ export const OperacionController = {
     const { caja_id } = req.body as any; const cajaId = Number(caja_id);
     if(!Number.isFinite(cajaId) || cajaId<=0) return res.status(400).json({ ok:false, error:'caja_id invalido' });
     const allowSedeTransferFlag = resolveAllowSedeTransferFlag(req, req.body?.allowSedeTransfer);
+    await ensureCajaOrdenesTable(tenant);
     try {
       const itemsQ = await withTenant(tenant, (c)=> c.query(
         `SELECT rfid FROM acond_caja_items WHERE caja_id=$1`, [cajaId]));
@@ -1865,8 +2219,8 @@ export const OperacionController = {
         await c.query(`ALTER TABLE ordenes ADD COLUMN IF NOT EXISTS habilitada boolean NOT NULL DEFAULT true`);
         await c.query('BEGIN');
         try {
-          const orderRow = await c.query(`SELECT order_id FROM acond_cajas WHERE caja_id=$1 FOR UPDATE`, [cajaId]);
-          const orderId = orderRow.rowCount ? orderRow.rows[0].order_id : null;
+          await c.query(`SELECT order_id FROM acond_cajas WHERE caja_id=$1 FOR UPDATE`, [cajaId]);
+          const orderIds = await collectCajaOrderIds(c, cajaId);
           await c.query(
             `UPDATE inventario_credocubes ic
                 SET estado='Inspección',
@@ -1888,9 +2242,7 @@ export const OperacionController = {
                 AND m.nombre_modelo ILIKE '%tic%'`, [rfids]
           );
           await c.query(`UPDATE acond_cajas SET order_id = NULL WHERE caja_id=$1`, [cajaId]);
-          if(orderId){
-            await c.query(`UPDATE ordenes SET estado_orden = false, habilitada = false WHERE id = $1`, [orderId]);
-          }
+          await disableOrdersByIds(c, orderIds);
           await c.query(`UPDATE acond_caja_timers SET active=false, started_at=NULL, duration_sec=NULL, updated_at=NOW() WHERE caja_id=$1`, [cajaId]);
           await c.query(`UPDATE operacion_caja_timers SET active=false, started_at=NULL, duration_sec=NULL, updated_at=NOW() WHERE caja_id=$1`, [cajaId]);
           await c.query(`CREATE TABLE IF NOT EXISTS inspeccion_caja_timers (
@@ -2564,8 +2916,53 @@ export const OperacionController = {
             cajaSedeJoin = ` JOIN acond_caja_items aci2 ON aci2.caja_id = c.caja_id
                              JOIN inventario_credocubes ic2 ON ic2.rfid = aci2.rfid AND ic2.sede_id = $2`;
           }
-          const orderRow = await c.query(`SELECT c.order_id FROM acond_cajas c${cajaSedeJoin ? cajaSedeJoin : ''} WHERE c.caja_id=$1 FOR UPDATE`, cajaParams);
-          const orderId = orderRow.rowCount ? orderRow.rows[0].order_id : null;
+          await c.query(`SELECT c.order_id FROM acond_cajas c${cajaSedeJoin ? cajaSedeJoin : ''} WHERE c.caja_id=$1 FOR UPDATE`, cajaParams);
+          const orderIdsRes = await c.query(
+            `SELECT DISTINCT src.order_id::bigint AS order_id
+               FROM (
+                 SELECT cao.order_id
+                   FROM acond_caja_ordenes cao
+                  WHERE cao.caja_id = $1
+                 UNION ALL
+                 SELECT c.order_id
+                   FROM acond_cajas c
+                  WHERE c.caja_id = $1
+               ) src
+              WHERE src.order_id IS NOT NULL`,
+            [cajaId]
+          );
+          const orderIds: number[] = [];
+          for (const row of orderIdsRes.rows as any[]) {
+            if (!row || row.order_id == null) continue;
+            const num = Number(row.order_id);
+            if (!Number.isFinite(num) || num <= 0) continue;
+            const normalized = Math.trunc(num);
+            if (!orderIds.includes(normalized)) orderIds.push(normalized);
+          }
+          const invNumbersRes = await c.query(
+            `SELECT DISTINCT ic.numero_orden
+               FROM inventario_credocubes ic
+               JOIN acond_caja_items aci ON aci.rfid = ic.rfid
+              WHERE aci.caja_id = $1
+                AND ic.numero_orden IS NOT NULL
+                AND ic.numero_orden <> ''`,
+            [cajaId]
+          );
+          const invOrderIdsRes = invNumbersRes.rows.length
+            ? await c.query(
+                `SELECT id
+                   FROM ordenes
+                  WHERE numero_orden = ANY($1::text[])`,
+                [invNumbersRes.rows.map((r: any) => String(r.numero_orden))]
+              )
+            : { rows: [] };
+          for (const row of (invOrderIdsRes.rows as any[])) {
+            if (!row || row.id == null) continue;
+            const num = Number(row.id);
+            if (!Number.isFinite(num) || num <= 0) continue;
+            const normalized = Math.trunc(num);
+            if (!orderIds.includes(normalized)) orderIds.push(normalized);
+          }
           // 1) Devolver a En bodega sólo los RFIDs de esta caja cuyo estado actual sea Inspección
           const upd = await c.query(
             `UPDATE inventario_credocubes ic
@@ -2580,14 +2977,15 @@ export const OperacionController = {
                 AND LOWER(ic.estado) IN ('inspeccion','inspección')
               RETURNING ic.rfid`, [cajaId, targetSede]);
           // 2) Inhabilitar orden asociada (si aplica)
-          if (orderId) {
-            await c.query(`UPDATE ordenes SET habilitada = false WHERE id = $1`, [orderId]);
+          if (orderIds.length) {
+            await c.query(`UPDATE ordenes SET habilitada = false WHERE id = ANY($1::bigint[])`, [orderIds]);
           }
           // 3) No persistimos checklist; no hay que limpiar columnas de validación
           // 4) Eliminar/limpiar timers asociados a la caja
           await c.query(`DELETE FROM inspeccion_caja_timers WHERE caja_id=$1`, [cajaId]);
           await c.query(`DELETE FROM acond_caja_timers WHERE caja_id=$1`, [cajaId]);
           await c.query(`DELETE FROM operacion_caja_timers WHERE caja_id=$1`, [cajaId]);
+          await c.query(`DELETE FROM acond_caja_ordenes WHERE caja_id=$1`, [cajaId]);
           // 5) Eliminar asociaciones y la caja: empezar de cero
           await c.query(`DELETE FROM acond_caja_items WHERE caja_id=$1`, [cajaId]);
           await c.query(`DELETE FROM acond_cajas WHERE caja_id=$1`, [cajaId]);
@@ -4578,6 +4976,18 @@ export const OperacionController = {
    LIMIT 500`,
     listoParams));
 
+  const cajaIdsForOrders = Array.from(
+    new Set(
+      [
+        ...cajasRows.map((row) => row?.caja_id as number).filter((id) => Number.isInteger(id)),
+        ...listoRows.rows
+          .map((row: any) => (row && Number.isInteger(row.caja_id) ? Number(row.caja_id) : null))
+          .filter((id): id is number => id !== null),
+      ]
+    )
+  );
+  const ordersByCajaId = await fetchCajaOrdenes(tenant, cajaIdsForOrders);
+
   // Normalizar estructura esperada por nuevo front-end (acond.js)
   const nowIso = nowRes.rows[0]?.now;
   const nowMs = nowIso ? new Date(nowIso).getTime() : Date.now();
@@ -4615,6 +5025,8 @@ export const OperacionController = {
     const tempSalida = comps.find((cmp) => cmp.tempSalidaC != null)?.tempSalidaC ?? null;
     const tempLlegada = comps.find((cmp) => cmp.tempLlegadaC != null)?.tempLlegadaC ?? null;
     const sensorId = comps.find((cmp) => cmp.sensorId)?.sensorId || null;
+    const associatedOrders = ordersByCajaId.get(r.caja_id) || [];
+    const primaryOrder = associatedOrders[0] || (r.order_id ? { orderId: r.order_id, numeroOrden: r.order_num ?? null, cliente: r.order_client ?? null } : null);
     return {
       id: r.caja_id,
       codigoCaja: r.lote || `Caja #${r.caja_id}`,
@@ -4622,9 +5034,10 @@ export const OperacionController = {
       estado: allEnsamblado ? 'Ensamblado' : 'Ensamblaje',
       createdAt: r.created_at,
       updatedAt: r.created_at,
-      orderId: (r as any).order_id ?? null,
-      orderNumero: (r as any).order_num ?? null,
-      orderCliente: (r as any).order_client ?? null,
+      orderId: primaryOrder?.orderId ?? ((r as any).order_id ?? null),
+      orderNumero: primaryOrder?.numeroOrden ?? ((r as any).order_num ?? null),
+      orderCliente: primaryOrder?.cliente ?? ((r as any).order_client ?? null),
+      orders: associatedOrders,
       timer: startsAt ? { startsAt, endsAt, completedAt } : null,
       componentes: componentesPorCaja[r.caja_id] || [],
       tempSalidaC: tempSalida,
@@ -4655,6 +5068,8 @@ export const OperacionController = {
     const tempSalidaVal = r.temp_salida_c !== null && r.temp_salida_c !== undefined ? Number(r.temp_salida_c) : null;
     const tempLlegadaVal = r.temp_llegada_c !== null && r.temp_llegada_c !== undefined ? Number(r.temp_llegada_c) : null;
     const sensorIdVal = r.sensor_id ? String(r.sensor_id) : null;
+    const associatedOrders = r.caja_id ? ordersByCajaId.get(Number(r.caja_id)) || [] : [];
+    const primaryOrder = associatedOrders[0] || (r.order_id ? { orderId: r.order_id, numeroOrden: r.order_num ?? null, cliente: r.order_client ?? null } : null);
     return {
       caja_id: r.caja_id,
       codigo: r.rfid,
@@ -4666,9 +5081,10 @@ export const OperacionController = {
       fase: 'Acond',
       categoria: categoriaSimple,
       cronometro: startsAt ? { startsAt, endsAt, completedAt } : null,
-      order_id: (r as any).order_id ?? null,
-      order_num: (r as any).order_num ?? null,
-      order_client: (r as any).order_client ?? null,
+      order_id: primaryOrder?.orderId ?? ((r as any).order_id ?? null),
+      order_num: primaryOrder?.numeroOrden ?? ((r as any).order_num ?? null),
+      order_client: primaryOrder?.cliente ?? ((r as any).order_client ?? null),
+      orders: associatedOrders,
       temp_salida_c: Number.isFinite(tempSalidaVal) ? tempSalidaVal : null,
       temp_llegada_c: Number.isFinite(tempLlegadaVal) ? tempLlegadaVal : null,
       sensor_id: sensorIdVal
@@ -4838,13 +5254,25 @@ export const OperacionController = {
   acondEnsamblajeCreate: async (req: Request, res: Response) => {
     const tenant = (req as any).user?.tenant;
     const sedeId = getRequestSedeId(req);
-    const { rfids, order_id } = req.body as any;
+    const { rfids, order_id, order_ids } = req.body as any;
     const allowSedeTransferFlag = resolveAllowSedeTransferFlag(req, req.body?.allowSedeTransfer);
-    let orderId: number | null = null;
-    if(order_id != null){
+    const parsedOrderIds: number[] = [];
+    if (Array.isArray(order_ids)) {
+      for (const raw of order_ids) {
+        const n = Number(raw);
+        if (!Number.isFinite(n) || n <= 0) {
+          return res.status(400).json({ ok: false, error: 'order_ids contiene valores inválidos' });
+        }
+        parsedOrderIds.push(Math.trunc(n));
+      }
+    } else if (order_id != null) {
       const n = Number(order_id);
-      orderId = Number.isFinite(n) && n>0 ? n : null;
+      if (!Number.isFinite(n) || n <= 0) {
+        return res.status(400).json({ ok: false, error: 'order_id inválido' });
+      }
+      parsedOrderIds.push(Math.trunc(n));
     }
+    const uniqueOrderIds = Array.from(new Set(parsedOrderIds));
     const input = Array.isArray(rfids) ? rfids : (rfids ? [rfids] : []);
     const codes = [...new Set(input.filter((x:any)=>typeof x==='string').map((s:string)=>s.trim()).filter(Boolean))];
     if(codes.length !== 8) return res.status(400).json({ ok:false, error:'Se requieren exactamente 8 RFIDs (1 cube, 1 vip, 6 tics)' });
@@ -4989,6 +5417,7 @@ export const OperacionController = {
     if (transferCheck.blocked) return;
     // All good: create caja and assign nuevo lote (random unique pattern)
   let loteNuevo = await generateNextCajaLote(tenant);
+  await ensureCajaOrdenesTable(tenant);
   await runWithSede(tenant, sedeId, async (c) => {
       const targetSede = transferCheck.targetSede;
       await c.query('BEGIN');
@@ -5055,21 +5484,35 @@ export const OperacionController = {
           END IF;
         END $$;`);
         // Validate provided order_id exists (if provided)
-        let orderNumero: string | null = null;
-        if(orderId != null){
-          const chk = await c.query(`SELECT numero_orden FROM ordenes WHERE id=$1 AND COALESCE(habilitada, true)`, [orderId]);
-          if(!chk.rowCount){
-            const err = new Error('Orden seleccionada no existe');
+        let primaryOrderId: number | null = null;
+        let primaryOrderNumero: string | null = null;
+        if(uniqueOrderIds.length){
+          const ordersQ = await c.query(
+            `SELECT id, numero_orden
+               FROM ordenes
+              WHERE id = ANY($1::int[])
+                AND COALESCE(habilitada, true)`,
+            [uniqueOrderIds]
+          );
+          if(ordersQ.rowCount !== uniqueOrderIds.length){
+            const err = new Error('Alguna orden seleccionada no existe o está deshabilitada');
             (err as any).statusCode = 400;
             throw err;
           }
-          orderNumero = chk.rows[0].numero_orden || null;
+          const numeroById = new Map<number, string | null>();
+          for(const ord of ordersQ.rows as any[]){
+            numeroById.set(Number(ord.id), ord.numero_orden || null);
+          }
+          primaryOrderId = uniqueOrderIds[0] ?? null;
+          if(primaryOrderId != null){
+            primaryOrderNumero = numeroById.get(primaryOrderId) || null;
+          }
         }
         let rCaja; let retries=0;
         while(true){
           try {
-            if(orderId != null){
-              rCaja = await c.query(`INSERT INTO acond_cajas(lote, order_id) VALUES ($1, $2) RETURNING caja_id`, [loteNuevo, orderId]);
+            if(primaryOrderId != null){
+              rCaja = await c.query(`INSERT INTO acond_cajas(lote, order_id) VALUES ($1, $2) RETURNING caja_id`, [loteNuevo, primaryOrderId]);
             } else {
               rCaja = await c.query(`INSERT INTO acond_cajas(lote) VALUES ($1) RETURNING caja_id`, [loteNuevo]);
             }
@@ -5084,6 +5527,19 @@ export const OperacionController = {
   const dupChk = await c.query(`SELECT caja_id FROM acond_cajas WHERE lote=$1`, [loteNuevo]);
   if((dupChk.rowCount||0) > 1){ throw new Error('Lote duplicado detectado: '+loteNuevo); }
         const cajaId = rCaja.rows[0].caja_id;
+        if(uniqueOrderIds.length){
+          await c.query(
+            `DELETE FROM acond_caja_ordenes WHERE caja_id=$1`,
+            [cajaId]
+          );
+          await c.query(
+            `INSERT INTO acond_caja_ordenes(caja_id, order_id)
+             SELECT $1, v
+               FROM unnest($2::int[]) AS v
+            ON CONFLICT (caja_id, order_id) DO NOTHING`,
+            [cajaId, uniqueOrderIds]
+          );
+        }
         // Clear lote for TICs first (as per requirement) then set estado/sub_estado + assign lote to all
         const ticRfids = roles.filter(r=>r.rol==='tic').map(r=>r.rfid);
         if(ticRfids.length){
@@ -5096,7 +5552,7 @@ export const OperacionController = {
           );
         }
         // Assign lote & move to Acondicionamiento/Ensamblaje
-        if(orderNumero){
+        if(primaryOrderNumero){
           await c.query(
             `UPDATE inventario_credocubes ic
                 SET estado='Acondicionamiento',
@@ -5105,7 +5561,7 @@ export const OperacionController = {
                     numero_orden=$4,
                     sede_id = COALESCE($3::int, ic.sede_id)
               WHERE ic.rfid = ANY($2::text[])`,
-            [loteNuevo, codes, targetSede, orderNumero]
+            [loteNuevo, codes, targetSede, primaryOrderNumero]
           );
         } else {
           await c.query(
@@ -5136,7 +5592,7 @@ export const OperacionController = {
         }
         await c.query('COMMIT');
   console.log('[ACOND][CREATE] Nueva caja', { caja_id: cajaId, lote: loteNuevo });
-  res.json({ ok:true, caja_id: cajaId, lote: loteNuevo });
+  res.json({ ok:true, caja_id: cajaId, lote: loteNuevo, order_ids: uniqueOrderIds });
       } catch (e:any) {
         await c.query('ROLLBACK');
         const status = Number.isInteger(e?.statusCode) ? Number(e.statusCode) : 500;
@@ -5253,7 +5709,7 @@ export const OperacionController = {
     try {
       // 1. Resolver caja_id y lote usando el RFID
       const cajaRow = await withTenant(tenant, (c)=> c.query(
-        `SELECT c.caja_id, c.lote, c.order_id, o.numero_orden AS order_num
+        `SELECT c.caja_id, c.lote, c.order_id, o.numero_orden AS order_num, o.cliente AS order_client
            FROM acond_caja_items aci
            JOIN acond_cajas c ON c.caja_id = aci.caja_id
       LEFT JOIN ordenes o ON o.id = c.order_id
@@ -5264,6 +5720,12 @@ export const OperacionController = {
   const lote = cajaRow.rows[0].lote;
   const orderId = cajaRow.rows[0].order_id ?? null;
   const orderNum = cajaRow.rows[0].order_num ?? null;
+  const orderClient = cajaRow.rows[0].order_client ?? null;
+      const ordersMap = await fetchCajaOrdenes(tenant, [cajaId]);
+      const associatedOrders = ordersMap.get(cajaId) || [];
+      const primaryOrder = associatedOrders[0] || (orderId ? { orderId, numeroOrden: orderNum ?? null, cliente: orderClient ?? null } : null);
+      const resolvedOrderId = primaryOrder?.orderId ?? orderId ?? null;
+      const resolvedOrderNum = primaryOrder?.numeroOrden ?? orderNum ?? null;
       // 2. Traer componentes actuales + litraje/rol (fallback si columna litraje no existe)
       let currentQ:any; let litrajeDisponible = true;
       try {
@@ -5454,8 +5916,9 @@ export const OperacionController = {
         ok:true,
         caja_id: cajaId,
         lote,
-        order_id: orderId,
-        order_num: orderNum,
+        order_id: resolvedOrderId,
+        order_num: resolvedOrderNum,
+        orders: associatedOrders,
         timer,
         // Back-compat: mantener rfids plano sólo cuando todo está ensamblado (evita flujos previos que dependen de vacíos)
         rfids: allEnsamblado ? rows.map(r=> r.rfid) : [],
@@ -5483,7 +5946,7 @@ export const OperacionController = {
   acondDespachoMove: async (req: Request, res: Response) => {
     const tenant = (req as any).user?.tenant;
     const sedeId = getRequestSedeId(req);
-    const { rfid, durationSec: durationSecRaw, order_id, temp_salida_c: tempSalidaRaw, sensor_id: sensorIdRaw } = req.body as any;
+    const { rfid, durationSec: durationSecRaw, order_id, order_ids, temp_salida_c: tempSalidaRaw, sensor_id: sensorIdRaw } = req.body as any;
     const allowSedeTransferFlag = resolveAllowSedeTransferFlag(req, req.body?.allowSedeTransfer);
     const code = typeof rfid === 'string' ? rfid.trim() : '';
     const durationProvided = durationSecRaw !== undefined && durationSecRaw !== null && durationSecRaw !== '';
@@ -5517,6 +5980,25 @@ export const OperacionController = {
       sensorId = sensorId.slice(0, 120);
     }
     let responseTimerDuration: number | null = null;
+    const parsedOrderIds: number[] = [];
+    if(Array.isArray(order_ids)){
+      for(const raw of order_ids){
+        const n = Number(raw);
+        if(!Number.isFinite(n) || n<=0){
+          return res.status(400).json({ ok:false, error:'order_ids contiene valores inválidos' });
+        }
+        parsedOrderIds.push(Math.trunc(n));
+      }
+    } else if(order_id != null){
+      const n = Number(order_id);
+      if(!Number.isFinite(n) || n<=0){
+        return res.status(400).json({ ok:false, error:'order_id inválido' });
+      }
+      parsedOrderIds.push(Math.trunc(n));
+    }
+    const uniqueOrderIds = Array.from(new Set(parsedOrderIds));
+    await ensureCajaOrdenesTable(tenant);
+    let ordersPayload: CajaOrdenResumen[] = [];
     try {
       await ensureInventarioTempColumns(tenant);
       const cajaInfoQ = await withTenant(tenant, (c)=> c.query(
@@ -5566,7 +6048,6 @@ export const OperacionController = {
           const cajaRow = cajaQ.rows[0] as any;
           const cajaIdActual = cajaRow.caja_id;
           const lote = cajaRow.lote;
-          const cajaOrderId = cajaRow.order_id ?? null;
 
           if(cajaIdActual !== cajaId){
             await c.query('ROLLBACK');
@@ -5645,6 +6126,47 @@ export const OperacionController = {
           } else {
             responseTimerDuration = timerRow && Number.isFinite(Number(timerRow.duration_sec)) ? Number(timerRow.duration_sec) : null;
           }
+          if(uniqueOrderIds.length){
+            const ordQ = await c.query(
+              `SELECT id, numero_orden, cliente
+                 FROM ordenes
+                WHERE id = ANY($1::int[])
+                  AND COALESCE(habilitada, true)`,
+              [uniqueOrderIds]
+            );
+            if(ordQ.rowCount !== uniqueOrderIds.length){
+              await c.query('ROLLBACK');
+              const err = new Error('Alguna orden no existe');
+              (err as any).statusCode = 404;
+              throw err;
+            }
+            const metaById = new Map<number, { numero: string | null; cliente: string | null }>();
+            for(const row of ordQ.rows as any[]){
+              metaById.set(Number(row.id), { numero: row.numero_orden || null, cliente: row.cliente || null });
+            }
+            await c.query(`UPDATE acond_cajas SET order_id=$2 WHERE caja_id=$1`, [cajaId, uniqueOrderIds[0]]);
+            await c.query(`DELETE FROM acond_caja_ordenes WHERE caja_id=$1`, [cajaId]);
+            await c.query(
+              `INSERT INTO acond_caja_ordenes(caja_id, order_id)
+               SELECT $1, v FROM unnest($2::int[]) AS v
+              ON CONFLICT (caja_id, order_id) DO NOTHING`,
+              [cajaId, uniqueOrderIds]
+            );
+            const primaryMeta = metaById.get(uniqueOrderIds[0]) || null;
+            if(primaryMeta?.numero){
+              await c.query(
+                `UPDATE inventario_credocubes
+                    SET numero_orden=$2
+                  WHERE rfid IN (SELECT rfid FROM acond_caja_items WHERE caja_id=$1)`,
+                [cajaId, primaryMeta.numero]
+              );
+            }
+            ordersPayload = uniqueOrderIds.map((id) => ({
+              orderId: id,
+              numeroOrden: metaById.get(id)?.numero ?? null,
+              cliente: metaById.get(id)?.cliente ?? null
+            }));
+          }
       // Flujo simplificado: al iniciar cronómetro se pasa directamente a 'Lista para Despacho'
           const estadoFiltro = "IN ('Ensamblado','Ensamblaje')";
           const upd = await c.query(
@@ -5656,24 +6178,24 @@ export const OperacionController = {
                WHERE ic.rfid IN (SELECT rfid FROM acond_caja_items WHERE caja_id=$1)
                  AND ic.estado='Acondicionamiento'
                  AND ic.sub_estado ${estadoFiltro}`, [cajaId, targetSede, tempSalidaValue, sensorId]);
-          // Si viene order_id y la caja no tiene uno asignado todavía, asociarlo
-          if(order_id!=null && cajaOrderId==null){
-            const parsed = Number(order_id);
-            if(Number.isFinite(parsed) && parsed>0){
-              // Obtener numero_orden
-              const ordQ = await c.query(`SELECT numero_orden FROM ordenes WHERE id=$1 AND COALESCE(habilitada, true)`, [parsed]);
-              if(ordQ.rowCount){
-                const numOrd = ordQ.rows[0].numero_orden || null;
-                try { await c.query(`UPDATE acond_cajas SET order_id=$1 WHERE caja_id=$2 AND order_id IS NULL`, [parsed, cajaId]); } catch(e){ /* ignore */ }
-                if(numOrd){
-                  try { await c.query(`UPDATE inventario_credocubes SET numero_orden=$2 WHERE rfid IN (SELECT rfid FROM acond_caja_items WHERE caja_id=$1)`, [cajaId, numOrd]); } catch(e){ /* ignore */ }
-                }
-              }
-            }
-          }
           await c.query('COMMIT');
           const timerPayload = responseTimerDuration != null ? { durationSec: responseTimerDuration } : null;
-          res.json({ ok:true, caja_id: cajaId, lote, moved: upd.rowCount, timer: timerPayload, timerActive, temp_salida_c: tempSalidaValue, sensor_id: sensorId });
+          const finalOrdersMap = await fetchCajaOrdenes(tenant, [cajaId]);
+          const finalOrders = finalOrdersMap.get(cajaId) || ordersPayload;
+          const primaryOrder = finalOrders[0] || null;
+          res.json({
+            ok:true,
+            caja_id: cajaId,
+            lote,
+            moved: upd.rowCount,
+            timer: timerPayload,
+            timerActive,
+            temp_salida_c: tempSalidaValue,
+            sensor_id: sensorId,
+            order_id: primaryOrder?.orderId ?? null,
+            order_num: primaryOrder?.numeroOrden ?? null,
+            orders: finalOrders
+          });
         } catch(e){ await c.query('ROLLBACK'); throw e; }
       }, { allowCrossSedeTransfer: transferCheck.allowCrossTransfer });
     } catch(e:any){
@@ -5741,32 +6263,120 @@ export const OperacionController = {
   acondCajaSetOrder: async (req: Request, res: Response) => {
     const tenant = (req as any).user?.tenant;
     const sedeId = getRequestSedeId(req);
-    const { caja_id, order_id } = req.body as any;
+    const { caja_id, order_id, order_ids } = req.body as any;
     const cajaId = Number(caja_id);
-    const orderId = Number(order_id);
     if(!Number.isFinite(cajaId) || cajaId<=0) return res.status(400).json({ ok:false, error:'caja_id inválido' });
-    if(!Number.isFinite(orderId) || orderId<=0) return res.status(400).json({ ok:false, error:'order_id inválido' });
+
+    const parsedOrderIds: number[] = [];
+    if (Array.isArray(order_ids)) {
+      for (const raw of order_ids) {
+        const n = Number(raw);
+        if (!Number.isFinite(n) || n <= 0) {
+          return res.status(400).json({ ok: false, error: 'order_ids contiene valores inválidos' });
+        }
+        parsedOrderIds.push(Math.trunc(n));
+      }
+    } else if (order_id != null) {
+      const n = Number(order_id);
+      if (!Number.isFinite(n) || n <= 0) {
+        return res.status(400).json({ ok: false, error: 'order_id inválido' });
+      }
+      parsedOrderIds.push(Math.trunc(n));
+    }
+    const uniqueOrderIds = Array.from(new Set(parsedOrderIds));
+
     try {
-      let orderNum: string | null = null;
+      await ensureCajaOrdenesTable(tenant);
+      let primaryOrderId: number | null = uniqueOrderIds[0] ?? null;
+      let primaryNumero: string | null = null;
+      let ordersPayload: CajaOrdenResumen[] = [];
       await runWithSede(tenant, sedeId, async (c)=>{
         await c.query('BEGIN');
         try {
-          const cajaQ = await c.query(`SELECT caja_id, order_id FROM acond_cajas WHERE caja_id=$1 FOR UPDATE`, [cajaId]);
-          if(!cajaQ.rowCount){ await c.query('ROLLBACK'); return res.status(404).json({ ok:false, error:'Caja no existe' }); }
-          const ordQ = await c.query(`SELECT id, numero_orden FROM ordenes WHERE id=$1 AND COALESCE(habilitada, true)`, [orderId]);
-          if(!ordQ.rowCount){ await c.query('ROLLBACK'); return res.status(404).json({ ok:false, error:'Orden no existe' }); }
-          orderNum = ordQ.rows[0].numero_orden || null;
-          // Actualizar caja (permitir cambiar de orden también)
-          await c.query(`UPDATE acond_cajas SET order_id=$1 WHERE caja_id=$2`, [orderId, cajaId]);
-          if(orderNum){
-            // Propagar numero_orden a items de inventario
-            await c.query(`UPDATE inventario_credocubes SET numero_orden=$2 WHERE rfid IN (SELECT rfid FROM acond_caja_items WHERE caja_id=$1)`, [cajaId, orderNum]);
+          const cajaQ = await c.query(`SELECT caja_id FROM acond_cajas WHERE caja_id=$1 FOR UPDATE`, [cajaId]);
+          if(!cajaQ.rowCount){
+            await c.query('ROLLBACK');
+            const err = new Error('Caja no existe');
+            (err as any).statusCode = 404;
+            throw err;
+          }
+          if(uniqueOrderIds.length){
+            const ordQ = await c.query(
+              `SELECT id, numero_orden, cliente
+                 FROM ordenes
+                WHERE id = ANY($1::int[])
+                  AND COALESCE(habilitada, true)`,
+              [uniqueOrderIds]
+            );
+            if(ordQ.rowCount !== uniqueOrderIds.length){
+              await c.query('ROLLBACK');
+              const err = new Error('Alguna orden no existe');
+              (err as any).statusCode = 404;
+              throw err;
+            }
+            const numeroById = new Map<number, { numero: string | null; cliente: string | null }>();
+            for(const row of ordQ.rows as any[]){
+              numeroById.set(Number(row.id), { numero: row.numero_orden || null, cliente: row.cliente || null });
+            }
+            primaryOrderId = uniqueOrderIds[0] ?? null;
+            primaryNumero = primaryOrderId != null ? (numeroById.get(primaryOrderId)?.numero ?? null) : null;
+            ordersPayload = uniqueOrderIds.map((id) => ({
+              orderId: id,
+              numeroOrden: numeroById.get(id)?.numero ?? null,
+              cliente: numeroById.get(id)?.cliente ?? null
+            }));
+          } else {
+            primaryOrderId = null;
+            primaryNumero = null;
+            ordersPayload = [];
+          }
+
+          await c.query(`UPDATE acond_cajas SET order_id=$2 WHERE caja_id=$1`, [cajaId, primaryOrderId]);
+          await c.query(`DELETE FROM acond_caja_ordenes WHERE caja_id=$1`, [cajaId]);
+          if(uniqueOrderIds.length){
+            await c.query(
+              `INSERT INTO acond_caja_ordenes(caja_id, order_id)
+               SELECT $1, v
+                 FROM unnest($2::int[]) AS v
+              ON CONFLICT (caja_id, order_id) DO NOTHING`,
+              [cajaId, uniqueOrderIds]
+            );
+          }
+          if(primaryNumero){
+            await c.query(
+              `UPDATE inventario_credocubes
+                  SET numero_orden=$2
+                WHERE rfid IN (SELECT rfid FROM acond_caja_items WHERE caja_id=$1)`,
+              [cajaId, primaryNumero]
+            );
+          } else {
+            await c.query(
+              `UPDATE inventario_credocubes
+                  SET numero_orden=NULL
+                WHERE rfid IN (SELECT rfid FROM acond_caja_items WHERE caja_id=$1)`,
+              [cajaId]
+            );
           }
           await c.query('COMMIT');
         } catch(e){ await c.query('ROLLBACK'); throw e; }
       });
-      res.json({ ok:true, caja_id: cajaId, order_id: orderId, order_num: orderNum });
-    } catch(e:any){ res.status(500).json({ ok:false, error: e.message||'Error asignando orden' }); }
+      if(ordersPayload.length === 0){
+        const map = await fetchCajaOrdenes(tenant, [cajaId]);
+        ordersPayload = map.get(cajaId) || [];
+        primaryOrderId = ordersPayload[0]?.orderId ?? null;
+        primaryNumero = ordersPayload[0]?.numeroOrden ?? null;
+      }
+      res.json({
+        ok:true,
+        caja_id: cajaId,
+        order_id: primaryOrderId,
+        order_num: primaryNumero,
+        orders: ordersPayload
+      });
+    } catch(e:any){
+      const status = Number.isInteger(e?.statusCode) ? Number(e.statusCode) : 500;
+      res.status(status).json({ ok:false, error: e?.message || 'Error asignando orden' });
+    }
   },
 
   // ============================= OPERACIÓN · CAJA LOOKUP & MOVE =============================
@@ -5852,9 +6462,26 @@ export const OperacionController = {
         timer = { startsAt, endsAt, active: !!timerRow.active };
       }
   // Fetch order info for caja
-  const orderQ = await withTenant(tenant, (c)=> c.query(`SELECT c.order_id, o.numero_orden AS order_num FROM acond_cajas c LEFT JOIN ordenes o ON o.id = c.order_id WHERE c.caja_id=$1`, [cajaId]));
-  const orderRow = orderQ.rowCount ? orderQ.rows[0] as any : { order_id: null, order_num: null };
-  res.json({ ok:true, caja: { id: cajaId, lote: cajaRow.lote, items, allListo, allOperacion, timer, order_id: orderRow.order_id ?? null, order_num: orderRow.order_num ?? null, temp_salida_c: tempSalidaCaja, temp_llegada_c: tempLlegadaCaja, sensor_id: sensorCaja } });
+  const ordersMap = await fetchCajaOrdenes(tenant, [cajaId]);
+  const orders = ordersMap.get(cajaId) || [];
+  const primaryOrder = orders[0] || null;
+  res.json({
+    ok:true,
+    caja: {
+      id: cajaId,
+      lote: cajaRow.lote,
+      items,
+      allListo,
+      allOperacion,
+      timer,
+      order_id: primaryOrder?.orderId ?? null,
+      order_num: primaryOrder?.numeroOrden ?? null,
+      orders,
+      temp_salida_c: tempSalidaCaja,
+      temp_llegada_c: tempLlegadaCaja,
+      sensor_id: sensorCaja
+    }
+  });
     } catch(e:any){
       res.status(500).json({ ok:false, error: e.message||'Error lookup' });
     }
@@ -6081,6 +6708,7 @@ export const OperacionController = {
           ORDER BY c.caja_id DESC
           LIMIT 300`, cajasParams));
       const cajaIds = cajasQ.rows.map(r=> r.caja_id);
+       const ordersMap = cajaIds.length ? await fetchCajaOrdenes(tenant, cajaIds) : new Map<number, CajaOrdenResumen[]>();
       let itemsRows: any[] = [];
       let litrajeDisponible = true;
       if(cajaIds.length){
@@ -6145,14 +6773,17 @@ export const OperacionController = {
         let estadoCaja = 'Operación';
         if(anyTransito) estadoCaja = 'Transito';
         else if(anyRetorno) estadoCaja = 'Retorno';
+        const associatedOrders = ordersMap.get(r.caja_id) || [];
+        const primaryOrder = associatedOrders[0] || ((r as any).order_id ? { orderId: (r as any).order_id, numeroOrden: (r as any).order_num ?? null, cliente: (r as any).order_client ?? null } : null);
         return {
           id: r.caja_id,
           codigoCaja: r.lote,
           nombreCaja,
           estado: estadoCaja,
-          orderId: (r as any).order_id ?? null,
-          orderNumero: (r as any).order_num ?? null,
-          orderCliente: (r as any).order_client ?? null,
+          orderId: primaryOrder?.orderId ?? ((r as any).order_id ?? null),
+          orderNumero: primaryOrder?.numeroOrden ?? ((r as any).order_num ?? null),
+          orderCliente: primaryOrder?.cliente ?? ((r as any).order_client ?? null),
+          orders: associatedOrders,
           timer,
           componentes: items.map(it=> ({
             codigo: it.codigo,
@@ -6231,6 +6862,9 @@ export const OperacionController = {
         ...row,
         litraje: litrajeDisponible ? (row as any).litraje ?? null : null
       }));
+      const ordersMap = await fetchCajaOrdenes(tenant, [caja.caja_id]);
+      const orders = ordersMap.get(caja.caja_id) || [];
+      const primaryOrder = orders[0] || ((caja as any).order_id ? { orderId: (caja as any).order_id, numeroOrden: (caja as any).order_num ?? null, cliente: (caja as any).order_client ?? null } : null);
       // Elegibles para mover: sub_estado Lista para Despacho o Listo
       const elegibles = items.filter(i=> i.estado==='Acondicionamiento' && (i.sub_estado==='Lista para Despacho' || i.sub_estado==='Listo'));
       if(!elegibles.length) return res.status(400).json({ ok:false, error:'Caja no está Lista para Despacho' });
@@ -6250,9 +6884,10 @@ export const OperacionController = {
         ok:true,
         caja_id: caja.caja_id,
         lote: caja.lote,
-        order_id: (caja as any).order_id ?? null,
-        order_num: (caja as any).order_num ?? null,
-        order_client: (caja as any).order_client ?? null,
+        order_id: primaryOrder?.orderId ?? ((caja as any).order_id ?? null),
+        order_num: primaryOrder?.numeroOrden ?? ((caja as any).order_num ?? null),
+        order_client: primaryOrder?.cliente ?? ((caja as any).order_client ?? null),
+        orders,
         total: items.length,
         elegibles: elegibles.map(e=> e.rfid),
         roles: elegibles.map(e=> ({

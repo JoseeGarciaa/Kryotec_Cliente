@@ -86,6 +86,154 @@
     return true;
   }
 
+  function normalizeOrders(raw){
+    if(!Array.isArray(raw)) return [];
+    const seen = new Set();
+    const result = [];
+    for(const entry of raw){
+      if(!entry || typeof entry !== 'object') continue;
+      const orderIdRaw = Number(entry.orderId);
+      const orderId = Number.isFinite(orderIdRaw) && orderIdRaw > 0 ? Math.trunc(orderIdRaw) : null;
+      const numeroOrden = entry.numeroOrden != null ? String(entry.numeroOrden) : null;
+      const cliente = entry.cliente != null ? String(entry.cliente) : null;
+      if(orderId == null && !numeroOrden && !cliente) continue;
+      const key = [orderId ?? '', numeroOrden ? numeroOrden.toLowerCase() : '', cliente ? cliente.toLowerCase() : ''].join('|');
+      if(seen.has(key)) continue;
+      seen.add(key);
+      result.push({ orderId, numeroOrden, cliente });
+    }
+    return result;
+  }
+
+  function buildOrderSearch(orders, fallbackNumero, fallbackCliente){
+    const tokens = new Set();
+    const pushToken = (value)=>{
+      const clean = String(value||'').trim();
+      if(clean){ tokens.add(clean.toLowerCase()); }
+    };
+    orders.forEach(o => {
+      pushToken(o.numeroOrden);
+      pushToken(o.cliente);
+      if(o.orderId){ pushToken(`#${o.orderId}`); pushToken(o.orderId); }
+    });
+    pushToken(fallbackNumero);
+    pushToken(fallbackCliente);
+    return Array.from(tokens).join(' ');
+  }
+
+  function normalizeCajaOrders(entry){
+    if(!entry || typeof entry !== 'object') return entry;
+    const cleanedOrders = normalizeOrders(entry.orders);
+    const fallbackId = Number(entry.orderId);
+    const fallbackNumero = entry.orderNumero != null ? String(entry.orderNumero) : null;
+    const fallbackCliente = entry.orderCliente != null ? String(entry.orderCliente) : null;
+    const ensureOrderPresent = (orderId, numero, cliente)=>{
+      if(orderId == null && !numero && !cliente) return;
+      if(orderId != null && cleanedOrders.some(o => o.orderId === orderId)) return;
+      if(orderId == null && cleanedOrders.some(o => o.numeroOrden === numero && o.cliente === cliente)) return;
+      cleanedOrders.push({ orderId, numeroOrden: numero, cliente });
+    };
+    if(Number.isFinite(fallbackId) && fallbackId > 0){
+      ensureOrderPresent(Math.trunc(fallbackId), fallbackNumero, fallbackCliente);
+    } else if(fallbackNumero || fallbackCliente){
+      ensureOrderPresent(null, fallbackNumero, fallbackCliente);
+    }
+    const primary = cleanedOrders[0] || null;
+    const normalized = {
+      ...entry,
+      orders: cleanedOrders,
+      orderId: primary?.orderId ?? (Number.isFinite(fallbackId) && fallbackId > 0 ? Math.trunc(fallbackId) : null),
+      orderNumero: primary?.numeroOrden ?? fallbackNumero,
+      orderCliente: primary?.cliente ?? fallbackCliente
+    };
+    normalized.orderSearch = buildOrderSearch(cleanedOrders, normalized.orderNumero, normalized.orderCliente);
+    return normalized;
+  }
+
+  function ordersSummaryHTML(source, opts){
+    const options = opts || {};
+    const orders = Array.isArray(source?.orders) && source.orders.length
+      ? source.orders
+      : (() => {
+          const numero = source?.orderNumero || (source?.orderId ? `#${source.orderId}` : null);
+          const cliente = source?.orderCliente || null;
+          if(!numero && !cliente) return [];
+          return [{ orderId: source?.orderId ?? null, numeroOrden: numero, cliente }];
+        })();
+    if(!orders.length) return '';
+    const limit = Number.isFinite(options.limit) && options.limit > 0 ? Math.floor(options.limit) : orders.length;
+    const rows = orders.slice(0, limit).map(o => {
+      const numero = o.numeroOrden || (o.orderId ? `#${o.orderId}` : null);
+      const numeroHtml = numero ? `<span class="font-mono">${safeHTML(numero)}</span>` : '<span class="font-mono opacity-40">—</span>';
+      const cliente = o.cliente ? `<span class="opacity-70">${safeHTML(o.cliente)}</span>` : '';
+      const separator = cliente ? '<span class="opacity-40">·</span>' : '';
+      return `<div class="flex items-center gap-1 flex-wrap">${numeroHtml}${cliente ? `${separator}${cliente}` : ''}</div>`;
+    }).join('');
+    const extra = orders.length > limit
+      ? `<div class="text-[10px] opacity-60 leading-snug">+${orders.length - limit} más</div>`
+      : '';
+    const title = options.showTitle ? '<div class="uppercase tracking-wide text-[9px] opacity-60">Ordenes</div>' : '';
+    const cls = options.className || 'text-[10px] opacity-70 leading-snug space-y-1';
+    return `<div class="${cls}">${title}${rows}${extra}</div>`;
+  }
+
+  function ordersPlainStrings(source){
+    const normalized = normalizeCajaOrders(source || {});
+    const list = Array.isArray(normalized.orders) ? normalized.orders : [];
+    if(list.length){
+      return list.map(o => {
+        const num = o.numeroOrden || (o.orderId ? `#${o.orderId}` : null);
+        const cli = o.cliente ? ` (${o.cliente})` : '';
+        return (num || '#?') + cli;
+      });
+    }
+    const fallbackNum = normalized.orderNumero || (normalized.orderId ? `#${normalized.orderId}` : null);
+    if(!fallbackNum) return [];
+    const fallbackCli = normalized.orderCliente ? ` (${normalized.orderCliente})` : '';
+    return [String(fallbackNum) + fallbackCli];
+  }
+
+  function renderOrdersDetail(container, source){
+    if(!container) return;
+    const normalized = normalizeCajaOrders(source || {});
+    const orders = Array.isArray(normalized.orders) ? normalized.orders : [];
+    if(!orders.length){
+      container.innerHTML = '<span class="opacity-60 font-mono">—</span>';
+      container.classList.add('opacity-60');
+      container.removeAttribute('title');
+      return;
+    }
+    container.classList.remove('opacity-60');
+    const rows = orders.map(o => {
+      const numero = o.numeroOrden || (o.orderId ? `#${o.orderId}` : '—');
+      const cliente = o.cliente ? `<span class="opacity-70">${safeHTML(o.cliente)}</span>` : '';
+      const separator = cliente ? '<span class="opacity-40">·</span>' : '';
+      return `<div class="flex flex-wrap items-center gap-1"><span class="font-mono">${safeHTML(numero)}</span>${cliente ? `${separator}${cliente}` : ''}</div>`;
+    }).join('');
+    container.innerHTML = rows;
+    container.title = orders.map(o => {
+      const numero = o.numeroOrden || (o.orderId ? `#${o.orderId}` : '—');
+      return o.cliente ? `${numero} · ${o.cliente}` : numero;
+    }).join('\n');
+  }
+
+  function enableSimpleMultiSelect(selectEl){
+    if(!selectEl || selectEl.__simpleMultiBound) return;
+    selectEl.addEventListener('mousedown', (event)=>{
+      const option = event.target;
+      if(!option || option.tagName !== 'OPTION') return;
+      event.preventDefault();
+      const alreadySelected = option.selected;
+      option.selected = !alreadySelected;
+      if(typeof selectEl.focus === 'function'){ selectEl.focus(); }
+      const inputEvt = new Event('input', { bubbles: true });
+      const changeEvt = new Event('change', { bubbles: true });
+      selectEl.dispatchEvent(inputEvt);
+      selectEl.dispatchEvent(changeEvt);
+    });
+    selectEl.__simpleMultiBound = true;
+  }
+
   function ensureNegativeWarningElement(){
     if(scanNegativeWarningEl && scanNegativeWarningEl.isConnected){
       return scanNegativeWarningEl;
@@ -511,8 +659,7 @@
               (i.codigo||'').toLowerCase().includes(filterValue) ||
               (i.nombre||'').toLowerCase().includes(filterValue) ||
               (i.lote||'').toLowerCase().includes(filterValue) ||
-              (i.order_num||'').toLowerCase().includes(filterValue) ||
-              (i.order_client||'').toLowerCase().includes(filterValue))
+              (i.orderSearch||'').includes(filterValue))
             : listoDespacho);
         listoTotalCount = listoDespacho.length;
         listoFilteredCount = filtered.length;
@@ -551,8 +698,7 @@
                   (i.codigo||'').toLowerCase().includes(filterValue) ||
                   (i.nombre||'').toLowerCase().includes(filterValue) ||
                   (i.lote||'').toLowerCase().includes(filterValue) ||
-                  (i.order_num||'').toLowerCase().includes(filterValue) ||
-                  (i.order_client||'').toLowerCase().includes(filterValue))
+                  (i.orderSearch||'').includes(filterValue))
               : listoDespacho);
         const groupsMap = new Map();
         filtered.forEach(it=>{
@@ -568,7 +714,9 @@
               items: [],
               orderId: it.order_id ?? null,
               orderNumero: it.order_num ?? (it.order_id != null ? `#${it.order_id}` : null),
-              orderCliente: it.order_client || ''
+              orderCliente: it.order_client || '',
+              orders: [],
+              _orderKeySet: new Set()
             });
           }
           const g = groupsMap.get(key);
@@ -582,6 +730,24 @@
           if(g.orderId == null && it.order_id != null){ g.orderId = it.order_id; }
           if(!g.orderNumero && (it.order_num || it.order_id != null)){ g.orderNumero = it.order_num || `#${it.order_id}`; }
           if(!g.orderCliente && it.order_client){ g.orderCliente = it.order_client; }
+          const ensureOrder = (orderObj)=>{
+            if(!orderObj || typeof orderObj !== 'object') return;
+            const candidateId = Number(orderObj.orderId);
+            const orderIdNorm = Number.isFinite(candidateId) && candidateId > 0 ? Math.trunc(candidateId) : null;
+            const numeroNorm = orderObj.numeroOrden != null ? String(orderObj.numeroOrden) : null;
+            const clienteNorm = orderObj.cliente != null ? String(orderObj.cliente) : null;
+            const keyParts = [orderIdNorm ?? '', numeroNorm ?? '', clienteNorm ?? ''];
+            const rawKey = keyParts.join('|').toLowerCase();
+            if(!rawKey.trim()) return;
+            if(g._orderKeySet.has(rawKey)) return;
+            g._orderKeySet.add(rawKey);
+            g.orders.push({ orderId: orderIdNorm, numeroOrden: numeroNorm, cliente: clienteNorm });
+          };
+          if(Array.isArray(it.orders) && it.orders.length){
+            it.orders.forEach(ensureOrder);
+          } else {
+            ensureOrder({ orderId: it.order_id ?? null, numeroOrden: it.order_num ?? null, cliente: it.order_client ?? null });
+          }
         });
         const groups = Array.from(groupsMap.values());
         grid.innerHTML = groups.map(g => {
@@ -596,7 +762,8 @@
             componentes: g.componentes,
             orderId: g.orderId ?? null,
             orderNumero: g.orderNumero || null,
-            orderCliente: g.orderCliente || ''
+            orderCliente: g.orderCliente || '',
+            orders: g.orders
           };
           return cajaCardHTML(fakeCaja, { hideTimerUI: false, hideTimerActions: true, listTimer: g.timer });
         }).join('');
@@ -623,7 +790,7 @@
   }
   const filtered = focusEnsCajaId != null
     ? cajas.filter(c => String(c.id) === String(focusEnsCajaId))
-    : (filterValue ? cajas.filter(c => (c.codigoCaja||'').toLowerCase().includes(filterValue) || (c.nombreCaja||'').toLowerCase().includes(filterValue) || (c.componentes||[]).some(cc => String(cc.codigo||'').toLowerCase().includes(filterValue))) : cajas.slice());
+    : (filterValue ? cajas.filter(c => (c.codigoCaja||'').toLowerCase().includes(filterValue) || (c.nombreCaja||'').toLowerCase().includes(filterValue) || (c.orderSearch||'').includes(filterValue) || (c.componentes||[]).some(cc => String(cc.codigo||'').toLowerCase().includes(filterValue))) : cajas.slice());
 
   // Contar componentes totales y filtrados
   totalComponentCount = cajas.reduce((acc,c)=> acc + ((c.componentes||[]).length || 0), 0);
@@ -690,14 +857,7 @@
       ...tics.map(()=>`<span class='badge badge-warning badge-xs font-semibold'>TIC</span>`),
       ...cubes.map(()=>`<span class='badge badge-accent badge-xs font-semibold'>CUBE</span>`)
     ].join(' ');
-    const orderNumero = c.orderNumero || (c.orderId ? `#${c.orderId}` : '');
-    const orderCliente = c.orderCliente || '';
-    const orderBlock = (orderNumero || orderCliente)
-      ? `<div class='text-[10px] opacity-70 leading-snug space-y-0.5'>
-          <div>Orden: <span class='font-mono'>${orderNumero ? safeHTML(orderNumero) : '-'}</span></div>
-          ${orderCliente ? `<div>Cliente: <span class='font-semibold'>${safeHTML(orderCliente)}</span></div>` : ''}
-        </div>`
-      : '';
+    const orderBlock = ordersSummaryHTML(c, { className: 'text-[10px] opacity-70 leading-snug space-y-0.5', limit: 3 });
     // Timer badge used inside bottom row (not top-right now)
     let timerSection = '';
     if(!hideTimerUI){
@@ -889,8 +1049,8 @@
       }
       const serverNow = json.serverNow ? new Date(json.serverNow).getTime() : Date.now();
       serverNowOffsetMs = serverNow - Date.now();
-      cajas = Array.isArray(json.cajas) ? json.cajas : [];
-      listoDespacho = Array.isArray(json.listoDespacho) ? json.listoDespacho : [];
+      cajas = Array.isArray(json.cajas) ? json.cajas.map(normalizeCajaOrders) : [];
+      listoDespacho = Array.isArray(json.listoDespacho) ? json.listoDespacho.map(normalizeCajaOrders) : [];
       renderCajas();
       renderListo();
       updateCounts();
@@ -1027,6 +1187,9 @@
         };
       }
     }
+    if(caja){
+      caja = normalizeCajaOrders(caja);
+    }
     if(!caja) return; // nada que mostrar
     const modalWrap = document.getElementById('modal-caja-detalle');
     if(!modalWrap) return;
@@ -1045,10 +1208,7 @@
     // Orden vinculada (si existe)
     const ordenEl = document.getElementById('detalle-caja-orden');
     if(ordenEl){
-      const num = caja.orderNumero || null;
-      const idNum = caja.orderId || null;
-      ordenEl.textContent = num ? String(num) : (idNum ? `#${idNum}` : '—');
-      ordenEl.classList.toggle('opacity-60', !(num||idNum));
+      renderOrdersDetail(ordenEl, caja);
     }
 
     // Items
@@ -1205,14 +1365,7 @@
 
   function listoCardHTML(item){
     const chronoLabel = 'Cronómetro en Ensamblaje';
-    const orderNumero = item.order_num || (item.order_id != null ? `#${item.order_id}` : '');
-    const orderCliente = item.order_client || '';
-    const orderBlock = (orderNumero || orderCliente)
-      ? `<div class="text-[10px] opacity-70 leading-snug space-y-0.5">
-          ${orderNumero ? `<div>Orden: <span class="font-mono">${safeHTML(orderNumero)}</span></div>` : ''}
-          ${orderCliente ? `<div>Cliente: <span class="font-semibold">${safeHTML(orderCliente)}</span></div>` : ''}
-        </div>`
-      : '';
+    const orderBlock = ordersSummaryHTML(item, { className: 'text-[10px] opacity-70 leading-snug space-y-1', limit: 2 });
     return `<div class="card bg-base-100 shadow-sm border border-base-200 p-2" data-listo-rfid="${safeHTML(item.codigo)}">
       <div class="flex items-start justify-between mb-1">
         <span class="font-mono text-[10px]">${safeHTML(item.codigo)}</span>
@@ -1230,6 +1383,7 @@
     const actionsHTML = '<span class="text-[10px] opacity-50">Sin acciones</span>';
     const categoriaBadges = Object.entries(group.categorias).sort().map(([k,v])=>`<span class="badge badge-ghost badge-xs">${k} x${v}</span>`).join(' ');
     const codes = group.items.slice(0,8).map(it=>`<span class="badge badge-neutral badge-xs font-mono" title="${safeHTML(it.codigo)}">${safeHTML(it.codigo.slice(-6))}</span>`).join(' ');
+    const orderBlock = ordersSummaryHTML(group, { className: 'text-[10px] opacity-70 leading-snug space-y-1 pointer-events-none', limit: 3 });
     return `<div class="card bg-base-100 shadow-sm border border-base-200 p-2 cursor-pointer hover:border-primary/60 transition" data-listo-caja="${safeHTML(group.lote)}" data-caja-id="${safeHTML(group.cajaId)}">
       <div class="flex items-start justify-between mb-1 pointer-events-none">
         <span class="font-mono text-[10px]">${safeHTML(group.lote)}</span>
@@ -1237,6 +1391,7 @@
       </div>
       <div class="text-[10px] flex flex-wrap gap-1 mb-1 pointer-events-none">${categoriaBadges||''}</div>
       <div class="text-[10px] grid grid-cols-3 gap-1 mb-1 pointer-events-none">${codes}</div>
+      ${orderBlock}
       <div class="flex items-center justify-between">
         <div class="text-[10px] opacity-80">${badgeHTML}</div>
         ${actionsHTML}
@@ -1677,7 +1832,12 @@
         crearBtn.disabled = !(ready && consentOk);
       }
       // Orden select state
-      if(linkOrderChk && orderSelect){ orderSelect.disabled = !linkOrderChk.checked; }
+      if(linkOrderChk && orderSelect){
+        orderSelect.disabled = !linkOrderChk.checked;
+        if(!linkOrderChk.checked){
+          orderSelect.selectedIndex = -1;
+        }
+      }
     }
     function resetAll(){
       ticSet.clear();
@@ -1693,21 +1853,28 @@
       renderNegativeConsent();
       updateStatus();
       if(msg) msg.textContent='';
-      if(orderSelect){ orderSelect.innerHTML = `<option value="">Selecciona una orden…</option>`; }
+      if(orderSelect){
+        orderSelect.innerHTML = `<option value="" disabled>Selecciona una o más órdenes…</option>`;
+        orderSelect.selectedIndex = -1;
+        orderSelect.scrollTop = 0;
+        orderSelect.multiple = true;
+        orderSelect.size = 3;
+        enableSimpleMultiSelect(orderSelect);
+      }
       if(linkOrderChk){ linkOrderChk.checked=false; }
       ensureLocationSelectors();
     }
 
     async function loadOrdenes(){
       if(!orderSelect) return;
-      orderSelect.innerHTML = `<option value="">Cargando órdenes…</option>`;
+      orderSelect.innerHTML = `<option value="" disabled>Cargando órdenes…</option>`;
       try{
         const r = await fetch('/ordenes/list', { headers:{ 'Accept':'application/json' } });
         const j = await r.json();
         if(!r.ok || j.ok===false){ throw new Error(j.error||'Error'); }
         const items = Array.isArray(j.items) ? j.items : [];
         // Build options label: numero_orden · cliente · producto · cantidad
-        const opts = [`<option value="">Selecciona una orden…</option>`]
+        const opts = [`<option value="" disabled>Selecciona una o más órdenes…</option>`]
           .concat(items.map(o => {
             const num = (o.numero_orden||'').toString();
             const cli = (o.cliente||'').toString();
@@ -1717,8 +1884,17 @@
             return `<option value="${o.id}">${label}</option>`;
           }));
         orderSelect.innerHTML = opts.join('');
+        orderSelect.multiple = true;
+        const visibleCount = Math.min(6, Math.max(3, items.length || 3));
+        orderSelect.size = visibleCount;
+        orderSelect.selectedIndex = -1;
+        enableSimpleMultiSelect(orderSelect);
       }catch(e){
-        orderSelect.innerHTML = `<option value="">No se pudo cargar órdenes</option>`;
+        orderSelect.innerHTML = `<option value="" disabled>No se pudo cargar órdenes</option>`;
+        orderSelect.multiple = true;
+        orderSelect.size = 3;
+        orderSelect.selectedIndex = -1;
+        enableSimpleMultiSelect(orderSelect);
       }
     }
 
@@ -1909,9 +2085,13 @@
         negativeConsentCheckbox?.focus();
         return;
       }
-      // Optional order id
-      let orderId = null;
-      if(linkOrderChk && linkOrderChk.checked && orderSelect && orderSelect.value){ orderId = Number(orderSelect.value); if(!Number.isFinite(orderId)) orderId = null; }
+      // Optional order ids (multi)
+      let orderIds = [];
+      if(linkOrderChk && linkOrderChk.checked && orderSelect){
+        orderIds = Array.from(orderSelect.selectedOptions || [])
+          .map(opt => Number(opt.value))
+          .filter(id => Number.isFinite(id) && id > 0);
+      }
       let zonaId = '';
       let seccionId = '';
       if(locationController){
@@ -1929,7 +2109,7 @@
         const confirmed = await confirmNegativeTimersBeforeCreate(rfids);
         if(!confirmed){ crearBtn.disabled=false; if(!msg.textContent) msg.textContent = 'Operación cancelada.'; return; }
         if(msg) msg.textContent='Creando caja...';
-        const attempt = await postJSONWithSedeTransfer('/operacion/acond/ensamblaje/create', { rfids, order_id: orderId, zona_id: zonaId, seccion_id: seccionId }, {
+        const attempt = await postJSONWithSedeTransfer('/operacion/acond/ensamblaje/create', { rfids, order_ids: orderIds, zona_id: zonaId, seccion_id: seccionId }, {
           promptMessage: (data) => data?.confirm || data?.error || 'Las piezas seleccionadas pertenecen a otra sede. ¿Deseas trasladarlas a tu sede actual?'
         });
         if(attempt.cancelled){ if(msg) msg.textContent = 'Operación cancelada.'; return; }
@@ -2118,7 +2298,9 @@
       if(queueWrap){ queueWrap.classList.remove('hidden'); }
       queueList.innerHTML = queue.map((entry, idx) => {
         const isSelected = String(entry.cajaId) === String(selectedCajaId);
-        const orderLabel = entry.orderNum ? entry.orderNum : (entry.orderId ? `#${entry.orderId}` : '-');
+        const orderStrings = ordersPlainStrings(entry);
+        const orderLabel = orderStrings.length ? orderStrings.join(' · ') : '-';
+        const orderTitle = orderStrings.join('\n');
         const pendLabel = entry.pendientes != null ? entry.pendientes : '?';
         const pendValue = safeHTML(String(pendLabel));
         const badges = [];
@@ -2167,7 +2349,7 @@
             </div>
             <div class="flex flex-col gap-1 w-full sm:w-auto">
               <div class="flex flex-wrap items-center justify-between sm:justify-end gap-2 text-[10px] uppercase opacity-70">
-                <span class="whitespace-nowrap">Orden: ${safeHTML(orderLabel)}</span>
+                <span class="whitespace-nowrap" title="${safeHTML(orderTitle)}">Orden: ${safeHTML(orderLabel)}</span>
                 <span class="whitespace-nowrap">${safeHTML(String(entry.total || 0))} items</span>
                 <button type="button" class="btn btn-ghost btn-xs shrink-0" data-remove-caja="${safeHTML(entry.cajaId)}">x</button>
               </div>
@@ -2217,6 +2399,12 @@
         }
         const isComplete = data.allEnsamblado === true;
         const timerActive = !!(data.timer && data.timer.active === true);
+        const normalizedOrderInfo = normalizeCajaOrders({
+          orders: Array.isArray(data.orders) ? data.orders : [],
+          orderId: data.order_id ?? null,
+          orderNumero: data.order_num ?? null,
+          orderCliente: data.order_client ?? null
+        });
         const componentes = (()=>{
           if(Array.isArray(data.componentes) && data.componentes.length){
             return normalizeComponentes(data.componentes);
@@ -2233,8 +2421,10 @@
           entry = {
             cajaId,
             lote: data.lote || `Caja ${cajaId}`,
-            orderId: data.order_id ?? null,
-            orderNum: data.order_num ?? null,
+            orderId: normalizedOrderInfo.orderId,
+            orderNum: normalizedOrderInfo.orderNumero,
+            orderCliente: normalizedOrderInfo.orderCliente,
+            orders: normalizedOrderInfo.orders,
             componentes,
             total: data.total ?? componentes.length,
             pendientes: data.pendientes ?? 0,
@@ -2249,8 +2439,10 @@
           queue.push(entry);
         } else {
           entry.lote = data.lote || entry.lote;
-          entry.orderId = data.order_id ?? entry.orderId;
-          entry.orderNum = data.order_num ?? entry.orderNum;
+          entry.orderId = normalizedOrderInfo.orderId ?? entry.orderId;
+          entry.orderNum = normalizedOrderInfo.orderNumero ?? entry.orderNum;
+          entry.orderCliente = normalizedOrderInfo.orderCliente ?? entry.orderCliente;
+          entry.orders = normalizedOrderInfo.orders.length ? normalizedOrderInfo.orders : entry.orders;
           entry.componentes = componentes.length ? componentes : entry.componentes;
           entry.total = data.total ?? entry.total;
           entry.pendientes = data.pendientes ?? entry.pendientes;
@@ -2471,15 +2663,24 @@
 
 // =================== NUEVA VINCULACIÓN DE ORDEN EN DETALLE ===================
 // =================== NUEVA VINCULACIÓN DE ORDEN EN DETALLE ===================
-  async function loadOrdenesForDetalle(selectEl){
+  async function loadOrdenesForDetalle(selectEl, preselectedIds){
     if(!selectEl) return;
-    selectEl.innerHTML = '<option value="">Cargando órdenes…</option>';
+    const preselected = Array.isArray(preselectedIds)
+      ? preselectedIds
+          .map(v => Number(v))
+          .filter(n => Number.isFinite(n) && n > 0)
+          .map(n => Math.trunc(n))
+      : [];
+    const selectedSet = new Set(preselected);
+    selectEl.innerHTML = '<option value="" disabled>Cargando órdenes…</option>';
+    selectEl.multiple = true;
+    selectEl.size = Math.max(3, Math.min(6, selectedSet.size || 3));
     try {
       const r = await fetch('/ordenes/list', { headers:{ 'Accept':'application/json' } });
       const j = await r.json();
       if(!r.ok || j.ok===false) throw new Error(j.error||'Error');
       const items = Array.isArray(j.items)? j.items:[];
-      const opts = ['<option value="">Selecciona una orden…</option>'].concat(items.map(o=>{
+      const opts = ['<option value="" disabled>Selecciona una o más órdenes…</option>'].concat(items.map(o=>{
         const num = (o.numero_orden||'').toString();
         const cli = (o.cliente||'').toString();
         const prod = (o.codigo_producto||'').toString();
@@ -2488,7 +2689,22 @@
         return `<option value="${o.id}">${label}</option>`;
       }));
       selectEl.innerHTML = opts.join('');
-    } catch(e){ selectEl.innerHTML = '<option value="">No se pudo cargar órdenes</option>'; }
+      selectEl.multiple = true;
+      const visibleCount = Math.min(6, Math.max(3, items.length || 3));
+      selectEl.size = visibleCount;
+      Array.from(selectEl.options).forEach(opt => {
+        const optVal = Number(opt.value);
+        if(!Number.isFinite(optVal) || optVal <= 0){ opt.selected = false; return; }
+        opt.selected = selectedSet.has(Math.trunc(optVal));
+      });
+      enableSimpleMultiSelect(selectEl);
+    } catch(e){
+      selectEl.innerHTML = '<option value="" disabled>No se pudo cargar órdenes</option>';
+      selectEl.multiple = true;
+      selectEl.size = 3;
+      Array.from(selectEl.options).forEach(opt => { opt.selected = false; });
+      enableSimpleMultiSelect(selectEl);
+    }
   }
   // Extender openCajaDetalle para inyectar UI de orden
   const _origOpenCajaDetalle = openCajaDetalle;
@@ -2497,20 +2713,52 @@
     const wrap = document.getElementById('detalle-order-actions');
     const ordenSpan = document.getElementById('detalle-caja-orden');
     if(!wrap || !ordenSpan) return;
-    const currentTxt = ordenSpan.textContent?.trim();
-    // Si ya tiene una orden (no '—'), permitir cambiarla también
+    const cajaSource = (() => {
+      const direct = cajas.find(c => String(c.id) === String(id));
+      if(direct) return normalizeCajaOrders({ ...direct });
+      const items = listoDespacho.filter(it => String(it.caja_id) === String(id));
+      if(!items.length) return null;
+      const mergedOrders = [];
+      items.forEach(it => {
+        if(Array.isArray(it.orders) && it.orders.length){
+          mergedOrders.push(...it.orders);
+        } else {
+          mergedOrders.push({ orderId: it.order_id ?? null, numeroOrden: it.order_num ?? null, cliente: it.order_client ?? null });
+        }
+      });
+      return normalizeCajaOrders({
+        orders: mergedOrders,
+        orderId: items[0]?.order_id ?? null,
+        orderNumero: items[0]?.order_num ?? null,
+        orderCliente: items[0]?.order_client ?? null
+      });
+    })();
+    const normalizedSource = cajaSource ? normalizeCajaOrders({ ...cajaSource }) : null;
+    if(normalizedSource){
+      renderOrdersDetail(ordenSpan, normalizedSource);
+    }
+    const initialOrderIds = Array.isArray(normalizedSource?.orders)
+      ? normalizedSource.orders
+          .map(o => Number(o.orderId))
+          .filter(n => Number.isFinite(n) && n > 0)
+          .map(n => Math.trunc(n))
+      : [];
+    let currentSelectedIds = [...initialOrderIds];
+    const instructionsText = currentSelectedIds.length
+      ? 'Haz clic para activar o desactivar cada orden. Deja sin selección para quitar todas.'
+      : 'Haz clic para seleccionar una o más órdenes. Deja sin selección para quitar todas.';
     wrap.innerHTML = `
       <div class='border border-base-300/40 rounded-lg p-3 bg-base-200/30 space-y-3'>
         <div class='flex items-center justify-between'>
-          <span class='font-semibold'>Orden</span>
+          <span class='font-semibold'>Órdenes</span>
           <button class='btn btn-ghost btn-xs' id='detalle-refresh-orden' title='Recargar'>↻</button>
         </div>
-        <div class='text-[11px] opacity-70'>${currentTxt && currentTxt!=='—' ? 'Cambiar la orden asociada' : 'Vincular esta caja a una orden existente'}</div>
-        <div class='flex items-center gap-2'>
-          <select id='detalle-orden-select' class='select select-bordered select-sm flex-1'>
-            <option value=''>Selecciona una orden…</option>
+        <div class='text-[11px] opacity-70' id='detalle-orden-instructions'>${instructionsText}</div>
+        <div class='flex items-start gap-2'>
+          <select id='detalle-orden-select' class='select select-bordered select-sm flex-1 min-h-[7.5rem]' multiple>
+            <option value='' disabled>Selecciona una o más órdenes…</option>
           </select>
-          <button class='btn btn-sm btn-primary' id='detalle-orden-aplicar'>Guardar</button>
+          <button class='btn btn-sm btn-primary mt-[2px]' id='detalle-orden-aplicar'>Guardar</button>
         </div>
         <div id='detalle-orden-msg' class='text-[11px] opacity-70 min-h-[14px]'></div>
       </div>`;
@@ -2518,24 +2766,57 @@
     const msg = document.getElementById('detalle-orden-msg');
     const applyBtn = document.getElementById('detalle-orden-aplicar');
     const refreshBtn = document.getElementById('detalle-refresh-orden');
-    loadOrdenesForDetalle(sel);
+    const instructionsEl = document.getElementById('detalle-orden-instructions');
+    loadOrdenesForDetalle(sel, currentSelectedIds);
     applyBtn?.addEventListener('click', async ()=>{
-      const val = sel && sel.value ? Number(sel.value) : null;
-      if(!val){ if(msg) msg.textContent='Selecciona una orden'; return; }
-      applyBtn.disabled=true; if(msg) msg.textContent='Aplicando...';
+      const selectedOptions = sel ? Array.from(sel.options).filter(opt => opt.selected && Number(opt.value)) : [];
+      const orderIds = selectedOptions.map(opt => Math.trunc(Number(opt.value))).filter(n => Number.isFinite(n) && n > 0);
+      applyBtn.disabled=true;
+      if(msg) msg.textContent = orderIds.length ? 'Aplicando...' : 'Quitando órdenes...';
       try {
-        const r = await fetch('/operacion/acond/caja/set-order',{ method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ caja_id: id, order_id: val })});
+        const r = await fetch('/operacion/acond/caja/set-order',{ method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ caja_id: id, order_ids: orderIds })});
         const j = await r.json();
         if(!j.ok) throw new Error(j.error||'Error');
-        if(msg) msg.textContent='Orden vinculada';
+        if(msg) msg.textContent = orderIds.length ? 'Órdenes actualizadas' : 'Órdenes removidas';
         // Refrescar data general
         await loadData();
-        // Actualizar texto de orden en meta
-        ordenSpan.textContent = j.order_num ? j.order_num : ('#'+val);
-        ordenSpan.classList.remove('opacity-60');
+        const normalized = normalizeCajaOrders({
+          orders: Array.isArray(j.orders) ? j.orders : [],
+          orderId: j.order_id ?? null,
+          orderNumero: j.order_num ?? null,
+          orderCliente: null
+        });
+        renderOrdersDetail(ordenSpan, normalized);
+        currentSelectedIds = Array.isArray(normalized.orders)
+          ? normalized.orders
+              .map(o => Number(o.orderId))
+              .filter(n => Number.isFinite(n) && n > 0)
+              .map(n => Math.trunc(n))
+          : [];
+        if(sel){
+          const set = new Set(currentSelectedIds);
+          Array.from(sel.options).forEach(opt => {
+            const optVal = Number(opt.value);
+            if(!Number.isFinite(optVal) || optVal <= 0){ opt.selected = false; return; }
+            opt.selected = set.has(Math.trunc(optVal));
+          });
+        }
+        if(instructionsEl){
+          instructionsEl.textContent = currentSelectedIds.length
+            ? 'Haz clic para activar o desactivar cada orden. Deja sin selección para quitar todas.'
+            : 'Haz clic para seleccionar una o más órdenes. Deja sin selección para quitar todas.';
+        }
       } catch(e){ if(msg) msg.textContent=e.message||'Error'; }
       finally { applyBtn.disabled=false; }
     });
-    refreshBtn?.addEventListener('click', ()=> loadOrdenesForDetalle(sel));
+    refreshBtn?.addEventListener('click', ()=>{
+      const selectedNow = sel
+        ? Array.from(sel.options)
+            .filter(opt => opt.selected && Number(opt.value))
+            .map(opt => Math.trunc(Number(opt.value)))
+            .filter(n => Number.isFinite(n) && n > 0)
+        : currentSelectedIds;
+      loadOrdenesForDetalle(sel, selectedNow.length ? selectedNow : currentSelectedIds);
+    });
   };
 })();

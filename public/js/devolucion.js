@@ -76,6 +76,151 @@
       .replace(/'/g,'&#39;');
   }
 
+  function normalizeOrders(raw){
+    if(!Array.isArray(raw)) return [];
+    const out = [];
+    const seen = new Set();
+    raw.forEach((entry)=>{
+      if(!entry || typeof entry !== 'object') return;
+      const orderIdRaw = entry.orderId ?? entry.order_id;
+      const orderIdNum = Number(orderIdRaw);
+      const orderId = Number.isFinite(orderIdNum) && orderIdNum > 0 ? Math.trunc(orderIdNum) : null;
+      const numeroRaw = entry.numeroOrden ?? entry.numero_orden ?? entry.numero;
+      const numeroOrden = numeroRaw != null ? String(numeroRaw) : null;
+      const clienteRaw = entry.cliente ?? entry.clienteNombre ?? entry.customer;
+      const cliente = clienteRaw != null ? String(clienteRaw) : null;
+      const key = orderId != null ? `id:${orderId}` : `n:${numeroOrden||''}|c:${cliente||''}`;
+      if(seen.has(key)) return;
+      seen.add(key);
+      out.push({ orderId, numeroOrden, cliente });
+    });
+    return out;
+  }
+
+  function buildOrderSearch(orders, fallbackNumero, fallbackCliente){
+    const tokens = new Set();
+    const push = (value)=>{
+      const clean = String(value || '').trim();
+      if(clean) tokens.add(clean.toLowerCase());
+    };
+    orders.forEach((o)=>{
+      push(o.numeroOrden);
+      push(o.cliente);
+      if(o.orderId){ push(`#${o.orderId}`); push(o.orderId); }
+    });
+    push(fallbackNumero);
+    push(fallbackCliente);
+    return Array.from(tokens).join(' ');
+  }
+
+  function normalizeCajaOrders(entry){
+    if(!entry || typeof entry !== 'object') return entry;
+    const cleanedOrders = normalizeOrders(entry.orders);
+    const fallbackIdRaw = entry.orderId ?? entry.order_id;
+    const fallbackIdNum = Number(fallbackIdRaw);
+    const fallbackId = Number.isFinite(fallbackIdNum) && fallbackIdNum > 0 ? Math.trunc(fallbackIdNum) : null;
+    const fallbackNumero = entry.orderNumero ?? entry.order_num ?? null;
+    const fallbackCliente = entry.orderCliente ?? entry.order_client ?? null;
+    const ensureOrderPresent = (orderId, numero, cliente)=>{
+      if(orderId == null && !numero && !cliente) return;
+      if(orderId != null && cleanedOrders.some((o)=> o.orderId === orderId)) return;
+      if(orderId == null && cleanedOrders.some((o)=> o.numeroOrden === numero && o.cliente === cliente)) return;
+      cleanedOrders.push({ orderId, numeroOrden: numero || null, cliente: cliente || null });
+    };
+    if(fallbackId != null){ ensureOrderPresent(fallbackId, fallbackNumero, fallbackCliente); }
+    else if(fallbackNumero || fallbackCliente){ ensureOrderPresent(null, fallbackNumero, fallbackCliente); }
+    const primary = cleanedOrders[0] || null;
+    const orderId = primary?.orderId ?? fallbackId;
+    const orderNumero = primary?.numeroOrden ?? (fallbackNumero != null ? String(fallbackNumero) : null);
+    const orderCliente = primary?.cliente ?? (fallbackCliente != null ? String(fallbackCliente) : null);
+    const normalized = {
+      ...entry,
+      orders: cleanedOrders,
+      orderId,
+      orderNumero,
+      orderCliente
+    };
+    normalized.orderSearch = buildOrderSearch(cleanedOrders, orderNumero, orderCliente);
+    return normalized;
+  }
+
+  function ordersSummaryHTML(source, opts){
+    const options = opts || {};
+    const normalized = normalizeCajaOrders(source || {});
+    const orders = Array.isArray(normalized.orders) ? normalized.orders : [];
+    if(!orders.length) return '';
+    const limitRaw = Number(options.limit);
+    const limit = Number.isFinite(limitRaw) && limitRaw > 0 ? Math.floor(limitRaw) : orders.length;
+    const rows = orders.slice(0, limit).map((o)=>{
+      const numero = o.numeroOrden || (o.orderId ? `#${o.orderId}` : null);
+      const numeroHtml = numero ? `<span class="font-mono">${escapeHtml(numero)}</span>` : '<span class="font-mono opacity-40">—</span>';
+      const cliente = o.cliente ? `<span class="opacity-70">${escapeHtml(o.cliente)}</span>` : '';
+      const separator = cliente ? '<span class="opacity-40">·</span>' : '';
+      const justify = options.align === 'end' ? 'end' : 'start';
+      return `<div class="flex items-center gap-1 flex-wrap justify-${justify}">${numeroHtml}${cliente ? `${separator}${cliente}` : ''}</div>`;
+    }).join('');
+    const extra = orders.length > limit ? `<div class="text-[10px] opacity-60 leading-snug">+${orders.length - limit} más</div>` : '';
+    const title = options.showTitle ? '<div class="uppercase tracking-wide text-[9px] opacity-60">Órdenes</div>' : '';
+    const cls = options.className || 'text-[10px] opacity-70 leading-snug space-y-1';
+    return `<div class="${cls}">${title}${rows}${extra}</div>`;
+  }
+
+  function ordersPlainStrings(source){
+    const normalized = normalizeCajaOrders(source || {});
+    const list = Array.isArray(normalized.orders) ? normalized.orders : [];
+    if(list.length){
+      return list.map((o)=>{
+        const numero = o.numeroOrden || (o.orderId ? `#${o.orderId}` : null);
+        const cliente = o.cliente ? ` (${o.cliente})` : '';
+        return (numero || '#?') + cliente;
+      });
+    }
+    const fallbackNumero = normalized.orderNumero || (normalized.orderId ? `#${normalized.orderId}` : null);
+    if(!fallbackNumero) return [];
+    const fallbackCliente = normalized.orderCliente ? ` (${normalized.orderCliente})` : '';
+    return [String(fallbackNumero) + fallbackCliente];
+  }
+
+  function renderOrdersDetail(container, source){
+    if(!container) return;
+    const normalized = normalizeCajaOrders(source || {});
+    const orders = Array.isArray(normalized.orders) ? normalized.orders : [];
+    if(!orders.length){
+      container.innerHTML = '<span class="opacity-60 font-mono">—</span>';
+      container.classList.add('opacity-60');
+      container.removeAttribute('title');
+      return;
+    }
+    container.classList.remove('opacity-60');
+    const rendered = orders.map((o)=>{
+      const numero = o.numeroOrden || (o.orderId ? `#${o.orderId}` : '—');
+      const cliente = o.cliente ? `<span class="opacity-70">${escapeHtml(o.cliente)}</span>` : '';
+      const separator = cliente ? '<span class="opacity-40">·</span>' : '';
+      return `<div class="flex flex-wrap items-center gap-1"><span class="font-mono">${escapeHtml(numero)}</span>${cliente ? `${separator}${cliente}` : ''}</div>`;
+    }).join('');
+    container.innerHTML = rendered;
+    container.title = orders.map((o)=>{
+      const numero = o.numeroOrden || (o.orderId ? `#${o.orderId}` : '—');
+      return o.cliente ? `${numero} · ${o.cliente}` : numero;
+    }).join('\n');
+  }
+
+  function renderOrderCountLabel(source, opts){
+    const options = opts || {};
+    const normalized = options.normalized ? (source || {}) : normalizeCajaOrders(source || {});
+    const countRaw = normalized.orderCajaCount ?? normalized.order_caja_count;
+    const expectedRaw = normalized.orderCajaExpected ?? normalized.order_caja_expected;
+    const totalRaw = normalized.orderCajaTotal ?? normalized.order_caja_total;
+    const count = Number(countRaw);
+    if(!Number.isFinite(count) || count < 0) return '';
+    const expected = Number(expectedRaw);
+    const total = Number(totalRaw);
+    const denom = Number.isFinite(total) && total > 0 ? total : (Number.isFinite(expected) && expected > 0 ? expected : null);
+    const label = denom != null ? `${count}/${denom}` : `${count}`;
+    const cls = options.className || 'text-[9px] opacity-60';
+    return `<div class="${cls}">Cajas asociadas: <span class="font-mono">${escapeHtml(String(label))}</span></div>`;
+  }
+
   function formatTempValue(value){
     if(value === null || value === undefined || value === '') return '';
     const num = Number(value);
@@ -208,7 +353,8 @@
   function timerDisplay(rem){ if(rem<=0) return 'Finalizado'; const s=Math.max(0,Math.floor(rem/1000)); const h=Math.floor(s/3600); const m=Math.floor((s%3600)/60); const sec=s%60; return `${h}:${String(m).padStart(2,'0')}:${String(sec).padStart(2,'0')}`; }
   function progressPct(timer){ if(!timer||!timer.startsAt||!timer.endsAt) return 0; const start=new Date(timer.startsAt).getTime(); const end=new Date(timer.endsAt).getTime(); const now=Date.now()+serverOffset; if(now<=start) return 0; if(now>=end) return 100; return ((now-start)/(end-start))*100; }
   function cardHTML(caja){
-    const comps = caja.componentes||[];
+    const info = normalizeCajaOrders(caja);
+    const comps = info.componentes||[];
     const vip = comps.filter(x=>x.tipo==='vip');
     const tics = comps.filter(x=>x.tipo==='tic');
     const cubes = comps.filter(x=>x.tipo==='cube');
@@ -217,52 +363,40 @@
       ...tics.map(()=>`<span class='badge badge-warning badge-xs font-semibold'>TIC</span>`),
       ...cubes.map(()=>`<span class='badge badge-accent badge-xs font-semibold'>CUBE</span>`)
     ].join(' ');
-    const rem = caja.timer? msRemaining(caja.timer):0;
-    const pct = progressPct(caja.timer);
-    const timerTxt = caja.timer? (caja.timer.completedAt? 'Listo' : timerDisplay(rem)) : '';
+    const rem = info.timer? msRemaining(info.timer):0;
+    const pct = progressPct(info.timer);
+    const timerTxt = info.timer? (info.timer.completedAt? 'Listo' : timerDisplay(rem)) : '';
     let timerBadge='';
-    if(caja.timer && caja.timer.startsAt && caja.timer.endsAt && !caja.timer.completedAt){
-      timerBadge = `<span class='badge badge-neutral badge-xs flex items-center gap-1' data-dev-caja-timer data-caja='${caja.id}'>
-        <span id='dev-timer-${caja.id}' class='font-mono whitespace-nowrap tabular-nums'>${timerTxt}</span>
+    if(info.timer && info.timer.startsAt && info.timer.endsAt && !info.timer.completedAt){
+      timerBadge = `<span class='badge badge-neutral badge-xs flex items-center gap-1' data-dev-caja-timer data-caja='${info.id}'>
+        <span id='dev-timer-${info.id}' class='font-mono whitespace-nowrap tabular-nums'>${timerTxt}</span>
       </span>`;
-    } else if(caja.timer && caja.timer.completedAt){
+    } else if(info.timer && info.timer.completedAt){
       timerBadge = `<span class='badge badge-success badge-xs'>Listo</span>`;
     } else {
       timerBadge = `<span class='badge badge-outline badge-xs opacity-60'>Sin cronómetro</span>`;
     }
     const progress = Math.min(100, Math.max(0, pct));
-    const code = caja.codigoCaja||'';
-    const displayName = caja.nombreCaja || code || '';
-    const titleText = displayName && code && displayName !== code ? `${displayName} · ${code}` : displayName || code;
-    // Formato de orden: si se conoce expected (>0) mostrar a/b, si no solo a
-    const cajaOrderId = (caja.orderId != null ? caja.orderId : (caja.order_id != null ? caja.order_id : null));
-    const ordenStrBase = (caja.orderNumero ? caja.orderNumero : (caja.order_num ? caja.order_num : (cajaOrderId != null ? (`#${cajaOrderId}`) : '-')));
-    let ordenStr = ordenStrBase;
-    const haveCount = (caja.orderCajaCount!=null && caja.orderCajaCount>=0);
-    const haveExpected = (caja.orderCajaExpected!=null && caja.orderCajaExpected>0);
-    const haveTotal = (caja.orderCajaTotal!=null && caja.orderCajaTotal>0);
-    const denom = haveTotal ? caja.orderCajaTotal : (haveExpected ? caja.orderCajaExpected : null);
-    if(cajaOrderId != null && haveCount){
-      if(denom!=null){
-        ordenStr = `${ordenStrBase} (${caja.orderCajaCount}/${denom})`;
-      } else {
-        ordenStr = `${ordenStrBase} (${caja.orderCajaCount})`;
-      }
-    }
-      const orderCliente = caja.orderCliente || caja.order_client || '';
-      const orderClienteLine = orderCliente ? `<div class='text-[10px] opacity-70'>Cliente: <span class='font-semibold'>${escapeHtml(orderCliente)}</span></div>` : '';
-      return `<div class='caja-card rounded-lg border border-base-300/40 bg-base-200/10 p-3 flex flex-col gap-2 hover-border-primary/60 transition cursor-pointer' data-caja-id='${caja.id}' title='${titleText}'>
-        <div class='text-[10px] uppercase opacity-60 tracking-wide'>Caja</div>
-        <div class='font-semibold text-xs leading-tight break-all pr-2'>${displayName}</div>
-        <div class='text-[10px] opacity-70'>Orden: <span class='font-mono'>${escapeHtml(ordenStr)}</span></div>
-        ${orderClienteLine}
+    const code = info.codigoCaja||'';
+    const displayName = info.nombreCaja || code || '';
+    const titleBase = displayName && code && displayName !== code ? `${displayName} · ${code}` : displayName || code || 'Caja';
+    const tooltipOrders = ordersPlainStrings(info);
+    const tooltipText = tooltipOrders.length ? `${titleBase} · ${tooltipOrders.join(' · ')}` : titleBase;
+    const ordersBlock = ordersSummaryHTML(info, { className: 'text-[10px] opacity-70 leading-snug space-y-0.5', limit: 3, showTitle: true });
+    const ordersSection = ordersBlock || "<div class='text-[10px] opacity-60 font-mono'>Sin órdenes asociadas</div>";
+    const countLine = renderOrderCountLabel(info, { normalized: true, className: 'text-[9px] opacity-60' });
+    return `<div class='caja-card rounded-lg border border-base-300/40 bg-base-200/10 p-3 flex flex-col gap-2 hover-border-primary/60 transition cursor-pointer' data-caja-id='${info.id}' title='${escapeHtml(tooltipText)}'>
+      <div class='text-[10px] uppercase opacity-60 tracking-wide'>Caja</div>
+      <div class='font-semibold text-xs leading-tight break-all pr-2'>${escapeHtml(displayName)}</div>
+      ${ordersSection}
+      ${countLine}
       <div class='flex flex-wrap gap-1 text-[9px] flex-1'>${compBadges || "<span class='badge badge-ghost badge-xs'>Sin items</span>"}</div>
       <div class='h-1.5 w-full bg-base-300/30 rounded-full overflow-hidden'>
-        <div class='h-full bg-gradient-to-r from-primary via-primary to-primary/70' style='width:${progress.toFixed(1)}%' data-dev-caja-bar='${caja.id}'></div>
+        <div class='h-full bg-gradient-to-r from-primary via-primary to-primary/70' style='width:${progress.toFixed(1)}%' data-dev-caja-bar='${info.id}'></div>
       </div>
       <div class='flex items-center justify-between text-[10px] font-mono opacity-70'>
         <span class='inline-flex items-center gap-1'>${timerBadge}</span>
-        <button class='btn btn-ghost btn-[6px] btn-xs text-primary' data-process-caja='${caja.id}' title='Procesar devolución'>➜</button>
+        <button class='btn btn-ghost btn-[6px] btn-xs text-primary' data-process-caja='${info.id}' title='Procesar devolución'>➜</button>
       </div>
     </div>`;
   }
@@ -293,8 +427,14 @@
     try { spin?.classList.remove('hidden');
       const r = await fetch('/operacion/devolucion/data');
       const j = await r.json();
-  if(j.ok){ data = j; if(j.serverNow){ serverOffset = new Date(j.serverNow).getTime() - Date.now(); } syncScannedFromData(j); }
-      else { data = { cajas:[], serverNow:null }; syncScannedFromData({ cajas: [] }); }
+      if(j.ok){
+        const normalizedCajas = Array.isArray(j.cajas) ? j.cajas.map((c)=> normalizeCajaOrders(c)) : [];
+        const normalizedPendientes = Array.isArray(j.pendientes) ? j.pendientes.map((c)=> normalizeCajaOrders(c)) : [];
+        data = { ...j, cajas: normalizedCajas, pendientes: normalizedPendientes };
+        if(j.serverNow){ serverOffset = new Date(j.serverNow).getTime() - Date.now(); }
+        syncScannedFromData({ cajas: normalizedCajas });
+      }
+      else { data = { cajas:[], serverNow:null, pendientes:[], ordenes:{} }; syncScannedFromData({ cajas: [] }); }
       render(); renderScannedList(); ensureTick();
     } catch(e){ console.error('[Devolución] load error', e); }
     finally { spin?.classList.add('hidden'); }
@@ -344,19 +484,23 @@
 
   function inferTipo(nombre){ const n=(nombre||'').toLowerCase(); if(n.includes('vip')) return 'vip'; if(n.includes('tic')) return 'tic'; if(n.includes('cube')||n.includes('cubo')) return 'cube'; return 'otro'; }
   function miniCardHTML(c){
-    const ordenStr = (c.orderNumero ? c.orderNumero : (c.orderId ? ('#'+c.orderId) : (c.order_num ? c.order_num : (c.order_id ? ('#'+c.order_id) : '-'))));
-    const orderCliente = c.orderCliente || c.order_client || '';
-    const code = c.codigoCaja || c.lote || '';
-    const displayName = c.nombreCaja || code;
-    const titleText = displayName && code && displayName !== code ? `${displayName} · ${code}` : displayName || code;
+    const info = normalizeCajaOrders(c);
+    const code = info.codigoCaja || info.lote || '';
+    const displayName = info.nombreCaja || code;
+    const titleBase = displayName && code && displayName !== code ? `${displayName} · ${code}` : displayName || code;
+    const tooltipOrders = ordersPlainStrings(info);
+    const tooltipText = tooltipOrders.length ? `${titleBase} · ${tooltipOrders.join(' · ')}` : titleBase;
+    const ordersBlock = ordersSummaryHTML(info, { className: 'text-[10px] opacity-70 leading-snug space-y-0.5', showTitle: true, limit: 4 });
+    const ordersSection = ordersBlock || "<div class='text-[10px] opacity-60 font-mono'>Sin órdenes asociadas</div>";
+    const countLine = renderOrderCountLabel(info, { normalized: true, className: 'text-[9px] opacity-60' });
     return `<div class='text-xs'>
-      <div class='flex items-center justify-between text-[10px] uppercase opacity-60 mb-1'><span>Caja</span><span class='font-mono'>${code}</span></div>
-      <div class='font-semibold text-[11px] break-all mb-2' title='${titleText}'>${displayName}</div>
-      <div class='text-[10px] opacity-70 mb-1'>Orden: <span class='font-mono'>${escapeHtml(ordenStr)}</span></div>
-      ${orderCliente ? `<div class='text-[10px] opacity-70 mb-1'>Cliente: <span class='font-semibold'>${escapeHtml(orderCliente)}</span></div>` : ''}
-      <div class='flex flex-wrap gap-1 mb-2'>${(c.componentes||[]).map(it=>{ let cls='badge-ghost'; if(it.tipo==='vip') cls='badge-info'; else if(it.tipo==='tic') cls='badge-warning'; else if(it.tipo==='cube') cls='badge-accent'; return `<span class='badge ${cls} badge-xs'>${(it.tipo||'').toUpperCase()}</span>`; }).join('') || "<span class='badge badge-ghost badge-xs'>Sin items</span>"}</div>
-      <div class='text-[10px] font-mono opacity-70'>${c.timer? (c.timer.completedAt? 'Listo' : 'Cronómetro activo') : 'Sin cronómetro'}</div>
-      <div class='mt-2'><button class='btn btn-xs btn-primary btn-outline w-full' data-process-caja='${c.id}'>➜ Procesar devolución</button></div>
+      <div class='flex items-center justify-between text-[10px] uppercase opacity-60 mb-1'><span>Caja</span><span class='font-mono'>${escapeHtml(code)}</span></div>
+      <div class='font-semibold text-[11px] break-all mb-2' title='${escapeHtml(tooltipText)}'>${escapeHtml(displayName)}</div>
+      ${ordersSection}
+      ${countLine}
+      <div class='flex flex-wrap gap-1 mb-2'>${(info.componentes||[]).map(it=>{ let cls='badge-ghost'; if(it.tipo==='vip') cls='badge-info'; else if(it.tipo==='tic') cls='badge-warning'; else if(it.tipo==='cube') cls='badge-accent'; return `<span class='badge ${cls} badge-xs'>${(it.tipo||'').toUpperCase()}</span>`; }).join('') || "<span class='badge badge-ghost badge-xs'>Sin items</span>"}</div>
+      <div class='text-[10px] font-mono opacity-70'>${info.timer? (info.timer.completedAt? 'Listo' : 'Cronómetro activo') : 'Sin cronómetro'}</div>
+      <div class='mt-2'><button class='btn btn-xs btn-primary btn-outline w-full' data-process-caja='${info.id}'>➜ Procesar devolución</button></div>
     </div>`;
   }
 
@@ -373,7 +517,11 @@
   }
 
   function syncScannedFromData(payload){
-    const latest = new Map((payload.cajas||[]).map(c=> [String(c.id), c]));
+    const latest = new Map((payload.cajas||[]).map(c=>{
+      const normalized = normalizeCajaOrders(c);
+      const key = normalized && normalized.id != null ? normalized.id : c?.id;
+      return [String(key), normalized];
+    }));
     const toRemove = [];
     scannedCajas.forEach((entry, key)=>{
       const next = latest.get(key);
@@ -383,13 +531,21 @@
       }
       scannedCajas.set(key, {
         ...entry,
+        ...next,
+        id: next.id ?? entry.id,
         codigoCaja: next.codigoCaja || next.caja || entry.codigoCaja,
         nombreCaja: next.nombreCaja || entry.nombreCaja || null,
-        orderId: next.orderId ?? next.order_id ?? entry.orderId ?? null,
-        orderNumero: next.orderNumero ?? next.order_num ?? entry.orderNumero ?? null,
-          orderCliente: next.orderCliente ?? next.order_client ?? entry.orderCliente ?? null,
-        timer: next.timer || null,
-        componentes: Array.isArray(next.componentes) ? next.componentes : entry.componentes
+        orderId: next.orderId ?? entry.orderId ?? null,
+        orderNumero: next.orderNumero ?? entry.orderNumero ?? null,
+        orderCliente: next.orderCliente ?? entry.orderCliente ?? null,
+        orders: Array.isArray(next.orders) ? next.orders : (Array.isArray(entry.orders) ? entry.orders : []),
+        orderSearch: next.orderSearch || entry.orderSearch || '',
+        timer: next.timer || entry.timer || null,
+        componentes: Array.isArray(next.componentes) ? next.componentes : entry.componentes,
+        code: entry.code,
+        tempSalida: entry.tempSalida,
+        tempLlegada: entry.tempLlegada,
+        sensorId: entry.sensorId
       });
     });
     toRemove.forEach(key=>{
@@ -411,22 +567,26 @@
     }
     multiWrap?.classList.remove('hidden');
     if(multiCount) multiCount.textContent = String(entries.length);
-      multiList.innerHTML = entries.map(entry=>{
-      const ordenStr = entry.orderNumero ? entry.orderNumero : (entry.orderId ? ('#'+entry.orderId) : '-');
-      const orderCliente = entry.orderCliente || '';
-      const code = entry.codigoCaja || '';
-      const displayName = entry.nombreCaja || code;
-      const titleText = displayName && code && displayName !== code ? `${displayName} · ${code}` : displayName || code;
-      return `<div class='border border-base-300/40 rounded-lg p-3 space-y-2' data-scan-entry='${entry.id}'>
+    multiList.innerHTML = entries.map(entry=>{
+      const info = normalizeCajaOrders(entry);
+      const code = info.codigoCaja || '';
+      const displayName = info.nombreCaja || code;
+      const titleBase = displayName && code && displayName !== code ? `${displayName} · ${code}` : displayName || code;
+      const tooltipOrders = ordersPlainStrings(info);
+      const tooltipText = tooltipOrders.length ? `${titleBase} · ${tooltipOrders.join(' · ')}` : titleBase;
+      const ordersBlock = ordersSummaryHTML(info, { className: 'text-[10px] opacity-70 leading-snug space-y-0.5', showTitle: true, limit: 4 });
+      const ordersSection = ordersBlock || "<div class='text-[10px] opacity-60 font-mono'>Sin órdenes asociadas</div>";
+      const countLine = renderOrderCountLabel(info, { normalized: true, className: 'text-[9px] opacity-60' });
+      return `<div class='border border-base-300/40 rounded-lg p-3 space-y-2' data-scan-entry='${info.id}'>
         <div class='flex items-center justify-between gap-2'>
-          <span class='font-mono text-xs break-all'>${code}</span>
-          <button class='btn btn-ghost btn-xs' data-scan-remove='${entry.id}' title='Quitar'>✕</button>
+          <span class='font-mono text-xs break-all'>${escapeHtml(code)}</span>
+          <button class='btn btn-ghost btn-xs' data-scan-remove='${info.id}' title='Quitar'>✕</button>
         </div>
-        <div class='text-xs font-semibold leading-tight break-all' title='${titleText}'>${displayName}</div>
-        <div class='text-[10px] opacity-70'>Orden: <span class='font-mono'>${escapeHtml(ordenStr)}</span></div>
-        ${orderCliente ? `<div class='text-[10px] opacity-70'>Cliente: <span class='font-semibold'>${escapeHtml(orderCliente)}</span></div>` : ''}
-        <div class='flex flex-wrap gap-1 text-[9px]'>${componentesBadges(entry.componentes)}</div>
-        <button class='btn btn-xs btn-primary w-full' data-scan-process='${entry.id}'>Procesar</button>
+        <div class='text-xs font-semibold leading-tight break-all' title='${escapeHtml(tooltipText)}'>${escapeHtml(displayName)}</div>
+        ${ordersSection}
+        ${countLine}
+        <div class='flex flex-wrap gap-1 text-[9px]'>${componentesBadges(info.componentes)}</div>
+        <button class='btn btn-xs btn-primary w-full' data-scan-process='${info.id}'>Procesar</button>
       </div>`;
     }).join('');
   }
@@ -454,14 +614,19 @@
       if(scanMsg) scanMsg.textContent = 'Caja ya escaneada';
       return false;
     }
+    const info = normalizeCajaOrders(caja);
     scannedCajas.set(key, {
-      id: caja.id,
-      codigoCaja: caja.codigoCaja || caja.lote || '',
-      nombreCaja: caja.nombreCaja || null,
-      orderId: caja.orderId ?? caja.order_id ?? null,
-      orderNumero: caja.orderNumero ?? caja.order_num ?? null,
-      timer: caja.timer || null,
-      componentes: Array.isArray(caja.componentes) ? caja.componentes : [],
+      ...info,
+      id: info.id ?? caja.id,
+      codigoCaja: info.codigoCaja || info.caja || caja.codigoCaja || caja.lote || '',
+      nombreCaja: info.nombreCaja || null,
+      orderId: info.orderId ?? null,
+      orderNumero: info.orderNumero ?? null,
+      orderCliente: info.orderCliente ?? null,
+      orders: Array.isArray(info.orders) ? info.orders : [],
+      orderSearch: info.orderSearch || '',
+      timer: info.timer || caja.timer || null,
+      componentes: Array.isArray(info.componentes) ? info.componentes : (Array.isArray(caja.componentes) ? caja.componentes : []),
       code,
       tempSalida: caja.tempSalida ?? caja.temp_salida_c ?? null,
       tempLlegada: caja.tempLlegada ?? caja.temp_llegada_c ?? null,
@@ -525,34 +690,50 @@
       const tempSalidaVal = parseTemp(j.caja.temp_salida_c);
       const tempLlegadaVal = parseTemp(j.caja.temp_llegada_c);
       const sensorText = j.caja.sensor_id != null ? String(j.caja.sensor_id).trim() : '';
+      const items = Array.isArray(j.caja.items) ? j.caja.items : [];
+      const cubeItem = items.find(it=> inferTipo(it.nombre_modelo||it.nombre||'') === 'cube');
+      const cajaOrders = Array.isArray(j.caja.orders) ? j.caja.orders : [];
+      let cajaPayload;
       if(!caja){
-        const cubeItem = (j.caja.items||[]).find(it=> inferTipo(it.nombre_modelo||it.nombre||'') === 'cube');
         const nombreCaja = j.caja.nombre_caja || j.caja.nombreCaja || cubeItem?.nombre_modelo || null;
-        caja = {
+        cajaPayload = {
           id: cajaId,
           codigoCaja: j.caja.lote,
           nombreCaja: nombreCaja || null,
-          orderId: j.caja.order_id || null,
-          orderNumero: j.caja.order_num || null,
-          timer: j.caja.timer ? { startsAt: j.caja.timer.startsAt, endsAt: j.caja.timer.endsAt, completedAt: j.caja.timer.active===false? j.caja.timer.endsAt:null } : null,
-          componentes: (j.caja.items||[]).map(it=> ({ codigo: it.rfid, tipo: inferTipo(it.nombre_modelo||it.nombre||'') })),
-          tempSalida: tempSalidaVal,
-          tempLlegada: tempLlegadaVal,
-          sensorId: sensorText
+          componentes: items.map(it=> ({ codigo: it.rfid, tipo: inferTipo(it.nombre_modelo||it.nombre||'') })),
+          timer: j.caja.timer ? { startsAt: j.caja.timer.startsAt, endsAt: j.caja.timer.endsAt, completedAt: j.caja.timer.active===false? j.caja.timer.endsAt:null } : null
         };
+      } else {
+        cajaPayload = { ...caja };
+        if(!Array.isArray(cajaPayload.componentes)){
+          cajaPayload.componentes = items.map(it=> ({ codigo: it.rfid, tipo: inferTipo(it.nombre_modelo||it.nombre||'') }));
+        }
+        if(!cajaPayload.timer && j.caja.timer){
+          cajaPayload.timer = { startsAt: j.caja.timer.startsAt, endsAt: j.caja.timer.endsAt, completedAt: j.caja.timer.active===false? j.caja.timer.endsAt:null };
+        }
       }
-      const items = (j.caja.items||[]);
+      if(!cajaPayload.nombreCaja && (j.caja.nombre_caja || j.caja.nombreCaja || cubeItem?.nombre_modelo)){
+        cajaPayload.nombreCaja = j.caja.nombre_caja || j.caja.nombreCaja || cubeItem?.nombre_modelo || cajaPayload.nombreCaja;
+      }
+      cajaPayload.orderId = j.caja.order_id ?? cajaPayload.orderId ?? null;
+      cajaPayload.orderNumero = j.caja.order_num ?? cajaPayload.orderNumero ?? null;
+      cajaPayload.orderCliente = j.caja.orderCliente ?? j.caja.order_client ?? cajaPayload.orderCliente ?? null;
+      cajaPayload.orders = cajaOrders.length ? cajaOrders : (Array.isArray(cajaPayload.orders) ? cajaPayload.orders : []);
+      cajaPayload.orderCajaCount = j.caja.orderCajaCount ?? j.caja.order_caja_count ?? cajaPayload.orderCajaCount ?? null;
+      cajaPayload.orderCajaExpected = j.caja.orderCajaExpected ?? j.caja.order_caja_expected ?? cajaPayload.orderCajaExpected ?? null;
+      cajaPayload.orderCajaTotal = j.caja.orderCajaTotal ?? j.caja.order_caja_total ?? cajaPayload.orderCajaTotal ?? null;
+      cajaPayload.tempSalida = tempSalidaVal;
+      cajaPayload.tempLlegada = tempLlegadaVal;
+      cajaPayload.sensorId = sensorText;
+      const normalizedCaja = normalizeCajaOrders(cajaPayload);
       const eligible = items.length>0 && items.every(it=> it.estado==='Operación' && it.sub_estado==='Transito');
       if(!eligible){
         if(scanMsg) scanMsg.textContent='Caja no elegible: requiere Operación · Tránsito';
         return false;
       }
-      caja.tempSalida = tempSalidaVal;
-      caja.tempLlegada = tempLlegadaVal;
-      caja.sensorId = sensorText;
-      const added = addScannedCaja(caja, code);
-      if(scanCardBox) scanCardBox.innerHTML = miniCardHTML(caja);
-      if(scanExtra) scanExtra.textContent = `Items: ${(caja.componentes||[]).length} · ID ${caja.id}`;
+      const added = addScannedCaja(normalizedCaja, code);
+      if(scanCardBox) scanCardBox.innerHTML = miniCardHTML(normalizedCaja);
+      if(scanExtra) scanExtra.textContent = `Items: ${(normalizedCaja.componentes||[]).length} · ID ${normalizedCaja.id}`;
       if(scanResult) scanResult.classList.remove('hidden');
       if(scanMsg) scanMsg.textContent = added ? 'Caja agregada' : 'Caja ya escaneada';
       return added;

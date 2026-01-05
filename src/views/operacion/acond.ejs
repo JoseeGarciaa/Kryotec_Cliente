@@ -187,12 +187,12 @@
       </div>
       <div class="mt-2 grid grid-cols-1 gap-2">
         <label class="form-control">
-          <span class="label-text text-xs">Orden</span>
-          <select id="ensam-order-select" class="select select-bordered select-sm" disabled>
-            <option value="">Selecciona una orden…</option>
+          <span class="label-text text-xs">Órdenes</span>
+          <select id="ensam-order-select" class="select select-bordered select-sm min-h-[5rem]" multiple disabled>
+            <option value="" disabled>Selecciona una o más órdenes…</option>
           </select>
         </label>
-        <div id="ensam-order-hint" class="text-xs opacity-60">Activa la casilla para elegir una orden. Se asociará al crear la caja.</div>
+        <div id="ensam-order-hint" class="text-xs opacity-60">Activa la casilla y haz clic en las órdenes para seleccionarlas. Todas se asociarán al crear la caja.</div>
       </div>
     </div>
     <div class="mt-4 flex flex-wrap gap-3 items-center">
@@ -268,7 +268,10 @@
             <div><span class="opacity-60">Nombre caja:</span> <span id="detalle-caja-lote" class="font-mono"></span></div>
             <div><span class="opacity-60">ID interno:</span> <span id="detalle-caja-id" class="font-mono"></span></div>
             <div><span class="opacity-60">Composición:</span> <span id="detalle-caja-comp"></span></div>
-            <div id="detalle-caja-orden-wrap"><span class="opacity-60">Orden:</span> <span id="detalle-caja-orden" class="font-mono"></span></div>
+            <div id="detalle-caja-orden-wrap" class="space-y-1">
+              <span class="opacity-60 text-xs uppercase tracking-wide">Órdenes</span>
+              <div id="detalle-caja-orden" class="text-xs leading-snug space-y-1"></div>
+            </div>
             <div><span class="opacity-60">Creada:</span> <span id="detalle-caja-fecha"></span></div>
           </div>
           <div id="detalle-order-actions" class="text-xs"></div>

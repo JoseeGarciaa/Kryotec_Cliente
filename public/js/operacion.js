@@ -152,6 +152,135 @@
     if(rol && nombre) return `${rol} · ${nombre}`;
     return rol || nombre || '';
   }
+
+  function safeHTML(str){
+    return (str == null ? '' : String(str)).replace(/[&<>\"]/g, (s)=>({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;' }[s]));
+  }
+
+  function normalizeOrders(raw){
+    if(!Array.isArray(raw)) return [];
+    return raw.map(entry => {
+      if(!entry || typeof entry !== 'object') return null;
+      const orderId = Number(entry.orderId);
+      return {
+        orderId: Number.isFinite(orderId) && orderId > 0 ? Math.trunc(orderId) : null,
+        numeroOrden: entry.numeroOrden != null ? String(entry.numeroOrden) : null,
+        cliente: entry.cliente != null ? String(entry.cliente) : null
+      };
+    }).filter(Boolean);
+  }
+
+  function buildOrderSearch(orders, fallbackNumero, fallbackCliente){
+    const tokens = new Set();
+    const push = (value)=>{
+      const clean = String(value || '').trim();
+      if(clean) tokens.add(clean.toLowerCase());
+    };
+    orders.forEach(o => {
+      push(o.numeroOrden);
+      push(o.cliente);
+      if(o.orderId){ push(`#${o.orderId}`); push(o.orderId); }
+    });
+    push(fallbackNumero);
+    push(fallbackCliente);
+    return Array.from(tokens).join(' ');
+  }
+
+  function normalizeCajaOrders(entry){
+    if(!entry || typeof entry !== 'object') return entry;
+    const cleanedOrders = normalizeOrders(entry.orders);
+    const fallbackId = Number(entry.orderId);
+    const fallbackNumero = entry.orderNumero != null ? String(entry.orderNumero) : null;
+    const fallbackCliente = entry.orderCliente != null ? String(entry.orderCliente) : null;
+    const ensureOrderPresent = (orderId, numero, cliente)=>{
+      if(orderId == null && !numero && !cliente) return;
+      if(orderId != null && cleanedOrders.some(o => o.orderId === orderId)) return;
+      if(orderId == null && cleanedOrders.some(o => o.numeroOrden === numero && o.cliente === cliente)) return;
+      cleanedOrders.push({ orderId, numeroOrden: numero, cliente });
+    };
+    if(Number.isFinite(fallbackId) && fallbackId > 0){
+      ensureOrderPresent(Math.trunc(fallbackId), fallbackNumero, fallbackCliente);
+    } else if(fallbackNumero || fallbackCliente){
+      ensureOrderPresent(null, fallbackNumero, fallbackCliente);
+    }
+    const primary = cleanedOrders[0] || null;
+    const normalized = {
+      ...entry,
+      orders: cleanedOrders,
+      orderId: primary?.orderId ?? (Number.isFinite(fallbackId) && fallbackId > 0 ? Math.trunc(fallbackId) : null),
+      orderNumero: primary?.numeroOrden ?? fallbackNumero,
+      orderCliente: primary?.cliente ?? fallbackCliente
+    };
+    normalized.orderSearch = buildOrderSearch(cleanedOrders, normalized.orderNumero, normalized.orderCliente);
+    return normalized;
+  }
+
+  function ordersSummaryHTML(source, opts){
+    const options = opts || {};
+    const orders = Array.isArray(source?.orders) && source.orders.length
+      ? source.orders
+      : (() => {
+          const numero = source?.orderNumero || (source?.orderId ? `#${source.orderId}` : null);
+          const cliente = source?.orderCliente || null;
+          if(!numero && !cliente) return [];
+          return [{ orderId: source?.orderId ?? null, numeroOrden: numero, cliente }];
+        })();
+    if(!orders.length) return '';
+    const limit = Number.isFinite(options.limit) && options.limit > 0 ? Math.floor(options.limit) : orders.length;
+    const rows = orders.slice(0, limit).map(o => {
+      const numero = o.numeroOrden || (o.orderId ? `#${o.orderId}` : null);
+      const numeroHtml = numero ? `<span class="font-mono">${safeHTML(numero)}</span>` : '<span class="font-mono opacity-40">—</span>';
+      const cliente = o.cliente ? `<span class="opacity-70">${safeHTML(o.cliente)}</span>` : '';
+      const separator = cliente ? '<span class="opacity-40">·</span>' : '';
+      return `<div class="flex items-center gap-1 flex-wrap justify-${options.align === 'end' ? 'end' : 'start'}">${numeroHtml}${cliente ? `${separator}${cliente}` : ''}</div>`;
+    }).join('');
+    const extra = orders.length > limit
+      ? `<div class="text-[10px] opacity-60 leading-snug">+${orders.length - limit} más</div>`
+      : '';
+    const title = options.showTitle ? '<div class="uppercase tracking-wide text-[9px] opacity-60">Órdenes</div>' : '';
+    const cls = options.className || 'text-[10px] opacity-70 leading-snug space-y-1';
+    return `<div class="${cls}">${title}${rows}${extra}</div>`;
+  }
+
+  function ordersPlainStrings(source){
+    const normalized = normalizeCajaOrders(source || {});
+    const list = Array.isArray(normalized.orders) ? normalized.orders : [];
+    if(list.length){
+      return list.map(o => {
+        const num = o.numeroOrden || (o.orderId ? `#${o.orderId}` : null);
+        const cli = o.cliente ? ` (${o.cliente})` : '';
+        return (num || '#?') + cli;
+      });
+    }
+    const fallbackNum = normalized.orderNumero || (normalized.orderId ? `#${normalized.orderId}` : null);
+    if(!fallbackNum) return [];
+    const fallbackCli = normalized.orderCliente ? ` (${normalized.orderCliente})` : '';
+    return [String(fallbackNum) + fallbackCli];
+  }
+
+  function renderOrdersDetail(container, source){
+    if(!container) return;
+    const normalized = normalizeCajaOrders(source || {});
+    const orders = Array.isArray(normalized.orders) ? normalized.orders : [];
+    if(!orders.length){
+      container.innerHTML = '<span class="opacity-60 font-mono">—</span>';
+      container.classList.add('opacity-60');
+      container.removeAttribute('title');
+      return;
+    }
+    container.classList.remove('opacity-60');
+    const rendered = orders.map(o => {
+      const numero = o.numeroOrden || (o.orderId ? `#${o.orderId}` : '—');
+      const cliente = o.cliente ? `<span class="opacity-70">${safeHTML(o.cliente)}</span>` : '';
+      const separator = cliente ? '<span class="opacity-40">·</span>' : '';
+      return `<div class="flex flex-wrap items-center gap-1"><span class="font-mono">${safeHTML(numero)}</span>${cliente ? `${separator}${cliente}` : ''}</div>`;
+    }).join('');
+    container.innerHTML = rendered;
+    container.title = orders.map(o => {
+      const numero = o.numeroOrden || (o.orderId ? `#${o.orderId}` : '—');
+      return o.cliente ? `${numero} · ${o.cliente}` : numero;
+    }).join('\n');
+  }
   function msRemaining(timer){ if(!timer||!timer.endsAt) return 0; return new Date(timer.endsAt).getTime() - (Date.now()+serverOffset); }
   function timerDisplay(rem){
     if(rem<=0) return 'Finalizado';
@@ -243,15 +372,10 @@
     const code = caja.codigoCaja||'';
     const displayName = caja.nombreCaja || code || 'Caja';
     const titleText = displayName && code && displayName !== code ? `${displayName} · ${code}` : displayName || code || 'Caja';
-    const orderNumero = caja.orderNumero || (caja.orderId ? `#${caja.orderId}` : '');
-    const orderCliente = caja.orderCliente || '';
-    const orderBlock = (orderNumero || orderCliente)
-      ? `<div class='text-[10px] opacity-70 leading-snug space-y-0.5'>
-          ${orderNumero ? `<div>Orden: <span class='font-mono'>${escapeAttr(orderNumero)}</span></div>` : ''}
-          ${orderCliente ? `<div>Cliente: <span class='font-semibold'>${escapeAttr(orderCliente)}</span></div>` : ''}
-        </div>`
-      : '';
-    return `<div class='caja-card rounded-lg border border-base-300/40 bg-base-200/10 p-3 flex flex-col gap-2 hover:border-primary/60 transition' data-caja-card='${caja.id}' data-caja-id='${caja.id}' title='${titleText}'>
+    const orderBlock = ordersSummaryHTML(caja, { className: 'text-[10px] opacity-70 leading-snug space-y-0.5', limit: 3 });
+    const tooltipOrders = ordersPlainStrings(caja);
+    const tooltipText = tooltipOrders.length ? `${titleText} · ${tooltipOrders.join(' · ')}` : titleText;
+    return `<div class='caja-card rounded-lg border border-base-300/40 bg-base-200/10 p-3 flex flex-col gap-2 hover:border-primary/60 transition' data-caja-card='${caja.id}' data-caja-id='${caja.id}' title='${escapeAttr(tooltipText)}'>
       <div class='text-[10px] uppercase opacity-60 tracking-wide'>Caja</div>
       <div class='font-semibold text-xs leading-tight break-all pr-2'>${displayName}</div>
       ${orderBlock}
@@ -359,14 +483,10 @@
     setText('detalle-caja-comp', `VIP:${counts.vip||0} · TIC:${counts.tic||0} · CUBE:${counts.cube||0}`);
     setText('detalle-caja-fecha', '-');
     // Orden vinculada si existe
-    (function(){
-      const el = document.getElementById('detalle-caja-orden');
-      if(!el) return;
-      const num = caja.orderNumero || null;
-      const idNum = caja.orderId || null;
-      el.textContent = num ? String(num) : (idNum ? `#${idNum}` : '—');
-      el.classList.toggle('opacity-60', !(num||idNum));
-    })();
+    const ordenEl = document.getElementById('detalle-caja-orden');
+    if(ordenEl){
+      renderOrdersDetail(ordenEl, caja);
+    }
     const itemsBox = document.getElementById('detalle-caja-items');
     if(itemsBox){
       itemsBox.innerHTML = comps.map(cc=>{
@@ -415,7 +535,7 @@
       const spin = qs('#op-spin'); if(spin) spin.classList.remove('hidden');
   const r = await fetch('/operacion/data');
       const j = await r.json(); if(!j.ok) throw new Error(j.error||'Error');
-      dataCajas = Array.isArray(j.cajas)? j.cajas:[];
+      dataCajas = Array.isArray(j.cajas)? j.cajas.map(normalizeCajaOrders):[];
       const serverNow = j.now? new Date(j.now).getTime():Date.now(); serverOffset = serverNow - Date.now();
       render(); ensureTick();
   } catch(e){ console.error('[Operación] load error', e); if(tbody) tbody.innerHTML = `<tr><td colspan="5" class="text-center py-6 text-error text-xs">Error cargando</td></tr>`; }
@@ -562,8 +682,17 @@
     addItemsWrap.className = 'flex flex-col gap-2 max-h-48 overflow-auto';
     addItemsWrap.innerHTML = addQueue.map(entry => {
       const isActive = entry.id === selectedCajaId;
-      const orderLabel = entry.orderNum ? entry.orderNum : (entry.orderId ? `#${entry.orderId}` : '-');
       const summaryCount = entry.roles?.length || 0;
+      const orderSummary = ordersSummaryHTML(entry, { className: 'text-[10px] opacity-80 leading-snug space-y-0.5 text-right', limit: 3, align: 'end' });
+      const orderHeader = orderSummary
+        ? `<div class='flex flex-col items-end gap-1 min-w-[120px]'>
+            <span class='uppercase tracking-wide text-[9px] opacity-50'>Órdenes</span>
+            ${orderSummary}
+          </div>`
+        : `<div class='flex flex-col items-end gap-1 min-w-[120px]'>
+            <span class='uppercase tracking-wide text-[9px] opacity-50'>Órdenes</span>
+            <div class='text-[10px] opacity-50'>Sin órdenes</div>
+          </div>`;
       const itemsHtml = (entry.roles||[]).map(ro=>{
         const cls = badgeForRol(ro.rol);
         const label = String(ro.rol||'').toUpperCase();
@@ -592,10 +721,10 @@
             <span class='text-[10px] opacity-70'>${chevron}</span>
             <span>${entry.lote}</span>
           </div>
-          <div class='flex items-center gap-3 text-[10px] uppercase opacity-70'>
-            <span>Orden: ${orderLabel}</span>
-            <span>${summaryCount} items</span>
-            <button type='button' class='btn btn-ghost btn-xs' data-remove-caja='${entry.id}'>&times;</button>
+          <div class='flex items-center gap-3 text-[10px] opacity-70 flex-wrap justify-end text-right'>
+            ${orderHeader}
+            <span class='uppercase tracking-wide text-[9px] opacity-60'>${summaryCount} items</span>
+            <button type='button' class='btn btn-ghost btn-xs' data-remove-caja='${entry.id}' title='Quitar'>&times;</button>
           </div>
         </div>
         ${details}
@@ -621,11 +750,17 @@
         console.error('[Operacion] lookupAdd error', { status: res.status, body: j });
         return false;
       }
-      const entry = {
+      const normalizedEntry = normalizeCajaOrders({
         id: j.caja_id,
         lote: j.lote,
+        orders: Array.isArray(j.orders) ? j.orders : [],
         orderId: j.order_id ?? null,
-        orderNum: j.order_num ?? null,
+        orderNumero: j.order_num ?? null,
+        orderCliente: j.order_client ?? null
+      });
+      const entry = {
+        ...normalizedEntry,
+        orderNum: normalizedEntry.orderNumero || (normalizedEntry.orderId ? `#${normalizedEntry.orderId}` : null),
         roles: Array.isArray(j.roles)? j.roles.slice(): [],
         timer: j.timer || null
       };
