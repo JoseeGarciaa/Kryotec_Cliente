@@ -50,6 +50,7 @@ const inferLitrajeFromRow = (row: any): string | null => {
 
 const ensuredTempColumnsTenants = new Set<string>();
 const ensuredCajaOrdenesTenants = new Set<string>();
+const ensuredConfigTiemposTenants = new Set<string>();
 const ensureInventarioTempColumns = async (tenant: string) => {
   if (!tenant || ensuredTempColumnsTenants.has(tenant)) return;
   await withTenant(tenant, async (client) => {
@@ -246,6 +247,259 @@ const ensureCajaOrdenesTable = async (tenant: string) => {
   ensuredCajaOrdenesTenants.add(tenant);
 };
 
+const ensureConfigTiemposTable = async (tenant: string) => {
+  if (!tenant || ensuredConfigTiemposTenants.has(tenant)) return;
+  await withTenant(tenant, async (client) => {
+    await client.query(`CREATE TABLE IF NOT EXISTS config_tiempos_proceso (
+      id serial PRIMARY KEY,
+      sede_id int,
+      nombre_config text NOT NULL DEFAULT 'default',
+      min_congelamiento_sec int NOT NULL,
+      atemperamiento_sec int NOT NULL,
+      max_sobre_atemperamiento_sec int NOT NULL,
+      vida_caja_sec int NOT NULL,
+      min_reuso_sec int NOT NULL,
+      activo boolean NOT NULL DEFAULT true,
+      creado_por int,
+      created_at timestamptz NOT NULL DEFAULT NOW(),
+      updated_at timestamptz NOT NULL DEFAULT NOW(),
+      modelo_id int
+    )`);
+    await client.query(`ALTER TABLE config_tiempos_proceso ADD COLUMN IF NOT EXISTS nombre_config text NOT NULL DEFAULT 'default'`);
+    await client.query(`ALTER TABLE config_tiempos_proceso ADD COLUMN IF NOT EXISTS min_congelamiento_sec int NOT NULL DEFAULT 60`);
+    await client.query(`ALTER TABLE config_tiempos_proceso ADD COLUMN IF NOT EXISTS atemperamiento_sec int NOT NULL DEFAULT 60`);
+    await client.query(`ALTER TABLE config_tiempos_proceso ADD COLUMN IF NOT EXISTS max_sobre_atemperamiento_sec int NOT NULL DEFAULT 60`);
+    await client.query(`ALTER TABLE config_tiempos_proceso ADD COLUMN IF NOT EXISTS vida_caja_sec int NOT NULL DEFAULT 3600`);
+    await client.query(`ALTER TABLE config_tiempos_proceso ADD COLUMN IF NOT EXISTS min_reuso_sec int NOT NULL DEFAULT 3600`);
+    await client.query(`ALTER TABLE config_tiempos_proceso ADD COLUMN IF NOT EXISTS activo boolean NOT NULL DEFAULT true`);
+    await client.query(`ALTER TABLE config_tiempos_proceso ADD COLUMN IF NOT EXISTS creado_por int`);
+    await client.query(`ALTER TABLE config_tiempos_proceso ADD COLUMN IF NOT EXISTS created_at timestamptz NOT NULL DEFAULT NOW()`);
+    await client.query(`ALTER TABLE config_tiempos_proceso ADD COLUMN IF NOT EXISTS updated_at timestamptz NOT NULL DEFAULT NOW()`);
+    await client.query(`ALTER TABLE config_tiempos_proceso ADD COLUMN IF NOT EXISTS modelo_id int`);
+    await client.query(`ALTER TABLE config_tiempos_proceso ADD COLUMN IF NOT EXISTS sede_id int`);
+    await client.query(`DO $$
+    BEGIN
+      IF NOT EXISTS (
+        SELECT 1
+          FROM pg_constraint
+         WHERE conrelid = 'config_tiempos_proceso'::regclass
+           AND conname = 'chk_cfg_tiempos_positivos'
+      ) THEN
+        ALTER TABLE config_tiempos_proceso
+          ADD CONSTRAINT chk_cfg_tiempos_positivos CHECK (
+            min_congelamiento_sec > 0 AND
+            atemperamiento_sec > 0 AND
+            max_sobre_atemperamiento_sec > 0 AND
+            vida_caja_sec > 0 AND
+            min_reuso_sec > 0
+          );
+      END IF;
+    END $$;`);
+    await client.query(`DO $$
+    BEGIN
+      IF NOT EXISTS (
+        SELECT 1
+          FROM pg_constraint
+         WHERE conrelid = 'config_tiempos_proceso'::regclass
+           AND conname = 'uq_cfg_tiempos_sede_modelo_nombre'
+      ) THEN
+        ALTER TABLE config_tiempos_proceso
+          ADD CONSTRAINT uq_cfg_tiempos_sede_modelo_nombre UNIQUE (sede_id, modelo_id, nombre_config);
+      END IF;
+    END $$;`);
+    await client.query(`DO $$
+    BEGIN
+      IF NOT EXISTS (
+        SELECT 1
+          FROM pg_constraint
+         WHERE conrelid = 'config_tiempos_proceso'::regclass
+           AND conname = 'config_tiempos_proceso_sede_id_fkey'
+      ) THEN
+        ALTER TABLE config_tiempos_proceso
+          ADD CONSTRAINT config_tiempos_proceso_sede_id_fkey FOREIGN KEY (sede_id) REFERENCES sedes(sede_id) ON DELETE CASCADE;
+      END IF;
+    END $$;`);
+    await client.query(`DO $$
+    BEGIN
+      IF NOT EXISTS (
+        SELECT 1
+          FROM pg_constraint
+         WHERE conrelid = 'config_tiempos_proceso'::regclass
+           AND conname = 'cfg_tiempos_modelo_fk'
+      ) THEN
+        ALTER TABLE config_tiempos_proceso
+          ADD CONSTRAINT cfg_tiempos_modelo_fk FOREIGN KEY (modelo_id) REFERENCES modelos(modelo_id) ON DELETE CASCADE;
+      END IF;
+    END $$;`);
+    await client.query(`DO $$
+    BEGIN
+      IF NOT EXISTS (
+        SELECT 1
+          FROM pg_constraint
+         WHERE conrelid = 'config_tiempos_proceso'::regclass
+           AND conname = 'config_tiempos_proceso_creado_por_fkey'
+      ) THEN
+        ALTER TABLE config_tiempos_proceso
+          ADD CONSTRAINT config_tiempos_proceso_creado_por_fkey FOREIGN KEY (creado_por) REFERENCES usuarios(id) ON DELETE SET NULL;
+      END IF;
+    END $$;`);
+    await client.query(`CREATE INDEX IF NOT EXISTS idx_cfg_tiempos_modelo ON config_tiempos_proceso(modelo_id)`);
+    await client.query(`CREATE INDEX IF NOT EXISTS idx_cfg_tiempos_sede_activo ON config_tiempos_proceso(sede_id, activo)`);
+  });
+  ensuredConfigTiemposTenants.add(tenant);
+};
+
+type TimerConfigDefaultsRow = {
+  modelo_id: number;
+  modelo_nombre: string | null;
+  sede_id: number | null;
+  min_congelamiento_sec: number;
+  atemperamiento_sec: number;
+  max_sobre_atemperamiento_sec: number;
+  vida_caja_sec: number;
+  min_reuso_sec: number;
+};
+
+const fetchActiveTimerConfigsForModels = async (
+  tenant: string,
+  modeloIds: number[],
+  sedeId: number | null
+): Promise<Map<number, TimerConfigDefaultsRow>> => {
+  const unique = Array.from(
+    new Set(
+      modeloIds
+        .map((value) => Number(value))
+        .filter((value): value is number => Number.isFinite(value) && value > 0)
+        .map((value) => Math.trunc(value))
+    )
+  );
+  const map = new Map<number, TimerConfigDefaultsRow>();
+  if (!tenant || !unique.length) return map;
+  await ensureConfigTiemposTable(tenant);
+
+  if (sedeId !== null && sedeId !== undefined) {
+    const sedeRows = await withTenant(tenant, (client) =>
+      client.query<TimerConfigDefaultsRow>(
+        `SELECT cfg.modelo_id,
+                cfg.sede_id,
+                cfg.min_congelamiento_sec,
+                cfg.atemperamiento_sec,
+                cfg.max_sobre_atemperamiento_sec,
+                cfg.vida_caja_sec,
+                cfg.min_reuso_sec,
+                m.nombre_modelo AS modelo_nombre
+           FROM config_tiempos_proceso cfg
+           JOIN modelos m ON m.modelo_id = cfg.modelo_id
+          WHERE cfg.nombre_config = 'default'
+            AND cfg.activo = true
+            AND cfg.modelo_id = ANY($1::int[])
+            AND cfg.sede_id = $2`,
+        [unique, sedeId]
+      )
+    );
+    for (const row of sedeRows.rows) {
+      map.set(row.modelo_id, row);
+    }
+  }
+
+  const globalRows = await withTenant(tenant, (client) =>
+    client.query<TimerConfigDefaultsRow>(
+      `SELECT cfg.modelo_id,
+              cfg.sede_id,
+              cfg.min_congelamiento_sec,
+              cfg.atemperamiento_sec,
+              cfg.max_sobre_atemperamiento_sec,
+              cfg.vida_caja_sec,
+              cfg.min_reuso_sec,
+              m.nombre_modelo AS modelo_nombre
+         FROM config_tiempos_proceso cfg
+         JOIN modelos m ON m.modelo_id = cfg.modelo_id
+        WHERE cfg.nombre_config = 'default'
+          AND cfg.activo = true
+          AND cfg.modelo_id = ANY($1::int[])
+          AND cfg.sede_id IS NULL`,
+      [unique]
+    )
+  );
+  for (const row of globalRows.rows) {
+    if (!map.has(row.modelo_id)) {
+      map.set(row.modelo_id, row);
+    }
+  }
+
+  return map;
+};
+
+const fetchActiveTimerConfigsForLitrajes = async (
+  tenant: string,
+  litrajes: Set<string>,
+  sedeId: number | null
+): Promise<Map<string, number>> => {
+  const normalized = Array.from(new Set(Array.from(litrajes).filter((value) => typeof value === 'string' && value.trim().length))).map((value) => value.trim());
+  const result = new Map<string, number>();
+  if (!tenant || !normalized.length) return result;
+  await ensureConfigTiemposTable(tenant);
+
+  const desired = new Set(normalized);
+
+  const ingestRows = (rows: Array<{ min_reuso_sec: number | null; nombre_modelo: string | null }>, prefer = false) => {
+    for (const row of rows) {
+      const secondsRaw = Number(row?.min_reuso_sec);
+      if (!Number.isFinite(secondsRaw) || secondsRaw <= 0) continue;
+      const seconds = Math.trunc(secondsRaw);
+      const litraje = inferLitrajeFromRow({ nombre_modelo: row?.nombre_modelo ?? null }) ?? null;
+      if (!litraje || !desired.has(litraje)) continue;
+      if (prefer || !result.has(litraje)) {
+        result.set(litraje, seconds);
+      }
+    }
+  };
+
+  if (sedeId !== null && sedeId !== undefined) {
+    const sedeRows = await withTenant(tenant, (client) =>
+      client.query<{ min_reuso_sec: number | null; nombre_modelo: string | null }>(
+        `SELECT cfg.min_reuso_sec, m.nombre_modelo
+           FROM config_tiempos_proceso cfg
+           JOIN modelos m ON m.modelo_id = cfg.modelo_id
+          WHERE cfg.nombre_config = 'default'
+            AND cfg.activo = true
+            AND cfg.sede_id = $1
+            AND m.nombre_modelo ILIKE '%tic%'`,
+        [sedeId]
+      )
+    );
+    ingestRows(sedeRows.rows, true);
+  }
+
+  const globalRows = await withTenant(tenant, (client) =>
+    client.query<{ min_reuso_sec: number | null; nombre_modelo: string | null }>(
+      `SELECT cfg.min_reuso_sec, m.nombre_modelo
+         FROM config_tiempos_proceso cfg
+         JOIN modelos m ON m.modelo_id = cfg.modelo_id
+        WHERE cfg.nombre_config = 'default'
+          AND cfg.activo = true
+          AND cfg.sede_id IS NULL
+          AND m.nombre_modelo ILIKE '%tic%'`
+    )
+  );
+  ingestRows(globalRows.rows, false);
+
+  return result;
+};
+
+const timerConfigMapToArray = (map: Map<number, TimerConfigDefaultsRow>) => {
+  return Array.from(map.values()).map((row) => ({
+    modeloId: row.modelo_id,
+    modeloNombre: row.modelo_nombre || `Modelo ${row.modelo_id}`,
+    sedeId: row.sede_id,
+    minCongelamientoSec: row.min_congelamiento_sec,
+    atemperamientoSec: row.atemperamiento_sec,
+    maxSobreAtemperamientoSec: row.max_sobre_atemperamiento_sec,
+    vidaCajaSec: row.vida_caja_sec,
+    minReusoSec: row.min_reuso_sec,
+  }));
+};
+
 const pushUniqueOrderId = (target: number[], value: any) => {
   if (value === null || value === undefined) return;
   const asNumber = Number(value);
@@ -380,7 +634,422 @@ const pushSedeFilter = (params: any[], sedeId: number | null, alias = 'ic') => {
   return ` AND ${alias}.sede_id = $${params.length}`;
 };
 
-const REUSE_TIMER_THRESHOLD_SEC = 24 * 60 * 60; // 24 horas
+const parsePositiveInt = (value: unknown, label: string): number => {
+  const num = Number(value);
+  if (!Number.isFinite(num) || num <= 0) {
+    throw new Error(`${label} debe ser un número mayor a cero`);
+  }
+  return Math.round(num);
+};
+
+const DEFAULT_REUSE_THRESHOLD_SEC = 24 * 60 * 60; // 24 horas
+
+type ReusePolicyCandidate = {
+  seconds: number;
+  source: 'config' | 'fallback';
+  modelos: Array<{ modeloId: number; modeloNombre: string | null; count: number }>;
+};
+
+type ReusePolicyPerModel = {
+  modeloId: number;
+  modeloNombre: string | null;
+  count: number;
+  minReuseSec: number | null;
+  requiredSec: number;
+  hasConfig: boolean;
+  source: 'config' | 'fallback';
+  configOrigin: 'direct' | 'shared' | 'fallback';
+  mismatched: boolean;
+  reuseBlocked: boolean;
+  reason: string | null;
+  requestedThresholdSec: number | null;
+};
+
+type ReusePolicyResult = {
+  effectiveThresholdSec: number;
+  fallbackThresholdSec: number;
+  maxRequiredSec: number;
+  requestedThresholdSec: number | null;
+  source: 'config' | 'fallback' | 'mixed';
+  mismatched: boolean;
+  allowReuse: boolean;
+  reuseBlocked: boolean;
+  reason: string | null;
+  candidates: ReusePolicyCandidate[];
+  perModelPolicies: Map<number, ReusePolicyPerModel>;
+};
+
+type CajaTimerInfo = {
+  secondsRemaining: number;
+  remainingRatio: number;
+  durationSec: number;
+  startsAt: string | null;
+  endsAt: string | null;
+  hasTimer: boolean;
+  isActive: boolean;
+};
+
+const normalizeRequestedThreshold = (value: number | null | undefined): number | null => {
+  if (value === null || value === undefined) return null;
+  const num = Number(value);
+  if (!Number.isFinite(num) || num <= 0) return null;
+  return Math.trunc(num);
+};
+
+const describeSeconds = (seconds: number): string => {
+  if (!Number.isFinite(seconds) || seconds <= 0) return '0 segundos';
+  const total = Math.trunc(seconds);
+  const days = Math.floor(total / 86400);
+  const hours = Math.floor((total % 86400) / 3600);
+  const minutes = Math.floor((total % 3600) / 60);
+  const parts: string[] = [];
+  if (days) parts.push(`${days} día${days === 1 ? '' : 's'}`);
+  if (hours) parts.push(`${hours} hora${hours === 1 ? '' : 's'}`);
+  if (!parts.length || minutes) parts.push(`${minutes} min`);
+  return parts.join(' ');
+};
+
+const computeReusePolicyForRfids = async (
+  tenant: string,
+  sedeId: number | null,
+  rfids: string[],
+  requestedThresholdSec: number | null
+): Promise<ReusePolicyResult> => {
+  const fallbackSec = DEFAULT_REUSE_THRESHOLD_SEC;
+  const normalizedRequested = normalizeRequestedThreshold(requestedThresholdSec);
+  const emptyPolicy: ReusePolicyResult = {
+    effectiveThresholdSec: fallbackSec,
+    fallbackThresholdSec: fallbackSec,
+    maxRequiredSec: fallbackSec,
+    requestedThresholdSec: normalizedRequested,
+    source: 'fallback',
+    mismatched: false,
+    allowReuse: true,
+    reuseBlocked: false,
+    reason: null,
+    candidates: [
+      {
+        seconds: fallbackSec,
+        source: 'fallback',
+        modelos: [],
+      },
+    ],
+    perModelPolicies: new Map<number, ReusePolicyPerModel>(),
+  };
+  if (!tenant || !Array.isArray(rfids) || rfids.length === 0) {
+    return emptyPolicy;
+  }
+  const metaRes = await withTenant(tenant, (client) =>
+    client.query(
+      `SELECT ic.rfid,
+              ic.modelo_id,
+              m.nombre_modelo,
+              ic.nombre_unidad
+         FROM inventario_credocubes ic
+         LEFT JOIN modelos m ON m.modelo_id = ic.modelo_id
+        WHERE ic.rfid = ANY($1::text[])`,
+      [rfids]
+    )
+  );
+  if (!metaRes.rowCount) {
+    return emptyPolicy;
+  }
+  type Acc = {
+    modeloId: number;
+    modeloNombre: string | null;
+    litraje: string | null;
+    count: number;
+  };
+  const modelsMap = new Map<number, Acc>();
+  const modeloIds: number[] = [];
+  for (const row of metaRes.rows as any[]) {
+    const rawModeloId = Number(row?.modelo_id);
+    if (!Number.isFinite(rawModeloId) || rawModeloId <= 0) continue;
+    const modeloId = Math.trunc(rawModeloId);
+    const litraje = inferLitrajeFromRow(row);
+    if (!modelsMap.has(modeloId)) {
+      modelsMap.set(modeloId, {
+        modeloId,
+        modeloNombre: row?.nombre_modelo ?? null,
+        litraje: litraje ?? null,
+        count: 0,
+      });
+      modeloIds.push(modeloId);
+    }
+    const entry = modelsMap.get(modeloId)!;
+    if (!entry.litraje && litraje) {
+      entry.litraje = litraje;
+    }
+    entry.count += 1;
+  }
+  if (!modeloIds.length) {
+    return emptyPolicy;
+  }
+  const defaultsMap = await fetchActiveTimerConfigsForModels(tenant, modeloIds, sedeId);
+  type Detail = {
+    modeloId: number;
+    modeloNombre: string | null;
+    litraje: string | null;
+    configuredSec: number | null;
+    configOrigin: 'direct' | 'shared' | 'fallback';
+    count: number;
+  };
+  const details: Detail[] = [];
+  for (const [modeloId, base] of modelsMap.entries()) {
+    const cfg = defaultsMap.get(modeloId);
+    const configuredRaw = Number(cfg?.min_reuso_sec);
+    const configuredSec =
+      Number.isFinite(configuredRaw) && configuredRaw > 0 ? Math.trunc(configuredRaw) : null;
+    details.push({
+      modeloId,
+      modeloNombre: base.modeloNombre,
+      litraje: base.litraje ?? null,
+      configuredSec,
+      configOrigin: configuredSec != null ? 'direct' : 'fallback',
+      count: base.count,
+    });
+  }
+  const litrajeValues = new Set(details.map((detail) => detail.litraje).filter((value): value is string => typeof value === 'string' && value.trim().length > 0));
+  const litrajeConfigs = await fetchActiveTimerConfigsForLitrajes(tenant, litrajeValues, sedeId);
+  const litrajeConfigMap = new Map<string, number>();
+  for (const detail of details) {
+    if (detail.configOrigin === 'direct' && detail.litraje && detail.configuredSec != null) {
+      const current = litrajeConfigMap.get(detail.litraje);
+      const seconds = detail.configuredSec;
+      if (current === undefined || seconds > current) {
+        litrajeConfigMap.set(detail.litraje, seconds);
+      }
+    }
+  }
+  for (const detail of details) {
+    if (detail.configOrigin === 'direct' || !detail.litraje) continue;
+    const derived = litrajeConfigs.get(detail.litraje);
+    if (derived !== undefined) {
+      detail.configuredSec = derived;
+      detail.configOrigin = 'shared';
+      continue;
+    }
+    const sharedSec = litrajeConfigMap.get(detail.litraje);
+    if (sharedSec !== undefined) {
+      detail.configuredSec = sharedSec;
+      detail.configOrigin = 'shared';
+    }
+  }
+  const configuredSecs = details
+    .map((detail) => detail.configuredSec)
+    .filter((value): value is number => value != null && Number.isFinite(value) && value > 0);
+  const bestSharedSec = configuredSecs.length ? Math.max(...configuredSecs) : null;
+  const minSharedSec = configuredSecs.length ? Math.min(...configuredSecs) : null;
+  if (bestSharedSec !== null) {
+    for (const detail of details) {
+      if (detail.configuredSec === null || detail.configuredSec === undefined) {
+        detail.configuredSec = bestSharedSec;
+        detail.configOrigin = 'shared';
+      }
+    }
+  }
+  const configuredList = details
+    .map((detail) => detail.configuredSec)
+    .filter((value): value is number => value != null && Number.isFinite(value) && value > 0);
+  const uniqueConfigured = Array.from(new Set(configuredList)).sort((a, b) => a - b);
+  const hasMissingConfig = details.some((detail) => detail.configuredSec === null);
+  let source: 'config' | 'fallback' | 'mixed' = 'fallback';
+  if (uniqueConfigured.length === 1 && !hasMissingConfig) {
+    source = 'config';
+  } else if (uniqueConfigured.length === 0 && !hasMissingConfig) {
+    source = 'fallback';
+  } else if (uniqueConfigured.length > 0 && !hasMissingConfig && uniqueConfigured.length > 1) {
+    source = 'mixed';
+  } else if (uniqueConfigured.length > 0 && hasMissingConfig) {
+    source = 'mixed';
+  } else if (uniqueConfigured.length === 0 && hasMissingConfig) {
+    source = 'fallback';
+  }
+  const candidates: ReusePolicyCandidate[] = uniqueConfigured.map((seconds) => {
+    const modelos = details
+      .filter((detail) => detail.configuredSec === seconds)
+      .map((detail) => ({
+        modeloId: detail.modeloId,
+        modeloNombre: detail.modeloNombre,
+        count: detail.count,
+      }));
+    return {
+      seconds,
+      source: 'config',
+      modelos,
+    };
+  });
+  const fallbackModelos = details
+    .filter((detail) => detail.configuredSec === null)
+    .map((detail) => ({
+      modeloId: detail.modeloId,
+      modeloNombre: detail.modeloNombre,
+      count: detail.count,
+    }));
+  if (
+    (!candidates.length || fallbackModelos.length > 0) &&
+    !candidates.some((candidate) => candidate.seconds === fallbackSec)
+  ) {
+    candidates.push({
+      seconds: fallbackSec,
+      source: 'fallback',
+      modelos: fallbackModelos,
+    });
+  }
+  candidates.sort((a, b) => a.seconds - b.seconds);
+  const requiredSecs = details.map((detail) =>
+    detail.configuredSec != null ? detail.configuredSec : fallbackSec
+  );
+  const maxRequiredSec = requiredSecs.length
+    ? requiredSecs.reduce((acc, value) => Math.max(acc, value), fallbackSec)
+    : fallbackSec;
+  const minRequiredSec = requiredSecs.length
+    ? requiredSecs.reduce((acc, value) => Math.min(acc, value), fallbackSec)
+    : fallbackSec;
+  let effectiveThresholdSec = maxRequiredSec;
+  let allowReuse = true;
+  let reuseBlocked = false;
+  let reason: string | null = null;
+  if (normalizedRequested != null) {
+    if (normalizedRequested < maxRequiredSec) {
+      allowReuse = false;
+      reuseBlocked = true;
+      reason = `El umbral seleccionado (${describeSeconds(normalizedRequested)}) es menor al mínimo requerido (${describeSeconds(maxRequiredSec)}).`;
+    } else {
+      effectiveThresholdSec = normalizedRequested;
+    }
+  }
+  if (effectiveThresholdSec === fallbackSec && minSharedSec !== null) {
+    effectiveThresholdSec = minSharedSec;
+  }
+  const perModelPolicies = new Map<number, ReusePolicyPerModel>();
+  for (const detail of details) {
+    const hasConfig = detail.configuredSec != null;
+    const minReuseSec = hasConfig ? detail.configuredSec : null;
+    const requiredSec = hasConfig ? detail.configuredSec! : fallbackSec;
+    const reuseBlockedForModel =
+      normalizedRequested != null && normalizedRequested < requiredSec;
+    const mismatchedForModel = effectiveThresholdSec !== requiredSec;
+    perModelPolicies.set(detail.modeloId, {
+      modeloId: detail.modeloId,
+      modeloNombre: detail.modeloNombre,
+      count: detail.count,
+      minReuseSec,
+      requiredSec,
+      hasConfig,
+      source: hasConfig ? 'config' : 'fallback',
+      configOrigin: detail.configOrigin,
+      mismatched: mismatchedForModel,
+      reuseBlocked: reuseBlockedForModel,
+      reason: reuseBlockedForModel
+        ? `Este modelo requiere al menos ${describeSeconds(requiredSec)} antes de reutilizar.`
+        : null,
+      requestedThresholdSec: normalizedRequested,
+    });
+  }
+  const mismatched = source === 'mixed' || uniqueConfigured.length > 1 || hasMissingConfig;
+  return {
+    effectiveThresholdSec,
+    fallbackThresholdSec: fallbackSec,
+    maxRequiredSec,
+    requestedThresholdSec: normalizedRequested,
+    source,
+    mismatched,
+    allowReuse,
+    reuseBlocked,
+    reason,
+    candidates,
+    perModelPolicies,
+  };
+};
+
+const getCajaTimerInfo = async (tenant: string, cajaId: number): Promise<CajaTimerInfo> => {
+  const { now, timerRow } = await withTenant(tenant, async (client) => {
+    const nowRes = await client.query<{ now: string }>(`SELECT NOW()::timestamptz AS now`);
+    const timerRes = await client.query<{ started_at: string | null; duration_sec: number | null; active: boolean | null }>(
+      `SELECT started_at, duration_sec, active
+         FROM acond_caja_timers
+        WHERE caja_id = $1`,
+      [cajaId]
+    );
+    return {
+      now: nowRes.rows[0]?.now ?? null,
+      timerRow: timerRes.rows[0] ?? null,
+    };
+  });
+  const nowMs = now ? new Date(now).getTime() : Date.now();
+  const durationSecRaw = Number(timerRow?.duration_sec);
+  const durationSec = Number.isFinite(durationSecRaw) && durationSecRaw > 0 ? Math.trunc(durationSecRaw) : 0;
+  const startsAt = timerRow?.started_at ?? null;
+  const isActive = Boolean(timerRow?.active);
+  let secondsRemaining = 0;
+  let remainingRatio = 0;
+  let endsAt: string | null = null;
+  if (startsAt && durationSec > 0) {
+    const startMs = new Date(startsAt).getTime();
+    if (Number.isFinite(startMs)) {
+      const endMs = startMs + durationSec * 1000;
+      const remMs = Math.max(0, endMs - nowMs);
+      secondsRemaining = Math.floor(remMs / 1000);
+      remainingRatio = durationSec > 0 ? remMs / (durationSec * 1000) : 0;
+      endsAt = new Date(endMs).toISOString();
+    }
+  }
+  return {
+    secondsRemaining,
+    remainingRatio,
+    durationSec,
+    startsAt,
+    endsAt,
+    hasTimer: Boolean(startsAt && durationSec > 0),
+    isActive,
+  };
+};
+
+const formatReusePolicyPayload = (policy: ReusePolicyResult) => ({
+  threshold_sec: policy.effectiveThresholdSec,
+  fallback_sec: policy.fallbackThresholdSec,
+  max_required_sec: policy.maxRequiredSec,
+  requested_threshold_sec: policy.requestedThresholdSec,
+  source: policy.source,
+  mismatched: policy.mismatched,
+  allow_reuse: policy.allowReuse,
+  reuse_blocked: policy.reuseBlocked,
+  reason: policy.reason,
+  candidates: policy.candidates.map((candidate) => ({
+    seconds: candidate.seconds,
+    source: candidate.source,
+    modelos: Array.isArray(candidate.modelos)
+      ? candidate.modelos.map((modelo) => ({
+          modelo_id: modelo.modeloId,
+          modelo_nombre: modelo.modeloNombre,
+          count: modelo.count,
+        }))
+      : [],
+  })),
+  per_model: Array.from(policy.perModelPolicies.values()).map((entry) => ({
+    modelo_id: entry.modeloId,
+    modelo_nombre: entry.modeloNombre,
+    count: entry.count,
+    min_reuso_sec: entry.minReuseSec,
+    required_sec: entry.requiredSec,
+    has_config: entry.hasConfig,
+    source: entry.source,
+    config_origin: entry.configOrigin,
+    mismatched: entry.mismatched,
+    reuse_blocked: entry.reuseBlocked,
+    reason: entry.reason,
+    requested_threshold_sec: entry.requestedThresholdSec,
+  })),
+  models_without_config: Array.from(policy.perModelPolicies.values())
+    .filter((entry) => !entry.hasConfig)
+    .map((entry) => ({
+      modelo_id: entry.modeloId,
+      modelo_nombre: entry.modeloNombre,
+      count: entry.count,
+      required_sec: entry.requiredSec,
+    })),
+});
 
 const LOCATION_ERROR_CODES = new Set([
   'INVALID_ZONA',
@@ -939,6 +1608,254 @@ async function generateNextTicLote(tenant: string): Promise<string> {
 export const OperacionController = {
   index: (_req: Request, res: Response) => res.redirect('/operacion/todas'),
   todas: (_req: Request, res: Response) => res.render('operacion/todas', { title: 'Operación · Todas las fases' }),
+  configTimersView: async (req: Request, res: Response) => {
+    const tenant = (req as any).user?.tenant;
+    if (!tenant) {
+      return res.status(500).render('partials/error', { message: 'Tenant inválido', statusCode: 500 });
+    }
+    await ensureConfigTiemposTable(tenant);
+    const sedeId = getRequestSedeId(req);
+    const [modelosRes, sedesRes, configsRes] = await Promise.all([
+      withTenant(tenant, (client) => client.query<{ modelo_id: number; nombre_modelo: string | null }>(
+        `SELECT modelo_id, nombre_modelo
+           FROM modelos
+          WHERE nombre_modelo ILIKE '%tic%'
+          ORDER BY nombre_modelo`
+      )),
+      withTenant(tenant, (client) => client.query<{ sede_id: number; nombre: string | null }>(
+        'SELECT sede_id, nombre FROM sedes ORDER BY nombre ASC'
+      )),
+      withTenant(tenant, (client) => client.query<{
+        id: number;
+        sede_id: number | null;
+        modelo_id: number | null;
+        nombre_config: string;
+        min_congelamiento_sec: number;
+        atemperamiento_sec: number;
+        max_sobre_atemperamiento_sec: number;
+        vida_caja_sec: number;
+        min_reuso_sec: number;
+        activo: boolean;
+        created_at: Date;
+        updated_at: Date;
+        modelo_nombre: string | null;
+        sede_nombre: string | null;
+      }>(
+        `SELECT cfg.id,
+                cfg.sede_id,
+                cfg.modelo_id,
+                cfg.nombre_config,
+                cfg.min_congelamiento_sec,
+                cfg.atemperamiento_sec,
+                cfg.max_sobre_atemperamiento_sec,
+                cfg.vida_caja_sec,
+                cfg.min_reuso_sec,
+                cfg.activo,
+                cfg.created_at,
+                cfg.updated_at,
+                m.nombre_modelo AS modelo_nombre,
+                s.nombre AS sede_nombre
+           FROM config_tiempos_proceso cfg
+           LEFT JOIN modelos m ON m.modelo_id = cfg.modelo_id
+           LEFT JOIN sedes s ON s.sede_id = cfg.sede_id
+          WHERE cfg.modelo_id IS NULL OR m.nombre_modelo ILIKE '%tic%'
+          ORDER BY (cfg.sede_id IS NULL) DESC, s.nombre NULLS LAST, m.nombre_modelo NULLS LAST`
+      )),
+    ]);
+
+    const modelos = modelosRes.rows.map((row) => ({
+      modelo_id: row.modelo_id,
+      nombre_modelo: row.nombre_modelo || `Modelo ${row.modelo_id}`,
+    }));
+
+    const sedes = sedesRes.rows.map((row) => ({
+      sede_id: row.sede_id,
+      nombre: formatSedeName(row.sede_id ?? null, row.nombre ?? null),
+    }));
+
+    const configs = configsRes.rows.map((row) => ({
+      id: row.id,
+      sedeId: row.sede_id,
+      sedeNombre: formatSedeName(row.sede_id ?? null, row.sede_nombre ?? null),
+      modeloId: row.modelo_id,
+      modeloNombre: row.modelo_nombre || (row.modelo_id != null ? `Modelo ${row.modelo_id}` : 'Sin modelo'),
+      nombreConfig: row.nombre_config,
+      minCongelamientoSec: row.min_congelamiento_sec,
+      atemperamientoSec: row.atemperamiento_sec,
+      maxSobreAtemperamientoSec: row.max_sobre_atemperamiento_sec,
+      vidaCajaSec: row.vida_caja_sec,
+      minReusoSec: row.min_reuso_sec,
+      activo: row.activo === true,
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+    }));
+
+    res.render('operacion/config_tiempos', {
+      title: 'Operación · Configuración de cronómetros',
+      modelos,
+      sedes,
+      configs,
+      selectedSedeId: sedeId,
+    });
+  },
+  configTimersData: async (req: Request, res: Response) => {
+    const tenant = (req as any).user?.tenant;
+    if (!tenant) return res.status(400).json({ ok: false, error: 'Tenant inválido' });
+    await ensureConfigTiemposTable(tenant);
+    const configsRes = await withTenant(tenant, (client) => client.query<{
+      id: number;
+      sede_id: number | null;
+      modelo_id: number | null;
+      nombre_config: string;
+      min_congelamiento_sec: number;
+      atemperamiento_sec: number;
+      max_sobre_atemperamiento_sec: number;
+      vida_caja_sec: number;
+      min_reuso_sec: number;
+      activo: boolean;
+      updated_at: Date;
+      modelo_nombre: string | null;
+      sede_nombre: string | null;
+    }>(
+      `SELECT cfg.id,
+              cfg.sede_id,
+              cfg.modelo_id,
+              cfg.nombre_config,
+              cfg.min_congelamiento_sec,
+              cfg.atemperamiento_sec,
+              cfg.max_sobre_atemperamiento_sec,
+              cfg.vida_caja_sec,
+              cfg.min_reuso_sec,
+              cfg.activo,
+              cfg.updated_at,
+              m.nombre_modelo AS modelo_nombre,
+              s.nombre AS sede_nombre
+         FROM config_tiempos_proceso cfg
+         LEFT JOIN modelos m ON m.modelo_id = cfg.modelo_id
+         LEFT JOIN sedes s ON s.sede_id = cfg.sede_id
+        WHERE cfg.modelo_id IS NULL OR m.nombre_modelo ILIKE '%tic%'
+        ORDER BY (cfg.sede_id IS NULL) DESC, s.nombre NULLS LAST, m.nombre_modelo NULLS LAST`
+    ));
+
+    const items = configsRes.rows.map((row) => ({
+      id: row.id,
+      sedeId: row.sede_id,
+      sedeNombre: formatSedeName(row.sede_id ?? null, row.sede_nombre ?? null),
+      modeloId: row.modelo_id,
+      modeloNombre: row.modelo_nombre || (row.modelo_id != null ? `Modelo ${row.modelo_id}` : 'Sin modelo'),
+      nombreConfig: row.nombre_config,
+      minCongelamientoSec: row.min_congelamiento_sec,
+      atemperamientoSec: row.atemperamiento_sec,
+      maxSobreAtemperamientoSec: row.max_sobre_atemperamiento_sec,
+      vidaCajaSec: row.vida_caja_sec,
+      minReusoSec: row.min_reuso_sec,
+      activo: row.activo === true,
+      updatedAt: row.updated_at,
+    }));
+
+    res.json({ ok: true, configs: items });
+  },
+  configTimersSave: async (req: Request, res: Response) => {
+    const tenant = (req as any).user?.tenant;
+    if (!tenant) return res.status(400).json({ ok: false, error: 'Tenant inválido' });
+    try {
+      await ensureConfigTiemposTable(tenant);
+      const body = req.body as any;
+      const rawModeloId = body?.modelo_id ?? body?.modeloId;
+      const modeloId = parsePositiveInt(rawModeloId, 'Modelo');
+      const rawSede = body?.sede_id ?? body?.sedeId;
+      let sedeId = parseOptionalNumber(rawSede);
+      if (typeof rawSede === 'string') {
+        const norm = rawSede.trim().toLowerCase();
+        if (norm === 'global' || norm === 'null' || norm === 'all') {
+          sedeId = null;
+        }
+      }
+      const nombreConfig = (typeof (body?.nombre_config ?? body?.nombreConfig) === 'string'
+        ? (body?.nombre_config ?? body?.nombreConfig) : 'default').trim() || 'default';
+      const minCongelamientoSec = parsePositiveInt(body?.min_congelamiento_sec ?? body?.minCongelamientoSec, 'Tiempo mínimo de congelamiento');
+      const atemperamientoSec = parsePositiveInt(body?.atemperamiento_sec ?? body?.atemperamientoSec, 'Tiempo de atemperamiento');
+      const maxSobreSec = parsePositiveInt(body?.max_sobre_atemperamiento_sec ?? body?.maxSobreAtemperamientoSec, 'Máximo sobre atemperamiento');
+      const vidaCajaSec = parsePositiveInt(body?.vida_caja_sec ?? body?.vidaCajaSec, 'Vida útil de caja');
+      const minReusoSec = parsePositiveInt(body?.min_reuso_sec ?? body?.minReusoSec, 'Tiempo mínimo de reutilización');
+      const userId = parseOptionalNumber((req as any).user?.id ?? (req as any).user?.user_id ?? (req as any).user?.sub);
+
+      const result = await withTenant(tenant, async (client) => {
+        await client.query('BEGIN');
+        try {
+          const modeloRow = await client.query<{ nombre_modelo: string | null }>(
+            'SELECT nombre_modelo FROM modelos WHERE modelo_id = $1',
+            [modeloId]
+          );
+          if (!modeloRow.rowCount) {
+            throw new Error('Modelo no encontrado.');
+          }
+          const modeloNombre = modeloRow.rows[0]?.nombre_modelo ?? '';
+          const modeloNorm = normalizeBasic(modeloNombre);
+          if (!modeloNorm.includes('tic')) {
+            throw new Error('Solo se pueden configurar tiempos predeterminados para modelos TIC.');
+          }
+          const upsert = await client.query<{ id: number }>(
+            `INSERT INTO config_tiempos_proceso (
+               sede_id,
+               modelo_id,
+               nombre_config,
+               min_congelamiento_sec,
+               atemperamiento_sec,
+               max_sobre_atemperamiento_sec,
+               vida_caja_sec,
+               min_reuso_sec,
+               activo,
+               creado_por
+             ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, true, $9)
+             ON CONFLICT (sede_id, modelo_id, nombre_config)
+             DO UPDATE SET
+               min_congelamiento_sec = EXCLUDED.min_congelamiento_sec,
+               atemperamiento_sec = EXCLUDED.atemperamiento_sec,
+               max_sobre_atemperamiento_sec = EXCLUDED.max_sobre_atemperamiento_sec,
+               vida_caja_sec = EXCLUDED.vida_caja_sec,
+               min_reuso_sec = EXCLUDED.min_reuso_sec,
+               activo = true,
+               updated_at = NOW(),
+               creado_por = COALESCE(config_tiempos_proceso.creado_por, EXCLUDED.creado_por)
+             RETURNING id`,
+            [sedeId, modeloId, nombreConfig, minCongelamientoSec, atemperamientoSec, maxSobreSec, vidaCajaSec, minReusoSec, userId]
+          );
+          await client.query('COMMIT');
+          return upsert.rows[0]?.id ?? null;
+        } catch (err) {
+          await client.query('ROLLBACK');
+          throw err;
+        }
+      });
+
+      res.json({ ok: true, id: result });
+    } catch (err: any) {
+      const message = err?.message || 'No fue posible guardar la configuración';
+      res.status(400).json({ ok: false, error: message });
+    }
+  },
+  configTimersToggle: async (req: Request, res: Response) => {
+    const tenant = (req as any).user?.tenant;
+    if (!tenant) return res.status(400).json({ ok: false, error: 'Tenant inválido' });
+    const id = parsePositiveInt(req.params?.id, 'Identificador');
+    const rawActivo = (req.body as any)?.activo ?? (req.body as any)?.active;
+    const activo = rawActivo === undefined || rawActivo === null
+      ? true
+      : String(rawActivo).toLowerCase() !== 'false';
+    await ensureConfigTiemposTable(tenant);
+    const result = await withTenant(tenant, (client) => client.query(
+      `UPDATE config_tiempos_proceso
+          SET activo = $2,
+              updated_at = NOW()
+        WHERE id = $1`,
+      [id, activo]
+    ));
+    if (result.rowCount === 0) {
+      return res.status(404).json({ ok: false, error: 'Configuración no encontrada' });
+    }
+    res.json({ ok: true });
+  },
   // Kanban data summary for all phases
   kanbanData: async (req: Request, res: Response) => {
   const tenant = (req as any).user?.tenant;
@@ -1322,14 +2239,13 @@ export const OperacionController = {
             EXECUTE 'CREATE UNIQUE INDEX IF NOT EXISTS inventario_credocubes_rfid_key ON inventario_credocubes(rfid)';
           EXCEPTION WHEN others THEN
           END;
-          IF NOT EXISTS (
+          -- Drop legacy FK that prevents admin refresh routines from truncating inventario_credocubes
+          IF EXISTS (
             SELECT 1 FROM pg_constraint
              WHERE conrelid = 'preacond_item_timers'::regclass
                AND conname = 'preacond_item_timers_rfid_fkey'
           ) THEN
-            ALTER TABLE preacond_item_timers
-              ADD CONSTRAINT preacond_item_timers_rfid_fkey
-              FOREIGN KEY (rfid) REFERENCES inventario_credocubes(rfid) ON DELETE CASCADE;
+            ALTER TABLE preacond_item_timers DROP CONSTRAINT preacond_item_timers_rfid_fkey;
           END IF;
         END $$;`));
         // Cleanup: remove timers for RFIDs that are no longer in Pre Acondicionamiento (avoid table growth)
@@ -1826,25 +2742,6 @@ export const OperacionController = {
         return res.status(400).json({ ok:false, error:'Caja no elegible: requiere Operación · Transito' });
       }
 
-      const nowQ = await withTenant(tenant, (c)=> c.query<{ now:string }>(`SELECT NOW()::timestamptz AS now`));
-      const nowMs = new Date(nowQ.rows[0].now).getTime();
-      const tQ = await withTenant(tenant, (c)=> c.query(`SELECT started_at, duration_sec, active FROM acond_caja_timers WHERE caja_id=$1`, [cajaId]));
-      let remainingRatio = 0;
-      let secondsRemaining = 0;
-      let decide:'inspeccion'|'reuse' = 'inspeccion';
-      if(tQ.rowCount){
-        const t = tQ.rows[0] as any;
-        if(t.started_at && t.duration_sec){
-          const startMs = new Date(t.started_at).getTime();
-          const durMs = Number(t.duration_sec)*1000;
-          const endMs = startMs + durMs;
-          const remMs = Math.max(0, endMs - nowMs);
-          secondsRemaining = Math.floor(remMs/1000);
-          remainingRatio = durMs>0? (remMs/durMs) : 0;
-          decide = secondsRemaining >= REUSE_TIMER_THRESHOLD_SEC ? 'reuse':'inspeccion';
-        }
-      }
-
       const itemsQ = await withTenant(tenant, (c)=> c.query(
         `SELECT rfid FROM acond_caja_items WHERE caja_id=$1`, [cajaId]));
       if(!itemsQ.rowCount) return res.status(404).json({ ok:false, error:'Caja sin items' });
@@ -1865,6 +2762,25 @@ export const OperacionController = {
         { fallbackRfids: rfids }
       );
       if (transferCheck.blocked) return;
+
+      const timerInfo = await getCajaTimerInfo(tenant, cajaId);
+      const requestedThreshold = parseOptionalNumber(
+        (req.body as any)?.reuse_threshold_sec ?? (req.body as any)?.reuseThresholdSec
+      );
+      const reusePolicy = await computeReusePolicyForRfids(
+        tenant,
+        sedeId ?? null,
+        rfids,
+        requestedThreshold
+      );
+      const effectiveThresholdSec = reusePolicy.effectiveThresholdSec;
+      const allowReuse =
+        timerInfo.hasTimer &&
+        reusePolicy.allowReuse &&
+        !reusePolicy.reuseBlocked &&
+        timerInfo.secondsRemaining >= effectiveThresholdSec;
+      const decide: 'inspeccion' | 'reuse' = allowReuse ? 'reuse' : 'inspeccion';
+      const policyPayload = formatReusePolicyPayload(reusePolicy);
 
       await runWithSede(tenant, sedeId, async (c)=>{
         await c.query(`ALTER TABLE ordenes ADD COLUMN IF NOT EXISTS habilitada boolean NOT NULL DEFAULT true`);
@@ -1909,7 +2825,19 @@ export const OperacionController = {
         } catch(e){ await c.query('ROLLBACK'); throw e; }
       }, { allowCrossSedeTransfer: transferCheck.allowCrossTransfer });
 
-      res.json({ ok:true, action: decide, remaining_ratio: Number(remainingRatio.toFixed(4)), seconds_remaining: secondsRemaining });
+      res.json({
+        ok: true,
+        action: decide,
+        remaining_ratio: Number(timerInfo.remainingRatio.toFixed(4)),
+        seconds_remaining: timerInfo.secondsRemaining,
+        duration_sec: timerInfo.durationSec,
+        starts_at: timerInfo.startsAt,
+        ends_at: timerInfo.endsAt,
+        timer_status: timerInfo.hasTimer ? (timerInfo.isActive ? 'active' : 'inactive') : 'missing',
+        has_timer: timerInfo.hasTimer,
+        reuse_threshold_sec: effectiveThresholdSec,
+        reuse_policy: policyPayload,
+      });
     } catch(e:any){
       if (await respondSedeMismatch(req, res, e, { rfids: trackedRfids })) return;
       res.status(500).json({ ok:false, error: e.message||'Error procesando devolución' });
@@ -2068,9 +2996,11 @@ export const OperacionController = {
   // Evaluar si una caja puede reutilizarse según cronómetro (requiere >=24 horas restantes)
   devolucionCajaEvaluate: async (req: Request, res: Response) => {
     const tenant = (req as any).user?.tenant;
-    const { caja_id } = req.body as any;
+    const sedeId = getRequestSedeId(req);
+    const { caja_id, reuse_threshold_sec: reuseThresholdSecRaw } = req.body as any;
     const cajaId = Number(caja_id);
     if(!Number.isFinite(cajaId) || cajaId<=0) return res.status(400).json({ ok:false, error:'caja_id inválido' });
+    const requestedThresholdSec = parseOptionalNumber(reuseThresholdSecRaw);
     try {
       // Validar elegibilidad: Operación · Transito
       const eligQ = await withTenant(tenant, (c)=> c.query(
@@ -2083,21 +3013,55 @@ export const OperacionController = {
       const row = eligQ.rows[0] as any; if(!row || row.ok < row.total){
         return res.status(400).json({ ok:false, error:'Caja no elegible: requiere Operación · Transito' });
       }
-      const nowQ = await withTenant(tenant, (c)=> c.query<{ now:string }>(`SELECT NOW()::timestamptz AS now`));
-      const nowMs = new Date(nowQ.rows[0].now).getTime();
-      const tQ = await withTenant(tenant, (c)=> c.query(`SELECT started_at, duration_sec, active FROM acond_caja_timers WHERE caja_id=$1`, [cajaId]));
-      let reusable=false, remainingRatio=0, secondsRemaining=0, durationSec=0, startsAt:null|string=null, endsAt:null|string=null;
-      if(tQ.rowCount){
-        const t = tQ.rows[0] as any;
-        if(t.started_at && t.duration_sec){
-          const startMs = new Date(t.started_at).getTime();
-          const durMs = Number(t.duration_sec)*1000; durationSec = Number(t.duration_sec)||0; startsAt = t.started_at;
-          const endMs = startMs + durMs; endsAt = new Date(endMs).toISOString();
-          const remMs = Math.max(0, endMs - nowMs); secondsRemaining = Math.floor(remMs/1000);
-          remainingRatio = durMs>0? (remMs/durMs) : 0; reusable = secondsRemaining >= REUSE_TIMER_THRESHOLD_SEC;
-        }
+
+      const itemsQ = await withTenant(tenant, (c)=> c.query(
+        `SELECT aci.rfid, ic.modelo_id
+           FROM acond_caja_items aci
+           JOIN inventario_credocubes ic ON ic.rfid = aci.rfid
+          WHERE aci.caja_id=$1`,
+        [cajaId]
+      ));
+      if(!itemsQ.rowCount){
+        return res.status(404).json({ ok:false, error:'Caja sin items' });
       }
-      res.json({ ok:true, reusable, remaining_ratio: Number(remainingRatio.toFixed(4)), seconds_remaining: secondsRemaining, duration_sec: durationSec, starts_at: startsAt, ends_at: endsAt });
+      const rfids = itemsQ.rows.map((r:any)=> r.rfid);
+      const policyResult = await computeReusePolicyForRfids(tenant, sedeId, rfids, requestedThresholdSec);
+      const timerInfo = await getCajaTimerInfo(tenant, cajaId);
+      if(!timerInfo.hasTimer){
+        return res.status(200).json({
+          ok: true,
+          reusable: false,
+          remaining_ratio: 0,
+          seconds_remaining: 0,
+          duration_sec: 0,
+          starts_at: null,
+          ends_at: null,
+          reuse_threshold_sec: policyResult.effectiveThresholdSec,
+          timer_status: 'missing',
+          has_timer: false,
+          reuse_policy: formatReusePolicyPayload(policyResult),
+        });
+      }
+
+      const effectiveThresholdSec = policyResult.effectiveThresholdSec;
+      const reusable =
+        policyResult.allowReuse &&
+        !policyResult.reuseBlocked &&
+        timerInfo.secondsRemaining >= effectiveThresholdSec;
+      const policyPayload = formatReusePolicyPayload(policyResult);
+      res.json({
+        ok: true,
+        reusable,
+        remaining_ratio: Number(timerInfo.remainingRatio.toFixed(4)),
+        seconds_remaining: timerInfo.secondsRemaining,
+        duration_sec: timerInfo.durationSec,
+        starts_at: timerInfo.startsAt,
+        ends_at: timerInfo.endsAt,
+        reuse_threshold_sec: effectiveThresholdSec,
+        timer_status: timerInfo.isActive ? 'active' : 'inactive',
+        has_timer: timerInfo.hasTimer,
+        reuse_policy: policyPayload,
+      });
     } catch(e:any){ res.status(500).json({ ok:false, error: e.message||'Error evaluando caja' }); }
   },
   // Accion explicita: reutilizar caja (volver a Acond -> Lista para Despacho) conservando cronometro
@@ -3806,14 +4770,13 @@ export const OperacionController = {
         EXECUTE 'CREATE UNIQUE INDEX IF NOT EXISTS inventario_credocubes_rfid_key ON inventario_credocubes(rfid)';
       EXCEPTION WHEN others THEN
       END;
-      IF NOT EXISTS (
+      -- Drop legacy FK that prevents admin refresh routines from truncating inventario_credocubes
+      IF EXISTS (
         SELECT 1 FROM pg_constraint
          WHERE conrelid = 'preacond_item_timers'::regclass
            AND conname = 'preacond_item_timers_rfid_fkey'
       ) THEN
-        ALTER TABLE preacond_item_timers
-          ADD CONSTRAINT preacond_item_timers_rfid_fkey
-          FOREIGN KEY (rfid) REFERENCES inventario_credocubes(rfid) ON DELETE CASCADE;
+        ALTER TABLE preacond_item_timers DROP CONSTRAINT preacond_item_timers_rfid_fkey;
       END IF;
     END $$;`));
 
@@ -3937,10 +4900,12 @@ export const OperacionController = {
 
    const rowsCongParams: any[] = [];
    const rowsCongSede = pushSedeFilter(rowsCongParams, sedeId);
-   const rowsCong = await withTenant(tenant, (c) => c.query(
+   const rowsCongRes = await withTenant(tenant, (c) => c.query(
                   `SELECT ic.rfid, ic.nombre_unidad, ic.lote, ic.estado, ic.sub_estado,
                     pit.started_at AS started_at, pit.duration_sec AS duration_sec, pit.active AS item_active, pit.lote AS item_lote,
-                    pit.updated_at AS item_updated_at, pit.completed_at AS item_completed_at
+                    pit.updated_at AS item_updated_at, pit.completed_at AS item_completed_at,
+                    ic.modelo_id AS modelo_id,
+                    m.nombre_modelo AS nombre_modelo
        FROM inventario_credocubes ic
        JOIN modelos m ON m.modelo_id = ic.modelo_id
        LEFT JOIN preacond_item_timers pit
@@ -3952,10 +4917,12 @@ export const OperacionController = {
        LIMIT 500`, rowsCongParams));
    const rowsAtemParams: any[] = [];
    const rowsAtemSede = pushSedeFilter(rowsAtemParams, sedeId);
-   const rowsAtem = await withTenant(tenant, (c) => c.query(
+   const rowsAtemRes = await withTenant(tenant, (c) => c.query(
                   `SELECT ic.rfid, ic.nombre_unidad, ic.lote, ic.estado, ic.sub_estado,
                     pit.started_at AS started_at, pit.duration_sec AS duration_sec, pit.active AS item_active, pit.lote AS item_lote,
-                    pit.updated_at AS item_updated_at, pit.completed_at AS item_completed_at
+                    pit.updated_at AS item_updated_at, pit.completed_at AS item_completed_at,
+                    ic.modelo_id AS modelo_id,
+                    m.nombre_modelo AS nombre_modelo
        FROM inventario_credocubes ic
        JOIN modelos m ON m.modelo_id = ic.modelo_id
        LEFT JOIN preacond_item_timers pit
@@ -3970,7 +4937,36 @@ export const OperacionController = {
       `SELECT section, started_at, duration_sec, active, lote FROM preacond_timers WHERE section IN ('congelamiento','atemperamiento')`));
     const map: any = { congelamiento: null, atemperamiento: null };
     for(const r of timers.rows as any[]) map[r.section] = r;
-    res.json({ now: nowRes.rows[0]?.now, timers: map, congelamiento: rowsCong.rows, atemperamiento: rowsAtem.rows });
+    const congelamientoRows = rowsCongRes.rows.map((row: any) => {
+      const modeloIdNum = Number(row?.modelo_id);
+      return {
+        ...row,
+        modelo_id: Number.isFinite(modeloIdNum) && modeloIdNum > 0 ? modeloIdNum : null,
+        nombre_modelo: row?.nombre_modelo || null,
+      };
+    });
+    const atemperamientoRows = rowsAtemRes.rows.map((row: any) => {
+      const modeloIdNum = Number(row?.modelo_id);
+      return {
+        ...row,
+        modelo_id: Number.isFinite(modeloIdNum) && modeloIdNum > 0 ? modeloIdNum : null,
+        nombre_modelo: row?.nombre_modelo || null,
+      };
+    });
+    const modeloIds: number[] = [];
+    for (const entry of congelamientoRows) {
+      if (typeof entry.modelo_id === 'number' && Number.isFinite(entry.modelo_id) && entry.modelo_id > 0) {
+        modeloIds.push(entry.modelo_id);
+      }
+    }
+    for (const entry of atemperamientoRows) {
+      if (typeof entry.modelo_id === 'number' && Number.isFinite(entry.modelo_id) && entry.modelo_id > 0) {
+        modeloIds.push(entry.modelo_id);
+      }
+    }
+    const defaultsMap = await fetchActiveTimerConfigsForModels(tenant, modeloIds, sedeId ?? null);
+    const timerDefaults = timerConfigMapToArray(defaultsMap);
+    res.json({ now: nowRes.rows[0]?.now, timers: map, congelamiento: congelamientoRows, atemperamiento: atemperamientoRows, timerDefaults });
   },
 
   // Scan/move TICs into Congelamiento or Atemperamiento
@@ -4147,6 +5143,13 @@ export const OperacionController = {
                    AND ic.estado = 'Pre Acondicionamiento' AND ic.sub_estado = 'Congelado'`,
               [accept, targetSede]
             );
+            // Clear legacy congelamiento timers so UI/state stay in sync after migration to atemperamiento
+            await client.query(
+              `DELETE FROM preacond_item_timers
+                WHERE section = 'congelamiento'
+                  AND rfid = ANY($1::text[])`,
+              [accept]
+            );
             try {
               await AlertsModel.create(client, {
                 tipo_alerta: 'inventario:preacond:inicio_atemperamiento',
@@ -4268,6 +5271,13 @@ export const OperacionController = {
         `UPDATE inventario_credocubes ic SET sub_estado = 'Atemperamiento', lote = NULL
           WHERE ic.rfid = ANY($1::text[])`,
         [congelados]), tenantOptions);
+      // Drop stale congelamiento timers once the lote moves to atemperamiento
+      await withTenant(tenant, (c) => c.query(
+        `DELETE FROM preacond_item_timers
+           WHERE section = 'congelamiento'
+             AND rfid = ANY($1::text[])`,
+        [congelados]
+      ), tenantOptions);
 
       if (locationResult?.apply) {
         const params: any[] = [congelados, locationResult.zonaId, locationResult.seccionId];
@@ -4312,7 +5322,7 @@ export const OperacionController = {
     }
 
     const found = await withTenant(tenant, (c) => c.query(
-      `SELECT ic.rfid, ic.estado, ic.sub_estado, ic.activo, ic.sede_id, ic.nombre_unidad, m.nombre_modelo
+      `SELECT ic.rfid, ic.estado, ic.sub_estado, ic.activo, ic.sede_id, ic.nombre_unidad, m.nombre_modelo, m.modelo_id
          FROM inventario_credocubes ic
          JOIN modelos m ON m.modelo_id = ic.modelo_id
         WHERE ic.rfid = ANY($1::text[])`,
@@ -4325,7 +5335,7 @@ export const OperacionController = {
     };
 
     const rows = found.rows as any[];
-    const ok: { rfid: string; nombre_unidad?: string | null; nombre_modelo?: string | null }[] = [];
+    const ok: { rfid: string; nombre_unidad?: string | null; nombre_modelo?: string | null; modelo_id?: number | null }[] = [];
     const invalid: { rfid: string; reason: string }[] = [];
 
     for (const code of codes) {
@@ -4340,7 +5350,7 @@ export const OperacionController = {
       const subAtemper = subEstadoNorm.includes('atemper');
       if (t === 'atemperamiento') {
         if (enPreAcond && subEstadoNorm.includes('congelado')) {
-          ok.push({ rfid: code, nombre_unidad: r.nombre_unidad, nombre_modelo: r.nombre_modelo });
+          ok.push({ rfid: code, nombre_unidad: r.nombre_unidad, nombre_modelo: r.nombre_modelo, modelo_id: r.modelo_id });
         } else if (enPreAcond && subAtemper) {
           invalid.push({ rfid: code, reason: 'Ya está en Atemperamiento' });
         } else {
@@ -4354,7 +5364,7 @@ export const OperacionController = {
         } else if (!enBodega && !(enPreAcond && subAtemper)) {
           invalid.push({ rfid: code, reason: 'Solo se acepta desde En bodega o Atemperamiento' });
         } else {
-          ok.push({ rfid: code, nombre_unidad: r.nombre_unidad, nombre_modelo: r.nombre_modelo });
+          ok.push({ rfid: code, nombre_unidad: r.nombre_unidad, nombre_modelo: r.nombre_modelo, modelo_id: r.modelo_id });
         }
       }
     }
@@ -4785,7 +5795,9 @@ export const OperacionController = {
     const ticsParams: any[] = [];
     const ticsSede = pushSedeFilter(ticsParams, sedeId);
   const tics = await withTenant(tenant, (c) => c.query(
-      `SELECT ic.rfid, ic.nombre_unidad, ic.lote, ic.estado, ic.sub_estado
+      `SELECT ic.rfid, ic.nombre_unidad, ic.lote, ic.estado, ic.sub_estado,
+              ic.modelo_id AS modelo_id,
+              m.nombre_modelo AS nombre_modelo
          FROM inventario_credocubes ic
          JOIN modelos m ON m.modelo_id = ic.modelo_id
     LEFT JOIN acond_caja_items aci ON aci.rfid = ic.rfid
@@ -4801,7 +5813,9 @@ export const OperacionController = {
     const cubesParams: any[] = [];
     const cubesSede = pushSedeFilter(cubesParams, sedeId);
   const cubes = await withTenant(tenant, (c) => c.query(
-      `SELECT ic.rfid, ic.nombre_unidad, ic.lote, ic.estado, ic.sub_estado
+      `SELECT ic.rfid, ic.nombre_unidad, ic.lote, ic.estado, ic.sub_estado,
+              ic.modelo_id AS modelo_id,
+              m.nombre_modelo AS nombre_modelo
          FROM inventario_credocubes ic
          JOIN modelos m ON m.modelo_id = ic.modelo_id
     LEFT JOIN acond_caja_items aci ON aci.rfid = ic.rfid
@@ -4816,7 +5830,9 @@ export const OperacionController = {
     const vipsParams: any[] = [];
     const vipsSede = pushSedeFilter(vipsParams, sedeId);
   const vips = await withTenant(tenant, (c) => c.query(
-      `SELECT ic.rfid, ic.nombre_unidad, ic.lote, ic.estado, ic.sub_estado
+      `SELECT ic.rfid, ic.nombre_unidad, ic.lote, ic.estado, ic.sub_estado,
+              ic.modelo_id AS modelo_id,
+              m.nombre_modelo AS nombre_modelo
          FROM inventario_credocubes ic
          JOIN modelos m ON m.modelo_id = ic.modelo_id
     LEFT JOIN acond_caja_items aci ON aci.rfid = ic.rfid
@@ -4898,7 +5914,9 @@ export const OperacionController = {
           const itemsSede = pushSedeFilter(itemsParams, sedeId);
           const itemsQ = await withTenant(tenant, (c) => c.query(
                 `SELECT c.caja_id, aci.rol, ic.rfid, ic.sub_estado, ic.nombre_unidad, m.litraje,
-                  ic.temp_salida_c, ic.temp_llegada_c, ic.sensor_id
+                  ic.temp_salida_c, ic.temp_llegada_c, ic.sensor_id,
+                  ic.modelo_id AS modelo_id,
+                  m.nombre_modelo AS nombre_modelo
                FROM acond_caja_items aci
                JOIN acond_cajas c ON c.caja_id = aci.caja_id
                JOIN inventario_credocubes ic ON ic.rfid = aci.rfid
@@ -4945,12 +5963,15 @@ export const OperacionController = {
             const itemsSede2 = pushSedeFilter(itemsParams2, sedeId);
               const itemsQ = await withTenant(tenant, (c) => c.query(
                 `SELECT c.caja_id, aci.rol, ic.rfid, ic.sub_estado, ic.nombre_unidad,
-                        ic.temp_salida_c, ic.temp_llegada_c, ic.sensor_id
+                  ic.temp_salida_c, ic.temp_llegada_c, ic.sensor_id,
+                  ic.modelo_id AS modelo_id,
+                  m.nombre_modelo AS nombre_modelo
                  FROM acond_caja_items aci
                  JOIN acond_cajas c ON c.caja_id = aci.caja_id
                  JOIN inventario_credocubes ic ON ic.rfid = aci.rfid
-                 WHERE c.caja_id = ANY($1::int[])${itemsSede2}
-                ORDER BY c.caja_id DESC, CASE aci.rol WHEN 'vip' THEN 0 WHEN 'tic' THEN 1 ELSE 2 END, aci.rfid`,
+                     JOIN modelos m ON m.modelo_id = ic.modelo_id
+                     WHERE c.caja_id = ANY($1::int[])${itemsSede2}
+                    ORDER BY c.caja_id DESC, CASE aci.rol WHEN 'vip' THEN 0 WHEN 'tic' THEN 1 ELSE 2 END, aci.rfid`,
             itemsParams2));
             cajaItemsRows = itemsQ.rows;
           } else {
@@ -4962,6 +5983,7 @@ export const OperacionController = {
     const listoSede = pushSedeFilter(listoParams, sedeId);
   const listoRows = await withTenant(tenant, (c)=> c.query(
     `SELECT ic.rfid, ic.nombre_unidad, ic.lote, ic.estado, ic.sub_estado, NOW() AS updated_at, m.nombre_modelo,
+      ic.modelo_id AS modelo_id,
       ic.temp_salida_c, ic.temp_llegada_c, ic.sensor_id,
       act.started_at AS timer_started_at, act.duration_sec AS timer_duration_sec, act.active AS timer_active,
       c.lote AS caja_lote, c.caja_id, c.order_id, o.numero_orden AS order_num, o.cliente AS order_client
@@ -4992,16 +6014,19 @@ export const OperacionController = {
   const nowIso = nowRes.rows[0]?.now;
   const nowMs = nowIso ? new Date(nowIso).getTime() : Date.now();
   // Map caja items by caja_id for componentes list
-  const componentesPorCaja: Record<string, { tipo:string; codigo:string; sub_estado?:string; nombreUnidad?:string|null; tempSalidaC?: number | null; tempLlegadaC?: number | null; sensorId?: string | null }[]> = {};
+  const componentesPorCaja: Record<string, { tipo:string; codigo:string; sub_estado?:string; nombreUnidad?:string|null; modeloId?: number | null; modeloNombre?: string | null; tempSalidaC?: number | null; tempLlegadaC?: number | null; sensorId?: string | null }[]> = {};
   for(const it of cajaItemsRows){
     const arr = componentesPorCaja[it.caja_id] || (componentesPorCaja[it.caja_id] = [] as { tipo:string; codigo:string; sub_estado?:string; nombreUnidad?:string|null; tempSalidaC?: number | null; tempLlegadaC?: number | null; sensorId?: string | null }[]);
     const tempSalida = it.temp_salida_c !== null && it.temp_salida_c !== undefined ? Number(it.temp_salida_c) : null;
     const tempLlegada = it.temp_llegada_c !== null && it.temp_llegada_c !== undefined ? Number(it.temp_llegada_c) : null;
+    const modeloIdVal = Number((it as any).modelo_id);
     arr.push({
       tipo: it.rol,
       codigo: it.rfid,
       sub_estado: (it as any).sub_estado,
       nombreUnidad: (it as any).nombre_unidad || null,
+      modeloId: Number.isFinite(modeloIdVal) && modeloIdVal > 0 ? modeloIdVal : null,
+      modeloNombre: (it as any).nombre_modelo || null,
       tempSalidaC: Number.isFinite(tempSalida) ? tempSalida : null,
       tempLlegadaC: Number.isFinite(tempLlegada) ? tempLlegada : null,
       sensorId: (it as any).sensor_id ? String((it as any).sensor_id) : null
@@ -5027,6 +6052,11 @@ export const OperacionController = {
     const sensorId = comps.find((cmp) => cmp.sensorId)?.sensorId || null;
     const associatedOrders = ordersByCajaId.get(r.caja_id) || [];
     const primaryOrder = associatedOrders[0] || (r.order_id ? { orderId: r.order_id, numeroOrden: r.order_num ?? null, cliente: r.order_client ?? null } : null);
+    const cubeModeloId = cubeComp && typeof cubeComp.modeloId === 'number' && Number.isFinite(cubeComp.modeloId) ? cubeComp.modeloId : null;
+    const cubeModeloNombre = cubeComp && typeof cubeComp.modeloNombre === 'string' ? cubeComp.modeloNombre : null;
+    const fallbackModelo = comps.find((cmp) => typeof cmp.modeloId === 'number' && Number.isFinite(cmp.modeloId));
+    const fallbackModeloId = cubeModeloId ?? (fallbackModelo ? (fallbackModelo.modeloId as number) : null);
+    const fallbackModeloNombre = cubeModeloNombre ?? (fallbackModelo && typeof fallbackModelo.modeloNombre === 'string' ? fallbackModelo.modeloNombre : null);
     return {
       id: r.caja_id,
       codigoCaja: r.lote || `Caja #${r.caja_id}`,
@@ -5042,7 +6072,9 @@ export const OperacionController = {
       componentes: componentesPorCaja[r.caja_id] || [],
       tempSalidaC: tempSalida,
       tempLlegadaC: tempLlegada,
-      sensorId
+      sensorId,
+      modeloId: fallbackModeloId,
+      modeloNombre: fallbackModeloNombre
     };
   });
   const listoDespacho = listoRows.rows.map(r => {
@@ -5061,6 +6093,7 @@ export const OperacionController = {
     }
     // categoria simplificada (vip/tic/cube)
     const modeloLower = (r.nombre_modelo||'').toLowerCase();
+    const modeloIdVal = Number(r.modelo_id);
     let categoriaSimple = 'otros';
     if(/vip/.test(modeloLower)) categoriaSimple = 'vip';
     else if(/tic/.test(modeloLower)) categoriaSimple = 'tic';
@@ -5087,10 +6120,26 @@ export const OperacionController = {
       orders: associatedOrders,
       temp_salida_c: Number.isFinite(tempSalidaVal) ? tempSalidaVal : null,
       temp_llegada_c: Number.isFinite(tempLlegadaVal) ? tempLlegadaVal : null,
-      sensor_id: sensorIdVal
+      sensor_id: sensorIdVal,
+      modeloId: Number.isFinite(modeloIdVal) && modeloIdVal > 0 ? modeloIdVal : null,
+      modeloNombre: r.nombre_modelo || null
     };
   });
-  res.json({ ok:true, now: nowIso, serverNow: nowIso, disponibles: { tics: tics.rows, cubes: cubes.rows, vips: vips.rows }, cajas: cajasUI, listoDespacho });
+  const modeloIds: number[] = [];
+  const collectModeloId = (value: unknown) => {
+    const num = Number(value);
+    if (Number.isFinite(num) && num > 0) {
+      modeloIds.push(Math.trunc(num));
+    }
+  };
+  tics.rows.forEach((row: any) => collectModeloId(row?.modelo_id));
+  cubes.rows.forEach((row: any) => collectModeloId(row?.modelo_id));
+  vips.rows.forEach((row: any) => collectModeloId(row?.modelo_id));
+  cajasUI.forEach((row) => collectModeloId(row.modeloId));
+  listoDespacho.forEach((row) => collectModeloId(row.modeloId));
+  const defaultsMap = await fetchActiveTimerConfigsForModels(tenant, modeloIds, sedeId ?? null);
+  const timerDefaults = timerConfigMapToArray(defaultsMap);
+  res.json({ ok:true, now: nowIso, serverNow: nowIso, disponibles: { tics: tics.rows, cubes: cubes.rows, vips: vips.rows }, cajas: cajasUI, listoDespacho, timerDefaults });
     } catch (e:any) {
       console.error('[ACOND][DATA] error', e);
       const status = Number.isInteger(e?.statusCode) ? Number(e.statusCode) : 500;
@@ -5136,7 +6185,8 @@ export const OperacionController = {
     try {
       rows = await withTenant(tenant, (c)=> c.query(
         `SELECT ic.rfid, ic.estado, ic.sub_estado, ic.activo, ic.nombre_unidad, m.nombre_modelo,
-                m.litraje::text AS litraje,
+          m.litraje::text AS litraje,
+          m.modelo_id AS modelo_id,
                 EXISTS(SELECT 1 FROM acond_caja_items aci WHERE aci.rfid=ic.rfid) AS ya_en_caja,
                 CASE
                   WHEN LOWER(ic.estado) = LOWER('Pre Acondicionamiento')
@@ -5159,7 +6209,8 @@ export const OperacionController = {
       if (err?.code !== '42703') throw err;
       rows = await withTenant(tenant, (c)=> c.query(
         `SELECT ic.rfid, ic.estado, ic.sub_estado, ic.activo, ic.nombre_unidad, m.nombre_modelo,
-                NULL::text AS litraje,
+          NULL::text AS litraje,
+          m.modelo_id AS modelo_id,
                 EXISTS(SELECT 1 FROM acond_caja_items aci WHERE aci.rfid=ic.rfid) AS ya_en_caja,
                 CASE
                   WHEN LOWER(ic.estado) = LOWER('Pre Acondicionamiento')
@@ -5184,7 +6235,16 @@ export const OperacionController = {
     rows.rows.forEach(r=>{ byRfid[r.rfid] = r; });
     let haveCube=false, haveVip=false, ticCount=0;
     let cajaLitraje: string | null = null;
-    const valid: { rfid:string; rol:'cube'|'vip'|'tic'; atemperadoElapsedSec?: number | null; nombre_unidad?: string | null; nombre_modelo?: string | null; litraje?: string | null }[] = [];
+    const valid: {
+      rfid: string;
+      rol: 'cube' | 'vip' | 'tic';
+      atemperadoElapsedSec?: number | null;
+      nombre_unidad?: string | null;
+      nombre_modelo?: string | null;
+      litraje?: string | null;
+      modeloId?: number | null;
+      modelo_id?: number | null;
+    }[] = [];
     const invalid: { rfid:string; reason:string }[] = [];
     // Procesar en el mismo orden de entrada (importante para UX del escaneo)
     for(const code of codes){
@@ -5219,7 +6279,17 @@ export const OperacionController = {
         if(!ensureLitrajeMatch()) continue;
         haveCube=true;
         const matchedCube = cajaLitraje || litraje || null;
-        valid.push({ rfid:r.rfid, rol:'cube', nombre_unidad: nombreUnidad, nombre_modelo: r.nombre_modelo || null, litraje: matchedCube });
+        const cubeModeloRaw = Number(r.modelo_id);
+        const cubeModeloId = Number.isFinite(cubeModeloRaw) && cubeModeloRaw > 0 ? Math.trunc(cubeModeloRaw) : null;
+        valid.push({
+          rfid: r.rfid,
+          rol: 'cube',
+          nombre_unidad: nombreUnidad,
+          nombre_modelo: r.nombre_modelo || null,
+          litraje: matchedCube,
+          modelo_id: cubeModeloId,
+          modeloId: cubeModeloId
+        });
       } else if(/vip/.test(name)){
         if(haveVip){ invalid.push({ rfid:r.rfid, reason:'Más de un VIP' }); continue; }
         const enBodega = estadoLower.includes('en bodega') || subLower.includes('en bodega');
@@ -5227,7 +6297,17 @@ export const OperacionController = {
         if(!ensureLitrajeMatch()) continue;
         haveVip=true;
         const matchedVip = cajaLitraje || litraje || null;
-        valid.push({ rfid:r.rfid, rol:'vip', nombre_unidad: nombreUnidad, nombre_modelo: r.nombre_modelo || null, litraje: matchedVip });
+        const vipModeloRaw = Number(r.modelo_id);
+        const vipModeloId = Number.isFinite(vipModeloRaw) && vipModeloRaw > 0 ? Math.trunc(vipModeloRaw) : null;
+        valid.push({
+          rfid: r.rfid,
+          rol: 'vip',
+          nombre_unidad: nombreUnidad,
+          nombre_modelo: r.nombre_modelo || null,
+          litraje: matchedVip,
+          modelo_id: vipModeloId,
+          modeloId: vipModeloId
+        });
       } else if(/tic/.test(name)){
         const atemp = (estadoLower.replace(/\s+/g,'').includes('preacondicionamiento') || estadoLower.includes('pre acond')) && subLower.includes('atemperad');
         if(!atemp){ invalid.push({ rfid:r.rfid, reason:'TIC no Atemperado' }); continue; }
@@ -5238,7 +6318,18 @@ export const OperacionController = {
         const atemperadoElapsedSec = Number.isFinite(elapsedNum) && elapsedNum > 0 ? elapsedNum : null;
         ticCount++;
         const matchedTic = cajaLitraje || litraje || null;
-        valid.push({ rfid:r.rfid, rol:'tic', atemperadoElapsedSec, nombre_unidad: nombreUnidad, nombre_modelo: r.nombre_modelo || null, litraje: matchedTic });
+        const ticModeloRaw = Number(r.modelo_id);
+        const ticModeloId = Number.isFinite(ticModeloRaw) && ticModeloRaw > 0 ? Math.trunc(ticModeloRaw) : null;
+        valid.push({
+          rfid: r.rfid,
+          rol: 'tic',
+          atemperadoElapsedSec,
+          nombre_unidad: nombreUnidad,
+          nombre_modelo: r.nombre_modelo || null,
+          litraje: matchedTic,
+          modelo_id: ticModeloId,
+          modeloId: ticModeloId
+        });
       } else {
         invalid.push({ rfid:r.rfid, reason:'Modelo no permitido' });
       }
@@ -5345,7 +6436,7 @@ export const OperacionController = {
     }
   let haveCube=false, haveVip=false, ticCount=0; const litrajes = new Set<string>();
   let cajaLitraje: string | null = null;
-  const roles: { rfid:string; rol:'cube'|'vip'|'tic'; litraje?: string | null }[] = [];
+  const roles: { rfid:string; rol:'cube'|'vip'|'tic'; litraje?: string | null; modelo_id?: number | null }[] = [];
         for (const r of rows.rows as any[]) {
       if (r.rfid.length !== 24) return res.status(400).json({ ok:false, error:`${r.rfid} longitud inválida`, message:`${r.rfid} longitud inválida` });
       if (r.ya_en_caja) return res.status(400).json({ ok:false, error:`${r.rfid} ya está en una caja`, message:`${r.rfid} ya está en una caja` });
@@ -5378,7 +6469,7 @@ export const OperacionController = {
         if (!registerLitraje(r.rfid, litraje)) return;
         ticCount++;
         const matched = cajaLitraje || litraje || null;
-        roles.push({ rfid:r.rfid, rol:'tic', litraje: matched });
+        roles.push({ rfid:r.rfid, rol:'tic', litraje: matched, modelo_id: r.modelo_id });
         if(matched) litrajes.add(matched);
       } else if (esCube) {
         if (haveCube) return res.status(400).json({ ok:false, error:'Más de un CUBE', message:'Más de un CUBE' });
@@ -5386,7 +6477,7 @@ export const OperacionController = {
         if (!registerLitraje(r.rfid, litraje)) return;
         haveCube=true;
         const matched = cajaLitraje || litraje || null;
-        roles.push({ rfid:r.rfid, rol:'cube', litraje: matched });
+        roles.push({ rfid:r.rfid, rol:'cube', litraje: matched, modelo_id: r.modelo_id });
         if(matched) litrajes.add(matched);
       } else if (esVip) {
         if (haveVip) return res.status(400).json({ ok:false, error:'Más de un VIP', message:'Más de un VIP' });
@@ -5394,7 +6485,7 @@ export const OperacionController = {
         if (!registerLitraje(r.rfid, litraje)) return;
         haveVip=true;
         const matched = cajaLitraje || litraje || null;
-        roles.push({ rfid:r.rfid, rol:'vip', litraje: matched });
+        roles.push({ rfid:r.rfid, rol:'vip', litraje: matched, modelo_id: r.modelo_id });
         if(matched) litrajes.add(matched);
       } else {
         return res.status(400).json({ ok:false, error:`${r.rfid} modelo no permitido`, message:`${r.rfid} modelo no permitido` });

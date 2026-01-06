@@ -54,6 +54,13 @@
     <button id="dev-decide-close" class="btn btn-xs btn-circle btn-ghost absolute right-3 top-3" title="Cerrar">✕</button>
     <h3 class="font-semibold text-sm pr-8">Procesar devolución</h3>
     <p id="dev-decide-msg" class="text-xs opacity-80"></p>
+    <div id="dev-decide-threshold" class="grid gap-2 text-xs hidden">
+      <label class="form-control gap-1">
+        <span class="label-text text-[11px] opacity-70">Umbral de reutilización</span>
+        <select id="dev-decide-threshold-select" class="select select-sm select-bordered"></select>
+      </label>
+      <p id="dev-decide-threshold-info" class="text-[11px] opacity-70 min-h-[16px]"></p>
+    </div>
     <div class="grid gap-2 text-xs">
       <label class="form-control gap-1">
         <span class="label-text text-[11px] opacity-70">Zona destino (opcional)</span>

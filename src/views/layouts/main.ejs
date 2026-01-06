@@ -118,6 +118,9 @@
                   <li><a class="<%= currentPath === '/operacion/devolucion' ? 'active' : '' %>" href="/operacion/devolucion">Devolución</a></li>
                   <li><a class="<%= currentPath === '/operacion/inspeccion' ? 'active' : '' %>" href="/operacion/inspeccion">Inspección</a></li>
                 <% } %>
+                <% if (hasExtendedRole || hasAdminRole) { %>
+                  <li><a class="<%= currentPath === '/operacion/config-tiempos' ? 'active' : '' %>" href="/operacion/config-tiempos">Cronómetros predeterminados</a></li>
+                <% } %>
               </ul>
             </details>
           </li>

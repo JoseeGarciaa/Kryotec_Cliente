@@ -57,6 +57,41 @@
   let ensamZonaId = '';
   let ensamSeccionId = '';
 
+  // ========================= TIMER DEFAULTS =========================
+  const timerDefaults = new Map();
+
+  const normalizeModeloId = (value) => {
+    const num = Number(value);
+    if(!Number.isFinite(num) || num <= 0) return null;
+    return Math.trunc(num);
+  };
+
+  const refreshTimerDefaults = (payload) => {
+    timerDefaults.clear();
+    if(!Array.isArray(payload)) return;
+    payload.forEach((entry) => {
+      const modeloId = normalizeModeloId(entry?.modeloId ?? entry?.modelo_id);
+      if(!modeloId) return;
+      timerDefaults.set(modeloId, {
+        minCongelamientoSec: Number(entry?.minCongelamientoSec ?? entry?.min_congelamiento_sec ?? 0),
+        atemperamientoSec: Number(entry?.atemperamientoSec ?? entry?.atemperamiento_sec ?? 0),
+        maxSobreAtemperamientoSec: Number(entry?.maxSobreAtemperamientoSec ?? entry?.max_sobre_atemperamiento_sec ?? 0),
+        vidaCajaSec: Number(entry?.vidaCajaSec ?? entry?.vida_caja_sec ?? 0),
+        minReusoSec: Number(entry?.minReusoSec ?? entry?.min_reuso_sec ?? 0),
+        modeloNombre: entry?.modeloNombre ?? entry?.modelo_nombre ?? null
+      });
+    });
+  };
+
+  const formatMinutesLabel = (minutes) => {
+    const total = Math.max(0, Math.round(Number(minutes) || 0));
+    const hrs = Math.floor(total / 60);
+    const mins = total % 60;
+    if(hrs && mins) return `${hrs} h ${mins} min`;
+    if(hrs) return `${hrs} h`;
+    return `${mins} min`;
+  };
+
   // ========================= UTILITIES =========================
   function qs(selector){ return document.querySelector(selector); }
   function qsa(selector){ return Array.from(document.querySelectorAll(selector)); }
@@ -1049,6 +1084,7 @@
       }
       const serverNow = json.serverNow ? new Date(json.serverNow).getTime() : Date.now();
       serverNowOffsetMs = serverNow - Date.now();
+      refreshTimerDefaults(json.timerDefaults);
       cajas = Array.isArray(json.cajas) ? json.cajas.map(normalizeCajaOrders) : [];
       listoDespacho = Array.isArray(json.listoDespacho) ? json.listoDespacho.map(normalizeCajaOrders) : [];
       renderCajas();
@@ -1352,6 +1388,51 @@
       }
       const valid = Array.isArray(json?.valid) ? json.valid : [];
       let finalNegatives = await collectNegativeElapsed(valid, { forceMap: false });
+      const metaByCode = new Map();
+      valid.forEach((item)=>{
+        if(!item) return;
+        const code = String(item.rfid || '').toUpperCase();
+        if(!code) return;
+        metaByCode.set(code, {
+          rol: item.rol,
+          modeloId: normalizeModeloId(item.modeloId ?? item.modelo_id)
+        });
+      });
+      const overLimitBlocks = [];
+      if(Array.isArray(finalNegatives) && finalNegatives.length){
+        finalNegatives.forEach((entry)=>{
+          if(!entry) return;
+          const code = String(entry.rfid || '').toUpperCase();
+          if(!code) return;
+          const meta = metaByCode.get(code);
+          if(!meta || meta.rol !== 'tic') return;
+          const elapsedSec = Math.max(0, Math.floor(Number(entry.elapsed) || 0));
+          if(elapsedSec <= 0) return;
+          const modeloId = meta.modeloId;
+          if(!modeloId) return;
+          const cfg = timerDefaults.get(modeloId);
+          const maxSec = cfg ? Number(cfg.maxSobreAtemperamientoSec ?? 0) : 0;
+          if(!Number.isFinite(maxSec) || maxSec <= 0) return;
+          if(elapsedSec > maxSec){
+            overLimitBlocks.push({
+              code,
+              elapsedSec,
+              maxSec,
+              modeloNombre: cfg?.modeloNombre || null
+            });
+          }
+        });
+      }
+      if(overLimitBlocks.length){
+        const lines = overLimitBlocks.map((issue)=>{
+          const elapsedLabel = formatMinutesLabel(Math.round(issue.elapsedSec / 60));
+          const maxLabel = formatMinutesLabel(Math.round(issue.maxSec / 60));
+          const name = issue.modeloNombre ? ` (${issue.modeloNombre})` : '';
+          return `· ${issue.code}${name}: ${elapsedLabel} > máx ${maxLabel}`;
+        });
+        alert(`No es posible crear la caja porque algunos TICs superaron el tiempo máximo permitido:\n\n${lines.join('\n')}\n\nRetira esos TICs y vuelve a intentar.`);
+        return false;
+      }
       if(!finalNegatives.length) return true;
       const lines = finalNegatives.map((it)=> `${it.rfid} · ${formatNegativeElapsed(it.elapsed)}`);
       const message = `Los TICs atemperados tienen tiempo negativo desde que finalizaron el atemperamiento:\n\n${lines.join('\n')}\n\n¿Seguro que deseas crear la caja?`;
@@ -1617,10 +1698,12 @@
     const vipCount = document.getElementById('vip-count');
     const cubeCount = document.getElementById('cube-count');
     const hint = document.getElementById('scan-hint');
-  const horas = document.getElementById('ensam-hr');
+    const horas = document.getElementById('ensam-hr');
     const minutos = document.getElementById('ensam-min');
     const crearBtn = document.getElementById('btn-crear-caja');
     const limpiarBtn = document.getElementById('btn-clear-ensam');
+    const timerHintEl = document.getElementById('ensam-timer-hint');
+    const defaultTimerHint = timerHintEl ? (timerHintEl.textContent || '') : '';
   // Ordenes
   const linkOrderChk = document.getElementById('ensam-link-order');
   const orderSelect = document.getElementById('ensam-order-select');
@@ -1643,9 +1726,12 @@
   const vipSet = new Set();
   const cubeSet = new Set();
   const componentMeta = new Map();
+    const overLimitRfids = new Map();
   // Buffer de escaneos (todos los códigos escaneados pendientes/validados)
   const scannedSet = new Set();
   let _validateTimer = 0;
+    let lastDurationSuggestion = null;
+    let userDurationTouched = false;
 
     function setLocationMessage(text){ if(locationHint){ locationHint.textContent = text || ''; } }
 
@@ -1665,6 +1751,163 @@
           ensamZonaId = current.zonaId || '';
           ensamSeccionId = current.seccionId || '';
         });
+    }
+
+    const roleNames = { tic: 'TIC', vip: 'VIP', cube: 'CUBE' };
+
+    const formatRolesList = (roles) => {
+      if(!Array.isArray(roles) || !roles.length) return '';
+      const normalized = Array.from(new Set(roles.map((role) => String(role || '').toLowerCase())));
+      const display = normalized.map((role) => roleNames[role] || role.toUpperCase());
+      if(!display.length) return '';
+      if(display.length === 1) return display[0];
+      if(display.length === 2) return `${display[0]} y ${display[1]}`;
+      const last = display.pop();
+      return `${display.join(', ')} y ${last}`;
+    };
+
+    function setTimerHint(message, tone){
+      if(!timerHintEl) return;
+      const text = message || '';
+      timerHintEl.textContent = text;
+      timerHintEl.classList.remove('text-error','text-success','text-info','text-warning','opacity-60');
+      const preset = tone || 'default';
+      if(preset === 'error'){
+        timerHintEl.classList.add('text-error');
+      } else if(preset === 'success'){
+        timerHintEl.classList.add('text-success');
+      } else if(preset === 'info'){
+        timerHintEl.classList.add('text-info');
+      } else {
+        timerHintEl.classList.add('opacity-60');
+      }
+    }
+
+    const resetTimerHint = () => {
+      setTimerHint(defaultTimerHint, 'default');
+    };
+
+    function setDurationInputsFromMinutes(totalMinutes){
+      if(!horas || !minutos) return;
+      const total = Math.max(0, Math.round(Number(totalMinutes) || 0));
+      const hrs = Math.floor(total / 60);
+      const mins = total - hrs * 60;
+      horas.value = hrs > 0 ? String(hrs) : '';
+      minutos.value = String(mins);
+    }
+
+    function buildDurationSuggestion(){
+      if(componentMeta.size === 0) return null;
+      const sourcesByModelo = new Map();
+      const missingRolesSet = new Set();
+      componentMeta.forEach((meta) => {
+        if(!meta) return;
+        const modeloId = normalizeModeloId(meta.modeloId);
+        if(!modeloId){
+          if(meta.rol) missingRolesSet.add(String(meta.rol).toLowerCase());
+          return;
+        }
+        const cfg = timerDefaults.get(modeloId);
+        if(!cfg || !Number.isFinite(cfg.vidaCajaSec) || cfg.vidaCajaSec <= 0){
+          if(meta.rol) missingRolesSet.add(String(meta.rol).toLowerCase());
+          return;
+        }
+        const minutes = Math.max(1, Math.round(cfg.vidaCajaSec / 60));
+        if(!sourcesByModelo.has(modeloId)){
+          sourcesByModelo.set(modeloId, {
+            minutes,
+            rol: meta.rol,
+            litraje: meta.litraje || null,
+            modeloId,
+            modeloNombre: cfg.modeloNombre || meta.modeloNombre || null
+          });
+        }
+      });
+      const sources = Array.from(sourcesByModelo.values());
+      const missingRoles = Array.from(missingRolesSet);
+      if(!sources.length){
+        return { status: 'missing', missingRoles };
+      }
+      const minutesSet = new Set(sources.map((entry) => entry.minutes));
+      const minutesList = Array.from(minutesSet);
+      if(minutesList.length > 1){
+        return { status: 'conflict', minutesList, sources, missingRoles };
+      }
+      const minutes = minutesList[0];
+      const priority = { cube: 1, vip: 2, tic: 3 };
+      const primary = sources.slice().sort((a, b) => (priority[a.rol] || 99) - (priority[b.rol] || 99))[0] || sources[0];
+      return { status: 'ok', minutes, primary, sources, missingRoles };
+    }
+
+    function recalculateOverLimit(){
+      overLimitRfids.clear();
+      componentMeta.forEach((meta, code) => {
+        if(!meta || meta.rol !== 'tic') return;
+        const elapsed = Number(meta.atemperadoElapsedSec);
+        if(!Number.isFinite(elapsed) || elapsed <= 0) return;
+        const modeloId = normalizeModeloId(meta.modeloId);
+        if(!modeloId) return;
+        const cfg = timerDefaults.get(modeloId);
+        const maxSec = cfg ? Number(cfg.maxSobreAtemperamientoSec ?? 0) : 0;
+        if(!Number.isFinite(maxSec) || maxSec <= 0) return;
+        if(elapsed > maxSec){
+          overLimitRfids.set(code, {
+            elapsed,
+            maxSec,
+            modeloNombre: cfg?.modeloNombre || meta.modeloNombre || null,
+            litraje: meta.litraje || null
+          });
+        }
+      });
+    }
+
+    function applyDurationSuggestion(suggestion){
+      lastDurationSuggestion = suggestion;
+      if(!suggestion){
+        resetTimerHint();
+        return;
+      }
+      const status = suggestion.status;
+      if(status === 'missing'){
+        setTimerHint('Sin configuración de vida de caja para los componentes escaneados. Ingresa la duración manualmente.', 'error');
+        return;
+      }
+      if(status === 'conflict'){
+        const labels = suggestion.minutesList.map((value) => formatMinutesLabel(value)).join(' vs ');
+        setTimerHint(`Las configuraciones de vida de caja no coinciden (${labels}). Ajusta la duración manualmente.`, 'error');
+        return;
+      }
+      if(status === 'ok'){
+        if(suggestion.minutes > 0){
+          setDurationInputsFromMinutes(suggestion.minutes);
+          userDurationTouched = false;
+        }
+        const parts = [`Tiempo predeterminado: ${formatMinutesLabel(suggestion.minutes)}`];
+        if(suggestion.primary?.litraje){
+          parts.push(`Litraje ${suggestion.primary.litraje}`);
+        } else if(suggestion.primary?.modeloNombre){
+          parts.push(suggestion.primary.modeloNombre);
+        }
+        let tone = 'success';
+        if(Array.isArray(suggestion.missingRoles) && suggestion.missingRoles.length){
+          const rolesLabel = formatRolesList(suggestion.missingRoles);
+          if(rolesLabel){ parts.push(`Sin configuración para ${rolesLabel}`); }
+          tone = 'info';
+        }
+        setTimerHint(parts.join(' · '), tone);
+      } else {
+        resetTimerHint();
+      }
+      if(overLimitRfids.size){
+        const first = overLimitRfids.entries().next().value;
+        if(first){
+          const code = first[0];
+          const info = first[1];
+          const elapsedLabel = formatMinutesLabel(Math.round(Number(info.elapsed || 0) / 60));
+          const maxLabel = formatMinutesLabel(Math.round(Number(info.maxSec || 0) / 60));
+          setTimerHint(`TIC ${code} excede el máximo permitido (${elapsedLabel} > ${maxLabel}). Retíralo antes de crear la caja.`, 'error');
+        }
+      }
     }
 
 
@@ -1754,12 +1997,18 @@
         const meta = componentMeta.get(code);
         const unit = meta && meta.nombreUnidad ? meta.nombreUnidad : '';
         const unitLine = unit ? `<span class="text-[11px] leading-tight text-warning-content/80">${safeHTML(unit)}</span>` : '';
+        const overInfo = overLimitRfids.get(code);
+        const badgeClass = overInfo ? 'badge badge-error badge-xs font-mono tabular-nums' : 'badge badge-warning badge-xs font-mono tabular-nums';
+        const limitLine = overInfo
+          ? `<span class="text-[10px] text-error font-semibold leading-tight">Supera máx ${safeHTML(formatMinutesLabel(Math.round(Number(overInfo.maxSec || 0) / 60)))}</span>`
+          : '';
         return `<li class="flex items-center justify-between gap-2 text-warning">
             <span class="flex flex-col">
               <span class="font-semibold">${safeHTML(code)}</span>
               ${unitLine}
+              ${limitLine}
             </span>
-            <span class="badge badge-warning badge-xs font-mono tabular-nums" data-negative-code="${safeHTML(code)}">${formatNegativeElapsed(seconds)}</span>
+            <span class="${badgeClass}" data-negative-code="${safeHTML(code)}">${formatNegativeElapsed(seconds)}</span>
           </li>`;
       }).join('');
       negativeConsentList.innerHTML = items;
@@ -1781,9 +2030,19 @@
           const meta = componentMeta.get(code);
           const unit = meta && meta.nombreUnidad ? meta.nombreUnidad : '';
           const unitLine = unit ? `<span class="text-[10px] leading-tight text-base-content/70">${safeHTML(unit)}</span>` : '';
-          return `<li class="px-2 py-1 bg-base-200 rounded text-xs flex flex-col">
+          const overInfo = overLimitRfids.get(code);
+          const maxLabel = overInfo ? formatMinutesLabel(Math.round(Number(overInfo.maxSec || 0) / 60)) : '';
+          const elapsedLabel = overInfo ? formatMinutesLabel(Math.round(Number(overInfo.elapsed || 0) / 60)) : '';
+          const overLine = overInfo
+            ? `<span class="text-[10px] text-error font-semibold leading-tight">Supera límite: ${safeHTML(elapsedLabel)} (máx ${safeHTML(maxLabel)})</span>`
+            : '';
+          const cls = overInfo
+            ? 'px-2 py-1 rounded text-xs flex flex-col gap-1 border border-error/50 bg-error/10'
+            : 'px-2 py-1 bg-base-200 rounded text-xs flex flex-col';
+          return `<li class="${cls}">
               <span class="font-mono">${safeHTML(code)}</span>
               ${unitLine}
+              ${overLine}
             </li>`;
         }).join('');
       }
@@ -1825,11 +2084,20 @@
       const faltTic = Math.max(0, 6 - ticSet.size);
       const faltVip = Math.max(0, 1 - vipSet.size);
       const faltCube = Math.max(0, 1 - cubeSet.size);
-      if(hint) hint.textContent = compComplete() ? 'Composición completa. Indica duración y crea la caja.' : `Faltan: ${faltTic} TIC · ${faltVip} VIP · ${faltCube} CUBE`;
+      if(hint){
+        if(compComplete()){
+          hint.textContent = overLimitRfids.size
+            ? 'Retira los TICs que superaron el máximo de sobre atemperado antes de crear la caja.'
+            : 'Composición completa. Indica duración y crea la caja.';
+        } else {
+          hint.textContent = `Faltan: ${faltTic} TIC · ${faltVip} VIP · ${faltCube} CUBE`;
+        }
+      }
       if(crearBtn){
         const ready = compComplete() && durationMinutes()>0;
         const consentOk = !negativeConsentRequired || negativeConsentChecked;
-        crearBtn.disabled = !(ready && consentOk);
+        const overLimitOk = overLimitRfids.size === 0;
+        crearBtn.disabled = !(ready && consentOk && overLimitOk);
       }
       // Orden select state
       if(linkOrderChk && orderSelect){
@@ -1844,11 +2112,17 @@
       vipSet.clear();
       cubeSet.clear();
       componentMeta.clear();
+      overLimitRfids.clear();
       scannedSet.clear();
       scanProcessQueue = Promise.resolve();
       ticNegatives.clear();
       negativeConsentRequired = false;
       negativeConsentChecked = false;
+      lastDurationSuggestion = null;
+      userDurationTouched = false;
+      if(horas) horas.value = '';
+      if(minutos) minutos.value = '';
+      resetTimerHint();
       renderLists();
       renderNegativeConsent();
       updateStatus();
@@ -1914,11 +2188,15 @@
         cubeSet.clear();
         componentMeta.clear();
         roles.forEach(v=>{
-          const code=String(v.rfid||'').toUpperCase();
+          const code = String(v.rfid||'').toUpperCase();
           if(!code) return;
           const nombreUnidad = v.nombre_unidad || v.nombreUnidad || v.nombre_modelo || '';
           const litraje = v.litraje || v.litrajeValor || null;
-          componentMeta.set(code, { rol: v.rol, nombreUnidad, litraje });
+          const modeloId = normalizeModeloId(v.modeloId ?? v.modelo_id);
+          const modeloNombre = typeof v.nombre_modelo === 'string' ? v.nombre_modelo : (typeof v.modeloNombre === 'string' ? v.modeloNombre : null);
+          const elapsedRaw = Number(v.atemperadoElapsedSec ?? v.atemperado_elapsed_sec);
+          const atemperadoElapsedSec = Number.isFinite(elapsedRaw) && elapsedRaw > 0 ? Math.max(0, Math.floor(elapsedRaw)) : null;
+          componentMeta.set(code, { rol: v.rol, nombreUnidad, litraje, modeloId, modeloNombre, atemperadoElapsedSec });
           if(v.rol==='tic') ticSet.add(code);
           else if(v.rol==='vip') vipSet.add(code);
           else if(v.rol==='cube') cubeSet.add(code);
@@ -1966,15 +2244,26 @@
             console.warn('[Ensamblaje] No se pudo obtener tiempos negativos', err);
           }
         }
+        ticNegatives.forEach((seconds, code) => {
+          const meta = componentMeta.get(code);
+          if(meta){
+            const sec = Math.max(0, Math.floor(Number(seconds) || 0));
+            meta.atemperadoElapsedSec = sec;
+            componentMeta.set(code, meta);
+          }
+        });
         negativeSyncMs = Date.now();
         const negativesChanged = !mapsEqual(ticNegatives, prevNegatives);
         if(negativesChanged){
           negativeConsentChecked = false;
           negativeConsentCheckbox && (negativeConsentCheckbox.checked = false);
         }
+        recalculateOverLimit();
+        const suggestion = buildDurationSuggestion();
         renderLists();
         renderNegativeConsent();
         updateNegativeBadges();
+        applyDurationSuggestion(suggestion);
         updateStatus();
         if(msg){
           if(invalid.length){
@@ -2071,8 +2360,16 @@
         handleScan(true);
       }
     });
-    horas?.addEventListener('input', updateStatus);
-    minutos?.addEventListener('input', updateStatus);
+    horas?.addEventListener('input', ()=>{
+      userDurationTouched = true;
+      setTimerHint('Duración personalizada aplicada manualmente.', 'info');
+      updateStatus();
+    });
+    minutos?.addEventListener('input', ()=>{
+      userDurationTouched = true;
+      setTimerHint('Duración personalizada aplicada manualmente.', 'info');
+      updateStatus();
+    });
     limpiarBtn?.addEventListener('click', ()=>{ resetAll(); scanInput?.focus(); });
     crearBtn?.addEventListener('click', async ()=>{
       if(crearBtn.disabled) return;

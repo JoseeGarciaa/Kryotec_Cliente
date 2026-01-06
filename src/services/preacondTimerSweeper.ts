@@ -50,6 +50,17 @@ async function ensureTenantSetup(tenant: string): Promise<void> {
         PRIMARY KEY (rfid, section)
       )
     `);
+    await client.query(`DO $$
+    BEGIN
+      -- Drop legacy FK that blocks admin refresh routines relying on TRUNCATE
+      IF EXISTS (
+        SELECT 1 FROM pg_constraint
+         WHERE conrelid = 'preacond_item_timers'::regclass
+           AND conname = 'preacond_item_timers_rfid_fkey'
+      ) THEN
+        ALTER TABLE preacond_item_timers DROP CONSTRAINT preacond_item_timers_rfid_fkey;
+      END IF;
+    END $$;`);
     await client.query('CREATE INDEX IF NOT EXISTS preacond_item_timers_rfid_idx ON preacond_item_timers(rfid)');
     await client.query('ALTER TABLE preacond_timers ADD COLUMN IF NOT EXISTS lote text');
     await client.query('ALTER TABLE preacond_item_timers ADD COLUMN IF NOT EXISTS completed_at timestamptz');

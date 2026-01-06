@@ -52,6 +52,7 @@
   const scanStartTimer = qs('#scan-start-timer');
   const scanTimerHr = qs('#scan-timer-hr');
   const scanTimerMin = qs('#scan-timer-min');
+  const scanApplyDefault = qs('#scan-apply-default');
   const scanLoteSummary = qs('#scan-lote-summary');
   let scanMode = 'individual'; // individual | lote
   let loteDetected = null; // string | null
@@ -71,6 +72,13 @@
   const gLoteExist = qs('#gtimer-lote-exist');
   const gRfidInput = qs('#gtimer-rfid-lote');
   const gRfidStatus = qs('#gtimer-rfid-lote-status');
+  const gApplyDefault = qs('#gtimer-apply-default');
+  const gDefaultHint = qs('#gtimer-default-hint');
+  const defaultConfirmDlg = qs('#dlg-default-confirm');
+  const defaultConfirmBody = qs('#default-confirm-body');
+  const defaultConfirmApply = qs('#default-confirm-apply');
+  const defaultConfirmEmpty = qs('#default-confirm-empty');
+  const defaultConfirmMixed = qs('#default-confirm-mixed');
   let gMode = 'nuevo'; // nuevo | existente | rfid
   // We'll reuse group timer modal for per-item start
   let pendingItemStart = null; // { section, rfid }
@@ -86,6 +94,371 @@
   const ubicacionesState = { data: null, promise: null };
   let selectedZonaId = '';
   let selectedSeccionId = '';
+
+  const scanTimerHint = qs('#scan-timer-hint');
+  const defaultScanTimerHint = scanTimerHint ? (scanTimerHint.textContent || '') : '';
+  const timerDefaults = new Map();
+  const sectionRows = {
+    congelamiento: [],
+    atemperamiento: [],
+  };
+  const itemMetaByRfid = new Map();
+  let pendingDefaultOptions = [];
+  const pendingDefaultSelections = new Set();
+  let defaultConfirmMode = 'group';
+  let defaultConfirmSection = 'congelamiento';
+  let defaultConfirmLote = '';
+  let defaultConfirmResolve = null;
+  let preserveScanHint = false;
+  let pendingScanAutoBuckets = null; // [{ minutes:number, rfids:string[] }]
+  let suppressScanTimerChange = false;
+
+  const normalizeModeloId = (value)=>{
+    const num = Number(value);
+    if(!Number.isFinite(num) || num <= 0) return null;
+    return Math.trunc(num);
+  };
+
+  const refreshTimerDefaults = (payload)=>{
+    timerDefaults.clear();
+    if(!Array.isArray(payload)) return;
+    payload.forEach((entry)=>{
+      const modeloId = normalizeModeloId(entry && (entry.modeloId ?? entry.modelo_id));
+      if(!modeloId) return;
+      timerDefaults.set(modeloId, {
+        minCongelamientoSec: Number(entry.minCongelamientoSec ?? entry.min_congelamiento_sec ?? 0),
+        atemperamientoSec: Number(entry.atemperamientoSec ?? entry.atemperamiento_sec ?? 0),
+        maxSobreAtemperamientoSec: Number(entry.maxSobreAtemperamientoSec ?? entry.max_sobre_atemperamiento_sec ?? 0),
+        vidaCajaSec: Number(entry.vidaCajaSec ?? entry.vida_caja_sec ?? 0),
+        minReusoSec: Number(entry.minReusoSec ?? entry.min_reuso_sec ?? 0),
+        modeloNombre: entry.modeloNombre ?? entry.modelo_nombre ?? null,
+      });
+    });
+  };
+
+  const getDefaultMinutesFor = (section, modeloId)=>{
+    const cfg = modeloId ? timerDefaults.get(modeloId) : null;
+    if(!cfg) return null;
+    let seconds = 0;
+    if(section === 'congelamiento') seconds = cfg.minCongelamientoSec;
+    else if(section === 'atemperamiento') seconds = cfg.atemperamientoSec;
+    if(!Number.isFinite(seconds) || seconds <= 0) return null;
+    return Math.max(1, Math.round(seconds / 60));
+  };
+
+  const readMinutesFromInputs = (hoursInput, minutesInput)=>{
+    const hrs = Number(hoursInput?.value || '0');
+    const mins = Number(minutesInput?.value || '0');
+    const total = (Number.isFinite(hrs) ? hrs : 0) * 60 + (Number.isFinite(mins) ? mins : 0);
+    return total > 0 ? total : 0;
+  };
+
+  const setDurationInputs = (hoursInput, minutesInput, totalMinutes)=>{
+    if(!hoursInput || !minutesInput) return;
+    const shouldSuppress = hoursInput === scanTimerHr && minutesInput === scanTimerMin;
+    if(shouldSuppress){ suppressScanTimerChange = true; }
+    try {
+      if(totalMinutes == null || totalMinutes <= 0){
+        hoursInput.value = '';
+        minutesInput.value = '';
+        return;
+      }
+      const rounded = Math.max(0, Math.round(totalMinutes));
+      const hrs = Math.floor(rounded / 60);
+      const mins = rounded - hrs * 60;
+      hoursInput.value = hrs > 0 ? String(hrs) : '';
+      minutesInput.value = String(mins);
+    } finally {
+      if(shouldSuppress){ suppressScanTimerChange = false; }
+    }
+  };
+
+  const updateScanTimerHint = (message, tone = 'default')=>{
+    if(!scanTimerHint) return;
+    scanTimerHint.textContent = message || '';
+    scanTimerHint.classList.remove('text-error','text-info','text-success','opacity-60');
+    if(!message || tone === 'default'){
+      scanTimerHint.classList.add('opacity-60');
+      return;
+    }
+    if(tone === 'error'){
+      scanTimerHint.classList.add('text-error');
+    } else if(tone === 'success'){
+      scanTimerHint.classList.add('text-success');
+    } else {
+      scanTimerHint.classList.add('text-info');
+    }
+  };
+
+  const resetScanTimerHint = ()=>{
+    if(!scanTimerHint) return;
+    updateScanTimerHint(defaultScanTimerHint, 'default');
+  };
+
+  const registerSectionRows = (section, rows)=>{
+    sectionRows[section] = rows;
+    rows.forEach((row)=>{
+      if(!row || !row.rfid) return;
+      const key = String(row.rfid).toUpperCase();
+      itemMetaByRfid.set(key, {
+        section,
+        modeloId: normalizeModeloId(row.modelo_id ?? row.modeloId),
+        modeloNombre: typeof row.nombre_modelo === 'string' ? row.nombre_modelo : (typeof row.modeloNombre === 'string' ? row.modeloNombre : null),
+        nombreUnidad: typeof row.nombre_unidad === 'string' ? row.nombre_unidad : null,
+      });
+    });
+  };
+
+  const findModeloIdForGroup = ()=>{
+    const section = currentSectionForModal === 'atemperamiento' ? 'atemperamiento' : 'congelamiento';
+    if(pendingItemStart && pendingItemStart.rfid){
+      const meta = itemMetaByRfid.get(String(pendingItemStart.rfid).toUpperCase());
+      if(meta && meta.modeloId) return meta.modeloId;
+    }
+    if(gMode === 'existente'){
+      const selectedLote = (gLoteExist?.value || '').trim();
+      if(selectedLote){
+        const match = (sectionRows[section] || []).find((row)=> String(row.lote || '').trim() === selectedLote);
+        const modeloId = normalizeModeloId(match && (match.modelo_id ?? match.modeloId));
+        if(modeloId) return modeloId;
+      }
+    }
+    if(gMode === 'rfid'){
+      const targetRfid = (gRfidInput?.value || '').trim().toUpperCase();
+      if(targetRfid){
+        const meta = itemMetaByRfid.get(targetRfid);
+        if(meta && meta.modeloId) return meta.modeloId;
+      }
+      const derivedLote = gRfidInput?.getAttribute('data-derived-lote') || '';
+      if(derivedLote){
+        const match = (sectionRows[section] || []).find((row)=> String(row.lote || '').trim() === derivedLote);
+        const modeloId = normalizeModeloId(match && (match.modelo_id ?? match.modeloId));
+        if(modeloId) return modeloId;
+      }
+    }
+    const candidates = sectionRows[section] || [];
+    for(const row of candidates){
+      const modeloId = normalizeModeloId(row && (row.modelo_id ?? row.modeloId));
+      if(modeloId) return modeloId;
+    }
+    return null;
+  };
+
+  const clearGroupDefaultHint = ()=>{
+    if(!gDefaultHint) return;
+    gDefaultHint.textContent = '';
+    gDefaultHint.classList.add('hidden');
+    gDefaultHint.classList.remove('text-error');
+  };
+
+  const showGroupDefaultHint = (text, tone)=>{
+    if(!gDefaultHint) return;
+    gDefaultHint.textContent = text;
+    gDefaultHint.classList.remove('hidden');
+    if(tone === 'error'){ gDefaultHint.classList.add('text-error'); }
+    else { gDefaultHint.classList.remove('text-error'); }
+  };
+
+  const applyGroupTimerDefaults = (force)=>{
+    if(!gHr || !gMin) return false;
+    clearGroupDefaultHint();
+    if(!force){
+      const current = readMinutesFromInputs(gHr, gMin);
+      if(current > 0) return false;
+    }
+    const modeloId = findModeloIdForGroup();
+    const minutes = modeloId ? getDefaultMinutesFor(currentSectionForModal, modeloId) : null;
+    if(minutes != null){
+      setDurationInputs(gHr, gMin, minutes);
+      const cfg = modeloId ? timerDefaults.get(modeloId) : null;
+      const modelName = cfg && cfg.modeloNombre ? ` (${cfg.modeloNombre})` : '';
+      showGroupDefaultHint(`Predeterminado${modelName}: ${minutes} min`, 'info');
+      return true;
+    }
+    if(force){
+      showGroupDefaultHint('No hay tiempo predeterminado disponible para este grupo.', 'error');
+    }
+    return false;
+  };
+
+  const collectEligibleRfidsForModal = ()=>{
+    const section = currentSectionForModal === 'atemperamiento' ? 'atemperamiento' : 'congelamiento';
+    if(pendingItemStart && pendingItemStart.rfid){
+      const single = String(pendingItemStart.rfid || '').trim();
+      return single ? [single] : [];
+    }
+    const tbody = section === 'congelamiento' ? tableCongBody : tableAtemBody;
+    const rows = Array.from(tbody?.querySelectorAll('tr') || []);
+    const rfids = [];
+    if(preselectedRfids && section === 'atemperamiento'){
+      const set = new Set(preselectedRfids.map((c)=>String(c||'').trim()));
+      rows.forEach((tr)=>{
+        const tds = tr.querySelectorAll('td');
+        if(!tds || tds.length === 1) return;
+        const code = tds[0].textContent?.trim();
+        if(!code || !set.has(code)) return;
+        const hasActive = tr.hasAttribute('data-timer-started');
+        const completed = tr.getAttribute('data-completed') === '1';
+        if(!hasActive && !completed) rfids.push(code);
+      });
+      return Array.from(new Set(rfids.map((c)=>String(c||'').trim()).filter(Boolean)));
+    }
+    if(gMode !== 'nuevo'){
+      let lote = '';
+      if(gMode === 'existente'){
+        lote = (gLoteExist?.value || '').trim();
+      } else if(gMode === 'rfid'){
+        lote = (gRfidInput?.getAttribute('data-derived-lote') || '').trim();
+      }
+      const directRfid = gMode === 'rfid' ? (gRfidInput?.value || '').trim().toUpperCase() : '';
+      rows.forEach((tr)=>{
+        const tds = tr.querySelectorAll('td');
+        if(!tds || tds.length === 1) return;
+        const rfid = tds[0].textContent?.trim();
+        const trLote = (tds[2]?.textContent || '').trim();
+        const hasActive = tr.hasAttribute('data-timer-started');
+        const completed = tr.getAttribute('data-completed') === '1';
+        if(!rfid || hasActive || completed) return;
+        if(gMode === 'rfid'){
+          if(rfid === directRfid || (lote && trLote === lote)) rfids.push(rfid);
+        } else if(lote && trLote === lote){
+          rfids.push(rfid);
+        }
+      });
+      return Array.from(new Set(rfids.map((c)=>String(c||'').trim()).filter(Boolean)));
+    }
+    rows.forEach((tr)=>{
+      const tds = tr.querySelectorAll('td');
+      if(!tds || tds.length === 1) return;
+      const rfid = tds[0].textContent?.trim();
+      const hasActive = tr.hasAttribute('data-timer-started');
+      const hasLote = tr.getAttribute('data-has-lote') === '1';
+      const completed = tr.getAttribute('data-completed') === '1';
+      if(rfid && !hasActive && !hasLote && !completed){
+        rfids.push(rfid);
+      }
+    });
+    return Array.from(new Set(rfids.map((c)=>String(c||'').trim()).filter(Boolean)));
+  };
+
+  const resolveCurrentLoteValue = ()=>{
+    let loteInput = (gLote?.value||'').trim();
+    if(gModesBox && !gModesBox.classList.contains('hidden')){
+      if(gMode==='existente'){
+        return (gLoteExist?.value||'').trim();
+      }
+      if(gMode==='rfid'){
+        const derived = gRfidInput?.getAttribute('data-derived-lote') || '';
+        return derived.trim();
+      }
+      if(gMode==='nuevo'){
+        return '';
+      }
+    }
+    return loteInput;
+  };
+
+  const buildDefaultOptions = (rfidList, section)=>{
+    const uniqueRfids = Array.from(new Set((rfidList || []).map((c)=>String(c||'').toUpperCase()).filter(Boolean)));
+    if(!uniqueRfids.length) return { options: [], hasDefaults: false };
+    const map = new Map();
+    uniqueRfids.forEach((code)=>{
+      const meta = itemMetaByRfid.get(code);
+      const modeloId = meta?.modeloId || null;
+      const minutesRaw = modeloId ? getDefaultMinutesFor(section, modeloId) : null;
+      const minutes = minutesRaw != null && Number.isFinite(minutesRaw) && minutesRaw > 0 ? minutesRaw : null;
+      const unidadRaw = typeof meta?.nombreUnidad === 'string' ? meta.nombreUnidad.trim() : '';
+      const modeloNombre = typeof meta?.modeloNombre === 'string' ? meta.modeloNombre : '';
+      const label = unidadRaw || modeloNombre || code;
+      const key = `${modeloId ?? 'none'}::${label.toLowerCase()}`;
+      if(!map.has(key)){
+        map.set(key, {
+          key,
+          modeloId,
+          modeloNombre,
+          unidadLabel: label,
+          minutes,
+          count: 0,
+          rfids: [],
+        });
+      }
+      const bucket = map.get(key);
+      bucket.count += 1;
+      if(minutes != null){ bucket.minutes = minutes; }
+      if(!bucket.rfids.includes(code)) bucket.rfids.push(code);
+    });
+    const options = Array.from(map.values()).sort((a,b)=> b.count - a.count);
+    const hasDefaults = options.some((opt)=> opt.minutes != null);
+    return { options, hasDefaults };
+  };
+
+  const applyScanTimerDefaults = (force)=>{
+    if(target !== 'atemperamiento' || !scanStartTimer || !scanStartTimer.checked) return;
+    if(!force){
+      const current = readMinutesFromInputs(scanTimerHr, scanTimerMin);
+      if(current > 0 && !Array.isArray(pendingScanAutoBuckets)) return;
+    }
+    const normalizedRfids = Array.from(new Set(valid.map((code)=>String(code||'').toUpperCase()).filter(Boolean)));
+    if(!normalizedRfids.length){
+      pendingScanAutoBuckets = null;
+      preserveScanHint = false;
+      resetScanTimerHint();
+      return;
+    }
+    const { options, hasDefaults } = buildDefaultOptions(normalizedRfids, 'atemperamiento');
+    if(!hasDefaults){
+      pendingScanAutoBuckets = null;
+      preserveScanHint = false;
+      resetScanTimerHint();
+      return;
+    }
+    const buckets = options
+      .filter((opt)=>Number.isFinite(opt.minutes) && opt.minutes > 0 && Array.isArray(opt.rfids) && opt.rfids.length)
+      .map((opt)=>({
+        minutes: opt.minutes,
+        rfids: Array.from(new Set(opt.rfids.map((code)=>String(code||'').toUpperCase()).filter(Boolean))),
+        unidadLabel: opt.unidadLabel,
+        modeloNombre: opt.modeloNombre,
+      }));
+    if(!buckets.length){
+      pendingScanAutoBuckets = null;
+      preserveScanHint = false;
+      resetScanTimerHint();
+      return;
+    }
+    pendingScanAutoBuckets = buckets;
+    preserveScanHint = true;
+    if(buckets.length === 1){
+      const chosen = buckets[0];
+      setDurationInputs(scanTimerHr, scanTimerMin, chosen.minutes);
+      const label = chosen.unidadLabel || chosen.modeloNombre || 'Config';
+      updateScanTimerHint(`Aplicado predeterminado: ${chosen.minutes} min (${label})`, 'info');
+    } else {
+      if(scanTimerHr) scanTimerHr.value = '';
+      if(scanTimerMin) scanTimerMin.value = '';
+      const totalBuckets = buckets.length;
+      updateScanTimerHint(`Se iniciarán ${totalBuckets} cronómetros predeterminados al confirmar.`, 'info');
+    }
+  };
+
+  if(scanStartTimer){
+    scanStartTimer.addEventListener('change', ()=>{
+      if(scanStartTimer.checked){
+        applyScanTimerDefaults(false);
+      } else {
+        resetScanTimerHint();
+      }
+    });
+  }
+
+  const handleScanTimerManualInput = ()=>{
+    if(suppressScanTimerChange) return;
+    pendingScanAutoBuckets = null;
+    preserveScanHint = false;
+    resetScanTimerHint();
+  };
+  scanTimerHr?.addEventListener('input', handleScanTimerManualInput);
+  scanTimerMin?.addEventListener('input', handleScanTimerManualInput);
 
   function setLocationMessage(text){ if(locationHint){ locationHint.textContent = text || ''; } }
 
@@ -289,15 +662,29 @@
       setSpin('cong', true); setSpin('atem', true);
       const r = await fetch('/operacion/preacond/data', { headers: { 'Accept':'application/json' } });
       const j = await r.json();
-  const serverNow = new Date(j.now).getTime();
+      const serverNow = new Date(j.now).getTime();
   // Offset = serverNow - clientNow; to get current server time later: Date.now() + offset
   serverNowOffsetMs = serverNow - Date.now();
-  render(tableCongBody, j.congelamiento, 'No hay TICs en congelamiento', 'congelamiento');
-  render(tableAtemBody, j.atemperamiento, 'No hay TICs en atemperamiento', 'atemperamiento');
-  renderLotes(lotesCong, j.congelamiento, 'congelamiento');
-  renderLotes(lotesAtem, j.atemperamiento, 'atemperamiento');
-  const nCong = j.congelamiento.length;
-  const nAtem = j.atemperamiento.length;
+  const normalizeSectionRow = (row)=>{
+        const modeloId = normalizeModeloId(row && (row.modelo_id ?? row.modeloId));
+        return {
+          ...row,
+          modelo_id: modeloId,
+          nombre_modelo: typeof row?.nombre_modelo === 'string' ? row.nombre_modelo : (typeof row?.modeloNombre === 'string' ? row.modeloNombre : null),
+        };
+      };
+      const congelamientoRows = Array.isArray(j.congelamiento) ? j.congelamiento.map(normalizeSectionRow) : [];
+      const atemperamientoRows = Array.isArray(j.atemperamiento) ? j.atemperamiento.map(normalizeSectionRow) : [];
+      itemMetaByRfid.clear();
+      registerSectionRows('congelamiento', congelamientoRows);
+      registerSectionRows('atemperamiento', atemperamientoRows);
+      refreshTimerDefaults(j.timerDefaults);
+  render(tableCongBody, congelamientoRows, 'No hay TICs en congelamiento', 'congelamiento');
+  render(tableAtemBody, atemperamientoRows, 'No hay TICs en atemperamiento', 'atemperamiento');
+  renderLotes(lotesCong, congelamientoRows, 'congelamiento');
+  renderLotes(lotesAtem, atemperamientoRows, 'atemperamiento');
+  const nCong = congelamientoRows.length;
+  const nAtem = atemperamientoRows.length;
   countCong.textContent = `(${nCong} de ${nCong})`;
   countAtem.textContent = `(${nAtem} de ${nAtem})`;
   if(qtyCongEl) qtyCongEl.textContent = String(nCong);
@@ -307,6 +694,8 @@
   setupSectionTimer('atemperamiento', j.timers?.atemperamiento || null);
   if(timerCongEl) timerCongEl.textContent = '';
   if(timerAtemEl) timerAtemEl.textContent = '';
+  if(gDlg?.open){ applyGroupTimerDefaults(false); }
+  if(dlg?.open){ applyScanTimerDefaults(false); }
   }catch(e){ console.error(e); }
   finally{ setSpin('cong', false); setSpin('atem', false); firstLoad=false; }
   }
@@ -459,6 +848,12 @@
           ${controls}
         </td>`;
       tr.setAttribute('data-has-lote', (r.lote && String(r.lote).trim()) ? '1' : '0');
+      const modeloAttr = normalizeModeloId(r && (r.modelo_id ?? r.modeloId));
+      if(modeloAttr){ tr.setAttribute('data-modelo-id', String(modeloAttr)); }
+      else { tr.removeAttribute('data-modelo-id'); }
+      const modeloNombre = typeof r?.nombre_modelo === 'string' ? r.nombre_modelo : (typeof r?.modeloNombre === 'string' ? r.modeloNombre : '');
+      if(modeloNombre){ tr.setAttribute('data-modelo-nombre', modeloNombre); }
+      else { tr.removeAttribute('data-modelo-nombre'); }
       tr.setAttribute('data-timer-id', timerId);
       if(active){
         tr.setAttribute('data-item-duration', String(duration));
@@ -664,6 +1059,13 @@
     chipsBox.innerHTML = items || '<div class="opacity-60 text-sm">Sin RFIDs</div>';
     if(scanCount){ scanCount.textContent = String(uniqueValid.length); }
     btnConfirm.disabled = uniqueValid.length === 0;
+    if(target === 'atemperamiento'){
+      if(uniqueValid.length){
+        applyScanTimerDefaults(false);
+      } else {
+        resetScanTimerHint();
+      }
+    }
   }
 
   function addCode(chunk){
@@ -693,13 +1095,14 @@
   validMeta.clear();
   const normalizedOk = ok.map((entry)=>{
     if(typeof entry === 'string'){
-      return { rfid: entry.toUpperCase(), nombre_unidad: '', nombre_modelo: '' };
+      return { rfid: entry.toUpperCase(), nombre_unidad: '', nombre_modelo: '', modeloId: null };
     }
     const rfid = typeof entry?.rfid === 'string' ? entry.rfid.toUpperCase() : '';
     return {
       rfid,
       nombre_unidad: typeof entry?.nombre_unidad === 'string' ? entry.nombre_unidad : '',
-      nombre_modelo: typeof entry?.nombre_modelo === 'string' ? entry.nombre_modelo : ''
+      nombre_modelo: typeof entry?.nombre_modelo === 'string' ? entry.nombre_modelo : '',
+      modeloId: normalizeModeloId(entry?.modelo_id ?? entry?.modeloId)
     };
   }).filter(item=>item.rfid);
   normalizedOk.forEach((item)=>{ validMeta.set(item.rfid, item); });
@@ -763,7 +1166,8 @@
         validMeta.set(normalizedCode, {
           rfid: normalizedCode,
           nombre_unidad: typeof loteEntry.nombre_unidad === 'string' ? loteEntry.nombre_unidad : '',
-          nombre_modelo: typeof loteEntry.nombre_modelo === 'string' ? loteEntry.nombre_modelo : ''
+          nombre_modelo: typeof loteEntry.nombre_modelo === 'string' ? loteEntry.nombre_modelo : '',
+          modeloId: normalizeModeloId(loteEntry?.modelo_id ?? loteEntry?.modeloId)
         });
       }
       renderChips(); msg.textContent='';
@@ -851,6 +1255,7 @@
       attempt = await sendRequest(true);
     }
 
+    const manualScanDuration = readMinutesFromInputs(scanTimerHr, scanTimerMin);
     const result = attempt.data || { ok:false };
     if(!result.ok){ msg.textContent = result.error || 'Error al confirmar'; return; }
     dlg?.close?.();
@@ -859,16 +1264,48 @@
     const movedRfids = Array.isArray(result.moved)? result.moved.slice():[];
     if(wantTimer && movedRfids.length){
       await loadData(); // refrescar antes de calcular sin lote
-      // Duración
-      const hours = Number(scanTimerHr?.value||'0');
-      const minutes = Number(scanTimerMin?.value||'0');
-      let totalMinutes = (isFinite(hours)?Math.max(0,hours):0)*60 + (isFinite(minutes)?Math.max(0,minutes):0);
+      const normalizedRfids = Array.from(new Set(movedRfids.map((code)=>String(code||'').toUpperCase()).filter(Boolean)));
+      const storedBuckets = Array.isArray(pendingScanAutoBuckets) ? pendingScanAutoBuckets.slice() : [];
+      pendingScanAutoBuckets = null;
+      if(storedBuckets.length){
+        const normalizedSet = new Set(normalizedRfids);
+        const bucketsToRun = storedBuckets.map((bucket)=>({
+          minutes: bucket.minutes,
+          rfids: Array.isArray(bucket.rfids) ? bucket.rfids.filter((code)=>normalizedSet.has(code)) : [],
+        })).filter((bucket)=>Number.isFinite(bucket.minutes) && bucket.minutes > 0 && bucket.rfids.length);
+        if(bucketsToRun.length){
+          try {
+            for(const bucket of bucketsToRun){
+              await startSectionTimer('atemperamiento', '', bucket.minutes, bucket.rfids);
+            }
+            preselectedRfids = null;
+            preserveScanHint = false;
+            resetScanTimerHint();
+            return;
+          } catch(err){
+            console.error('[Preacond] Error iniciando cronómetros desde selección manual', err);
+          }
+        }
+      }
+      const manualMinutes = manualScanDuration;
+      const { options, hasDefaults } = buildDefaultOptions(normalizedRfids, 'atemperamiento');
+      const shouldPromptDefaults = manualMinutes <= 0 && hasDefaults && options.length;
+      if(shouldPromptDefaults){
+        preselectedRfids = normalizedRfids;
+        const opened = openGroupDefaultDialog('scan-auto', { section: 'atemperamiento', rfids: normalizedRfids, options, hasDefaults });
+        if(opened){ return; }
+      }
+      // Duración manual (fallback)
+      let totalMinutes = manualMinutes;
+      if(totalMinutes<=0){
+        totalMinutes = 0;
+      }
       if(totalMinutes<=0){ totalMinutes = 30; } // fallback
-      // El cronómetro agrupa los recién movidos; el backend asignará un nuevo lote a quienes no lo tengan
-      await startSectionTimer('atemperamiento', '', totalMinutes, movedRfids);
-    } else {
-      await loadData();
+      await startSectionTimer('atemperamiento', '', totalMinutes, normalizedRfids);
+      preselectedRfids = null;
+      return;
     }
+    await loadData();
   });
 
   // Openers from dropdowns
@@ -896,6 +1333,7 @@
   if(gLote) gLote.value = '';
   if(gHr) gHr.value = '';
   if(gMin) gMin.value = '';
+    clearGroupDefaultHint();
     if(gModesBox){
       // Always visible for both sections now
       gModesBox.classList.remove('hidden');
@@ -938,24 +1376,15 @@
   if(gLote){ gLote.disabled = true; gLote.readOnly = true; }
     }
     gDlg?.showModal?.();
-    setTimeout(()=>gLote?.focus?.(), 50);
+    applyGroupTimerDefaults(false);
+    setTimeout(()=>{
+      gLote?.focus?.();
+    }, 50);
   }
 
   gConfirm?.addEventListener('click', async ()=>{
-    // Determine lote based on mode
-    let loteInput = (gLote?.value||'').trim();
-    if(gModesBox && !gModesBox.classList.contains('hidden')){
-      if(gMode==='existente'){
-        loteInput = (gLoteExist?.value||'').trim();
-      } else if(gMode==='rfid'){
-        const dLote = gRfidInput?.getAttribute('data-derived-lote') || '';
-        loteInput = dLote.trim();
-      } else if(gMode==='nuevo') {
-        // Force empty to trigger autogeneración backend
-        loteInput = '';
-      }
-    }
-    const lote = loteInput;
+    // Determine lote based on modo actual
+    const lote = resolveCurrentLoteValue();
     const hours = Number(gHr?.value||'0');
     const minutes = Number(gMin?.value||'0');
     const totalMinutes = (isFinite(hours)?Math.max(0,hours):0)*60 + (isFinite(minutes)?Math.max(0,minutes):0);
@@ -979,46 +1408,8 @@
       return;
     }
     // Collect RFIDs (considerar preseleccionados)
-    let rfids = [];
     const sectionLabel = currentSectionForModal==='congelamiento' ? 'Congelamiento' : 'Atemperamiento';
-    if(preselectedRfids && currentSectionForModal==='atemperamiento'){
-      const set = new Set(preselectedRfids);
-      const tbody = currentSectionForModal==='congelamiento' ? tableCongBody : tableAtemBody;
-      Array.from(tbody?.querySelectorAll('tr')||[]).forEach(tr=>{
-        const tds = tr.querySelectorAll('td');
-        if(!tds || tds.length===1) return;
-        const code = tds[0].textContent?.trim();
-        if(code && set.has(code)){
-          const hasActive = tr.hasAttribute('data-timer-started');
-          const completed = tr.getAttribute('data-completed') === '1';
-          if(!hasActive && !completed) rfids.push(code);
-        }
-      });
-    } else {
-      const tbody = currentSectionForModal==='congelamiento' ? tableCongBody : tableAtemBody;
-      const rows = Array.from(tbody?.querySelectorAll('tr')||[]);
-      if(gMode!=='nuevo'){
-        rows.forEach(tr=>{
-          const tds = tr.querySelectorAll('td');
-          if(!tds || tds.length===1) return;
-          const rfid = tds[0].textContent?.trim();
-          const trLote = (tds[2].textContent||'').trim();
-          const hasActive = tr.hasAttribute('data-timer-started');
-          const completed = tr.getAttribute('data-completed') === '1';
-          if(rfid && trLote === lote && !hasActive && !completed) rfids.push(rfid);
-        });
-      } else {
-        rfids = rows.map(tr=>{
-          const tds = tr.querySelectorAll('td');
-          if(!tds || tds.length===1) return null;
-          const rfid = tds[0].textContent?.trim();
-          const hasActive = tr.hasAttribute('data-timer-started');
-          const hasLote = tr.getAttribute('data-has-lote') === '1';
-          const completed = tr.getAttribute('data-completed') === '1';
-          return (!hasActive && !hasLote && !completed) ? rfid : null;
-        }).filter(Boolean);
-      }
-    }
+    const rfids = collectEligibleRfidsForModal();
     if(!rfids.length){
       if(gMsg){
         gMsg.textContent = `No hay TICs disponibles en ${sectionLabel} para iniciar este cronómetro.`;
@@ -1041,9 +1432,278 @@
   qs('#gtimer-existente-box')?.classList.toggle('hidden', gMode!=='existente');
   qs('#gtimer-rfid-box')?.classList.toggle('hidden', gMode!=='rfid');
   if(gLote){ gLote.disabled = true; }
+        clearGroupDefaultHint();
+        applyGroupTimerDefaults(false);
       }
     });
   }
+
+  gHr?.addEventListener('input', clearGroupDefaultHint);
+  gMin?.addEventListener('input', clearGroupDefaultHint);
+
+  const rebuildDefaultConfirmTable = ()=>{
+    if(!defaultConfirmBody) return;
+    defaultConfirmBody.innerHTML = '';
+    pendingDefaultSelections.clear();
+    if(defaultConfirmApply){ defaultConfirmApply.disabled = true; }
+    let hasSelectable = false;
+    pendingDefaultOptions.forEach((opt)=>{
+      const hasDefault = Number.isFinite(opt.minutes) && opt.minutes > 0;
+      const row = document.createElement('tr');
+
+      const cellToggle = document.createElement('td');
+      if(hasDefault){
+        const input = document.createElement('input');
+        input.type = 'checkbox';
+        input.name = 'default-option';
+        input.value = opt.key;
+        input.className = 'checkbox checkbox-xs';
+        input.checked = true;
+        cellToggle.appendChild(input);
+        pendingDefaultSelections.add(opt.key);
+        hasSelectable = true;
+      } else {
+        const span = document.createElement('span');
+        span.className = 'text-[10px] opacity-40';
+        span.textContent = '—';
+        cellToggle.appendChild(span);
+      }
+      row.appendChild(cellToggle);
+
+      const cellLabel = document.createElement('td');
+      const mainLabel = document.createElement('div');
+      mainLabel.className = 'font-semibold text-xs';
+      mainLabel.textContent = opt.unidadLabel || opt.modeloNombre || 'Sin identificar';
+      cellLabel.appendChild(mainLabel);
+      if(opt.modeloNombre){
+        const sub = document.createElement('div');
+        sub.className = 'text-[10px] opacity-60';
+        sub.textContent = opt.modeloNombre;
+        cellLabel.appendChild(sub);
+      }
+      row.appendChild(cellLabel);
+
+      const cellCount = document.createElement('td');
+      cellCount.className = 'text-right text-xs';
+      cellCount.textContent = String(opt.count);
+      row.appendChild(cellCount);
+
+      const cellMinutes = document.createElement('td');
+      cellMinutes.className = 'text-right text-xs';
+      cellMinutes.textContent = hasDefault ? `${opt.minutes} min` : '—';
+      row.appendChild(cellMinutes);
+
+      defaultConfirmBody.appendChild(row);
+    });
+    if(defaultConfirmApply){ defaultConfirmApply.disabled = !hasSelectable; }
+  };
+
+  defaultConfirmBody?.addEventListener('change', (e)=>{
+    const t = e.target;
+    if(!(t instanceof HTMLInputElement) || t.name !== 'default-option') return;
+    if(t.checked){
+      pendingDefaultSelections.add(t.value);
+    } else {
+      pendingDefaultSelections.delete(t.value);
+    }
+    if(defaultConfirmApply){ defaultConfirmApply.disabled = pendingDefaultSelections.size === 0; }
+  });
+
+  const openGroupDefaultDialog = (mode = 'group', opts = {})=>{
+    const section = typeof opts.section === 'string' ? opts.section : currentSectionForModal;
+    currentSectionForModal = section === 'congelamiento' ? 'congelamiento' : 'atemperamiento';
+    const sectionLabel = currentSectionForModal === 'congelamiento' ? 'Congelamiento' : 'Atemperamiento';
+    preserveScanHint = false;
+    pendingScanAutoBuckets = null;
+    if(mode === 'group'){
+      clearGroupDefaultHint();
+    } else if(mode.startsWith('scan')){
+      resetScanTimerHint();
+    }
+    const sourceRfids = Array.isArray(opts.rfids) ? opts.rfids : collectEligibleRfidsForModal();
+    const normalizedRfids = Array.from(new Set((sourceRfids || []).map((code)=>String(code||'').toUpperCase()).filter(Boolean)));
+    if(!normalizedRfids.length){
+      if(mode === 'group'){
+        if(gMsg){
+          gMsg.textContent = `No hay TICs disponibles en ${sectionLabel} para calcular predeterminados.`;
+          gMsg.classList.remove('text-success');
+          gMsg.classList.add('text-warning');
+        }
+        showGroupDefaultHint('Selecciona TICs válidas antes de usar el tiempo predeterminado.', 'error');
+      } else {
+        updateScanTimerHint('Escanea TICs válidas antes de usar el tiempo predeterminado.', 'error');
+      }
+      return false;
+    }
+    let options = Array.isArray(opts.options) ? opts.options : null;
+    let hasDefaults = false;
+    if(options){
+      hasDefaults = typeof opts.hasDefaults === 'boolean' ? opts.hasDefaults : options.some((opt)=>opt && opt.minutes != null);
+    } else {
+      const built = buildDefaultOptions(normalizedRfids, currentSectionForModal);
+      options = built.options;
+      hasDefaults = built.hasDefaults;
+    }
+    if(!options.length){
+      if(mode === 'group'){
+        showGroupDefaultHint('No se encontraron tiempos predeterminados configurados.', 'error');
+      } else {
+        updateScanTimerHint('No se encontraron tiempos predeterminados configurados.', 'error');
+      }
+      return false;
+    }
+    defaultConfirmMode = mode;
+    defaultConfirmSection = currentSectionForModal;
+    if(mode === 'group'){
+      defaultConfirmLote = resolveCurrentLoteValue();
+    } else if(mode === 'scan-auto'){
+      defaultConfirmLote = typeof opts.lote === 'string' ? opts.lote : '';
+    } else {
+      defaultConfirmLote = '';
+    }
+    pendingDefaultOptions = options;
+    if(defaultConfirmEmpty){ defaultConfirmEmpty.classList.toggle('hidden', hasDefaults); }
+    if(defaultConfirmMixed){ defaultConfirmMixed.classList.toggle('hidden', options.length <= 1); }
+    rebuildDefaultConfirmTable();
+    defaultConfirmResolve = null;
+    if(!hasDefaults){
+      if(mode === 'group'){
+        showGroupDefaultHint('Las configuraciones seleccionadas no tienen tiempos predeterminados.', 'error');
+      } else {
+        updateScanTimerHint('Las configuraciones seleccionadas no tienen tiempos predeterminados.', 'error');
+      }
+    }
+    defaultConfirmDlg?.showModal?.();
+    return true;
+  };
+
+  gApplyDefault?.addEventListener('click', ()=>openGroupDefaultDialog('group'));
+
+  scanApplyDefault?.addEventListener('click', ()=>{
+    if(target !== 'atemperamiento'){ return; }
+    if(scanStartTimer && !scanStartTimer.checked){
+      scanStartTimer.checked = true;
+    }
+    const uniqueValid = Array.from(new Set(valid.map((code)=>String(code||'').toUpperCase()).filter(Boolean)));
+    if(!uniqueValid.length){
+      updateScanTimerHint('Escanea TICs válidas antes de usar el tiempo predeterminado.', 'error');
+      return;
+    }
+    openGroupDefaultDialog('scan-select', { section: 'atemperamiento', rfids: uniqueValid });
+  });
+
+  defaultConfirmDlg?.addEventListener('close', ()=>{
+    const mode = typeof defaultConfirmMode === 'string' ? defaultConfirmMode : 'group';
+    pendingDefaultOptions = [];
+    pendingDefaultSelections.clear();
+    if(defaultConfirmApply){ defaultConfirmApply.disabled = true; }
+    preselectedRfids = null;
+    const keepScanBuckets = mode.startsWith('scan') && preserveScanHint && Array.isArray(pendingScanAutoBuckets) && pendingScanAutoBuckets.length;
+    if(mode.startsWith('scan')){
+      if(!preserveScanHint){ resetScanTimerHint(); }
+      if(!keepScanBuckets){ pendingScanAutoBuckets = null; }
+    } else {
+      pendingScanAutoBuckets = null;
+      preserveScanHint = false;
+    }
+    if(!keepScanBuckets){ preserveScanHint = false; }
+    defaultConfirmMode = 'group';
+  });
+
+  defaultConfirmApply?.addEventListener('click', async ()=>{
+    if(!pendingDefaultSelections.size) return;
+    const selected = pendingDefaultOptions.filter(opt=>pendingDefaultSelections.has(opt.key));
+    const valid = selected.filter(opt=>opt.minutes != null && Array.isArray(opt.rfids) && opt.rfids.length);
+    if(!valid.length){
+      if(defaultConfirmMode === 'group'){
+        showGroupDefaultHint('Selecciona al menos un tiempo predeterminado válido.', 'error');
+      } else {
+        updateScanTimerHint('Selecciona al menos un tiempo predeterminado válido.', 'error');
+      }
+      return;
+    }
+    const section = defaultConfirmSection || currentSectionForModal;
+    if(defaultConfirmMode === 'scan-select'){
+      if(scanStartTimer){ scanStartTimer.checked = true; }
+      pendingScanAutoBuckets = valid.map((bucket)=>({
+        minutes: bucket.minutes,
+        rfids: Array.isArray(bucket.rfids)
+          ? Array.from(new Set(bucket.rfids.map((code)=>String(code||'').toUpperCase()).filter(Boolean)))
+          : [],
+        unidadLabel: bucket.unidadLabel,
+        modeloNombre: bucket.modeloNombre,
+      })).filter((bucket)=>bucket.minutes != null && bucket.rfids.length);
+      if(!pendingScanAutoBuckets.length){
+        updateScanTimerHint('No se encontraron TICs elegibles para iniciar con tiempos predeterminados.', 'error');
+        pendingScanAutoBuckets = null;
+        return;
+      }
+      if(pendingScanAutoBuckets.length === 1){
+        setDurationInputs(scanTimerHr, scanTimerMin, pendingScanAutoBuckets[0].minutes);
+      }
+      const summaryMsg = pendingScanAutoBuckets.length === 1
+        ? `Se iniciará el cronómetro (${pendingScanAutoBuckets[0].minutes} min) para ${pendingScanAutoBuckets[0].unidadLabel || pendingScanAutoBuckets[0].modeloNombre || 'Config'} al confirmar.`
+        : `Se iniciarán ${pendingScanAutoBuckets.length} cronómetros predeterminados al confirmar.`;
+      updateScanTimerHint(summaryMsg, 'info');
+      preserveScanHint = true;
+      defaultConfirmDlg?.close?.();
+      return;
+    }
+    if(valid.length === 1){
+      const chosen = valid[0];
+      if(defaultConfirmMode === 'scan-auto'){
+        try {
+          if(defaultConfirmApply){ defaultConfirmApply.disabled = true; }
+          await startSectionTimer(section, defaultConfirmLote || '', chosen.minutes, chosen.rfids);
+          pendingDefaultSelections.clear();
+          defaultConfirmDlg?.close?.();
+          gDlg?.close?.();
+        } catch(err){
+          console.error('[Preacond] Error aplicando tiempo predeterminado automático', err);
+          updateScanTimerHint('No se pudo iniciar el cronómetro predeterminado.', 'error');
+        } finally {
+          preselectedRfids = null;
+          if(defaultConfirmApply){ defaultConfirmApply.disabled = pendingDefaultSelections.size === 0; }
+        }
+      } else {
+        setDurationInputs(gHr, gMin, chosen.minutes);
+        showGroupDefaultHint(`Predeterminado (${chosen.unidadLabel || chosen.modeloNombre || 'Config'}): ${chosen.minutes} min`, 'info');
+        defaultConfirmDlg?.close?.();
+      }
+      return;
+    }
+
+    if(defaultConfirmApply){ defaultConfirmApply.disabled = true; }
+    if(defaultConfirmMode === 'scan-auto'){
+      updateScanTimerHint('Iniciando cronómetros predeterminados...', 'info');
+    } else {
+      showGroupDefaultHint('Iniciando cronómetros predeterminados...', 'info');
+    }
+    try {
+      const loteValue = defaultConfirmMode === 'group' ? resolveCurrentLoteValue() : (defaultConfirmLote || '');
+      for(const bucket of valid){
+        await startSectionTimer(section, loteValue, bucket.minutes, bucket.rfids);
+      }
+      defaultConfirmDlg?.close?.();
+      if(defaultConfirmMode !== 'scan-select'){ gDlg?.close?.(); }
+    } catch(err){
+      console.error('[Preacond] Error aplicando tiempos predeterminados múltiples', err);
+      if(defaultConfirmMode === 'scan-auto'){
+        updateScanTimerHint('No se pudieron iniciar los cronómetros predeterminados seleccionados.', 'error');
+      } else {
+        showGroupDefaultHint('No se pudieron iniciar los cronómetros predeterminados seleccionados.', 'error');
+      }
+    } finally {
+      preselectedRfids = null;
+      const dialogClosed = defaultConfirmDlg instanceof HTMLDialogElement ? !defaultConfirmDlg.open : true;
+      if(dialogClosed){
+        pendingDefaultSelections.clear();
+        if(defaultConfirmApply){ defaultConfirmApply.disabled = true; }
+      } else if(defaultConfirmApply){
+        defaultConfirmApply.disabled = pendingDefaultSelections.size === 0;
+      }
+    }
+  });
 
   // RFID derive lote (works for both sections; searches active modal section table)
   gRfidInput?.addEventListener('input', ()=>{
@@ -1093,7 +1753,9 @@
   if(gLote) gLote.value = '';
   if(gHr) gHr.value = '';
   if(gMin) gMin.value = '';
+      clearGroupDefaultHint();
       gDlg?.showModal?.();
+      applyGroupTimerDefaults(false);
       setTimeout(()=>gLote?.focus?.(), 50);
     } else if(clearR){
       const rfid = clearR.getAttribute('data-item-clear');
@@ -1113,7 +1775,9 @@
           if(gLote) gLote.value = '';
           if(gHr) gHr.value = '';
           if(gMin) gMin.value = '';
+          clearGroupDefaultHint();
           gDlg?.showModal?.();
+          applyGroupTimerDefaults(false);
           setTimeout(()=>gLote?.focus?.(), 50);
         });
     }
@@ -1127,8 +1791,19 @@
   // Also primary buttons
   qs('#btn-add-cong')?.addEventListener('click', ()=>openModal('congelamiento'));
   qs('#btn-add-atem')?.addEventListener('click', ()=>openModal('atemperamiento'));
+  dlg?.addEventListener?.('close', ()=>{
+    resetScanTimerHint();
+    if(scanTimerHr) scanTimerHr.value = '';
+    if(scanTimerMin) scanTimerMin.value = '';
+    pendingScanAutoBuckets = null;
+    preserveScanHint = false;
+  });
   // Limpiar preselección si usuario cierra modal sin confirmar
-  gDlg?.addEventListener?.('close', ()=>{ preselectedRfids=null; gModesBox?.classList.remove('hidden'); });
+  gDlg?.addEventListener?.('close', ()=>{
+    preselectedRfids=null;
+    gModesBox?.classList.remove('hidden');
+    clearGroupDefaultHint();
+  });
 
   // Default: show grid view; allow switching to list and back
   function setView(mode){

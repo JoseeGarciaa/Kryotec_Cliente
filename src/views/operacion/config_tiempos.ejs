@@ -1,0 +1,142 @@
+<% title = title || 'Operación · Configuración de cronómetros' %>
+
+<div class="mb-6">
+  <h1 class="text-3xl font-bold">Cronómetros predeterminados por modelo</h1>
+  <p class="mt-2 text-sm opacity-70 max-w-3xl">
+    Define tiempos sugeridos para congelamiento, atemperamiento y vida útil de cada modelo. Los valores configurados
+    aparecerán como predeterminados al iniciar un cronómetro, pero el operador podrá ajustarlos manualmente si lo necesita.
+  </p>
+</div>
+
+<div class="grid gap-6 lg:grid-cols-[minmax(0,1fr),minmax(0,1fr)]">
+  <div class="card border border-base-300/40 shadow-sm">
+    <div class="card-body gap-4">
+      <div>
+        <h2 class="text-xl font-semibold">Crear o editar configuración</h2>
+        <p class="text-sm opacity-70">Selecciona la sede y el modelo para cargar la configuración actual o crear una nueva.</p>
+      </div>
+      <div id="cfg-alert" class="alert hidden"></div>
+      <form id="cfg-form" class="grid gap-4">
+        <div class="grid gap-4 sm:grid-cols-2">
+          <label class="form-control">
+            <span class="label-text text-xs uppercase tracking-wide">Sede destino</span>
+            <select id="cfg-sede" class="select select-bordered">
+              <option value="global">Global (todas las sedes)</option>
+              <% sedes.forEach((sede) => { %>
+                <option value="<%= sede.sede_id %>" <%= (selectedSedeId !== null && Number(selectedSedeId) === Number(sede.sede_id)) ? 'selected' : '' %>>
+                  <%= sede.nombre %>
+                </option>
+              <% }) %>
+            </select>
+          </label>
+          <label class="form-control">
+            <span class="label-text text-xs uppercase tracking-wide">Modelo</span>
+            <select id="cfg-modelo" class="select select-bordered">
+              <option value="">Selecciona un modelo</option>
+              <% modelos.forEach((modelo) => { %>
+                <option value="<%= modelo.modelo_id %>"><%= modelo.nombre_modelo %></option>
+              <% }) %>
+            </select>
+          </label>
+        </div>
+        <div class="divider my-2"></div>
+        <div class="grid gap-4 md:grid-cols-2">
+          <label class="form-control">
+            <span class="label-text text-xs">Congelamiento (minutos)</span>
+            <input id="cfg-min-cong" type="number" min="1" step="1" placeholder="Ej. 5" class="input input-bordered" />
+          </label>
+          <label class="form-control">
+            <span class="label-text text-xs">Atemperamiento (minutos)</span>
+            <input id="cfg-atem" type="number" min="1" step="1" placeholder="Ej. 30" class="input input-bordered" />
+          </label>
+          <label class="form-control">
+            <span class="label-text text-xs">Máximo sobre atemperamiento (minutos)</span>
+            <input id="cfg-max-atem" type="number" min="1" step="1" placeholder="Ej. 45" class="input input-bordered" />
+          </label>
+          <label class="form-control">
+            <span class="label-text text-xs">Vida útil de la caja (minutos)</span>
+            <input id="cfg-vida" type="number" min="1" step="1" placeholder="Ej. 720" class="input input-bordered" />
+          </label>
+          <label class="form-control md:col-span-2">
+            <span class="label-text text-xs">Tiempo mínimo para reutilización (minutos)</span>
+            <input id="cfg-reuso" type="number" min="1" step="1" placeholder="Ej. 1440" class="input input-bordered" />
+          </label>
+        </div>
+        <p class="text-xs opacity-60">
+          Ingresa todos los valores en minutos. Puedes convertir horas multiplicando por 60 (por ejemplo, 24 horas = 1440 minutos).
+        </p>
+        <div class="flex flex-wrap gap-2 justify-end items-center">
+          <span id="cfg-status" class="text-xs opacity-70 hidden"></span>
+          <button id="cfg-reset" type="button" class="btn btn-ghost btn-sm">Limpiar</button>
+          <button id="cfg-toggle" type="button" class="btn btn-outline btn-sm hidden">Desactivar</button>
+          <button id="cfg-save" type="button" class="btn btn-primary btn-sm">Guardar configuración</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <div class="card border border-base-300/40 shadow-sm">
+    <div class="card-body gap-4">
+      <div>
+        <h2 class="text-xl font-semibold">Configuraciones registradas</h2>
+        <p class="text-sm opacity-70">Lista consolidada de cronómetros predeterminados disponibles.</p>
+      </div>
+      <div class="overflow-x-auto">
+        <table class="table table-xs sm:table-sm" id="cfg-table">
+          <thead>
+            <tr>
+              <th>Modelo</th>
+              <th>Sede</th>
+              <th>Congelamiento</th>
+              <th>Atemperamiento</th>
+              <th>Máx. sobre atemperamiento</th>
+              <th>Vida caja</th>
+              <th>Reutilización</th>
+              <th>Estado</th>
+              <th>Actualizado</th>
+            </tr>
+          </thead>
+          <tbody>
+            <% if (!configs.length) { %>
+              <tr>
+                <td colspan="9" class="text-center text-sm opacity-70 py-6">No hay configuraciones registradas todavía.</td>
+              </tr>
+            <% } else { %>
+              <% configs.forEach((cfg) => { %>
+                <tr data-config-id="<%= cfg.id %>">
+                  <td><%= cfg.modeloNombre %></td>
+                  <td><%= cfg.sedeNombre %></td>
+                  <td><%= Math.round(cfg.minCongelamientoSec / 60) %> min</td>
+                  <td><%= Math.round(cfg.atemperamientoSec / 60) %> min</td>
+                  <td><%= Math.round(cfg.maxSobreAtemperamientoSec / 60) %> min</td>
+                  <td><%= Math.round(cfg.vidaCajaSec / 60) %> min</td>
+                  <td><%= Math.round(cfg.minReusoSec / 60) %> min</td>
+                  <td>
+                    <% if (cfg.activo) { %>
+                      <span class="badge badge-success badge-sm">Activo</span>
+                    <% } else { %>
+                      <span class="badge badge-error badge-sm">Inactivo</span>
+                    <% } %>
+                  </td>
+                  <td><%= cfg.updatedAt ? new Date(cfg.updatedAt).toLocaleString('es-CO') : '-' %></td>
+                </tr>
+              <% }) %>
+            <% } %>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+  window.__CONFIG_TIEMPOS__ = JSON.parse(
+    `<%- JSON.stringify({
+      configs,
+      modelos,
+      sedes,
+      selectedSedeId
+    }).replace(/</g, '\\u003C') %>`
+  );
+</script>
+<script src="/static/js/config-tiempos.js?v=<%= assetVersion %>" defer></script>

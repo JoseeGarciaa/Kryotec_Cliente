@@ -25,6 +25,9 @@
   const decideZona = qs('#dev-zona');
   const decideSeccion = qs('#dev-seccion');
   const decideLocationHint = qs('#dev-location-hint');
+  const decideThresholdWrap = qs('#dev-decide-threshold');
+  const decideThresholdSelect = qs('#dev-decide-threshold-select');
+  const decideThresholdInfo = qs('#dev-decide-threshold-info');
   // Confirm dialog
   const confirmDlg = qs('#dev-confirm');
   const confirmYes = qs('#dev-confirm-yes');
@@ -49,6 +52,7 @@
   let data = { cajas: [], serverNow: null, ordenes: {} };
   let serverOffset = 0; // serverNow - Date.now()
   let tick = null; let poll = null;
+  let decisionState = { cajaId: null, evaluation: null, thresholdSec: null };
 
   let selectedZonaId = '';
   let selectedSeccionId = '';
@@ -283,8 +287,6 @@
       if(piSeccion) piSeccion.value = selectedSeccionId;
     }
   }
-
-  const REUSE_THRESHOLD_SEC = 24 * 60 * 60;
   function formatRemainingLabel(totalSeconds){
     const total = Math.max(0, Math.floor(Number(totalSeconds) || 0));
     const days = Math.floor(total / 86400);
@@ -295,6 +297,62 @@
     if(hours){ pieces.push(`${hours} h`); }
     if(!pieces.length || minutes){ pieces.push(`${minutes} min`); }
     return pieces.join(' ');
+  }
+
+  function formatThresholdOptionLabel(seconds, candidate){
+    const base = formatRemainingLabel(seconds);
+    const parts = [];
+    if(candidate?.source === 'config'){ parts.push('configuración'); }
+    if(candidate?.source === 'fallback'){ parts.push('predeterminado'); }
+    const totalModelos = Array.isArray(candidate?.modelos)
+      ? candidate.modelos.reduce((acc, item)=> acc + (Number(item?.count) || 0), 0)
+      : 0;
+    if(totalModelos){ parts.push(`${totalModelos} modelo${totalModelos===1?'':'s'}`); }
+    const suffix = parts.length ? ` (${parts.join(', ')})` : '';
+    return `${base}${suffix}`;
+  }
+
+  function populateThresholdOptions(policy, selectedSec){
+    if(!decideThresholdWrap || !decideThresholdSelect) return;
+    const candidatesRaw = Array.isArray(policy?.candidates) ? policy.candidates : [];
+    const normalized = [];
+    const seen = new Set();
+    candidatesRaw.forEach((candidate)=>{
+      const seconds = Math.max(1, Math.floor(Number(candidate?.seconds) || 0));
+      if(seen.has(seconds)) return;
+      seen.add(seconds);
+      normalized.push({ seconds, source: candidate?.source || 'fallback', modelos: Array.isArray(candidate?.modelos) ? candidate.modelos : [] });
+    });
+    normalized.sort((a,b)=> a.seconds - b.seconds);
+    const shouldShow = normalized.length > 1 || !!policy?.mismatched || !!policy?.reuse_blocked;
+    if(!shouldShow){
+      decideThresholdWrap.classList.add('hidden');
+      decideThresholdSelect.innerHTML = '';
+      if(decideThresholdInfo) decideThresholdInfo.textContent = '';
+      return;
+    }
+    const optionsHtml = normalized.map((candidate)=>{
+      const sec = candidate.seconds;
+      const selected = selectedSec != null && Math.trunc(selectedSec) === sec ? ' selected' : '';
+      const label = formatThresholdOptionLabel(sec, candidate);
+      return `<option value="${sec}"${selected}>${label}</option>`;
+    }).join('');
+    decideThresholdSelect.innerHTML = optionsHtml;
+    if(selectedSec != null){
+      decideThresholdSelect.value = String(Math.trunc(selectedSec));
+    } else if(normalized.length){
+      decideThresholdSelect.value = String(normalized[normalized.length - 1].seconds);
+    }
+    decideThresholdWrap.classList.remove('hidden');
+    if(decideThresholdInfo){
+      if(policy?.reuse_blocked && policy?.reason){
+        decideThresholdInfo.textContent = policy.reason;
+      } else if(policy?.mismatched){
+        decideThresholdInfo.textContent = 'Selecciona el umbral preferido para reutilizar. Los modelos tienen tiempos distintos.';
+      } else {
+        decideThresholdInfo.textContent = '';
+      }
+    }
   }
 
   function buildDefaultSedePrompt(payload){
@@ -422,6 +480,56 @@
         }).join('');
       }
     }
+  }
+
+  function openModal(id){
+    if(!modal) return;
+    const cajaId = String(id);
+    const source = (data.cajas||[]).find((c)=> String(c.id) === cajaId) || scannedCajas.get(cajaId);
+    if(!source){
+      modalCajaId = null;
+      return;
+    }
+    const info = normalizeCajaOrders(source);
+    modalCajaId = info.id || source.id || cajaId;
+    const displayName = info.nombreCaja || info.codigoCaja || info.lote || `Caja ${modalCajaId}`;
+    const codigo = info.codigoCaja || info.lote || '-';
+    const ordersBlock = ordersSummaryHTML(info, { className: 'text-[11px] opacity-80 space-y-1', showTitle: true, limit: 6 });
+    const countLine = renderOrderCountLabel(info, { normalized: true, className: 'text-[10px] opacity-60' });
+    const componentes = componentesBadges(info.componentes || []);
+    const timer = info.timer;
+    let timerSection = `<div class='text-[10px] opacity-60'>Sin cronómetro</div>`;
+    if(timer && timer.startsAt && timer.endsAt){
+      const rem = msRemaining(timer);
+      const pct = progressPct(timer);
+      const label = timer.completedAt ? 'Listo' : timerDisplay(rem);
+      timerSection = `
+        <div class='space-y-2'>
+          <div class='text-[10px] uppercase opacity-60 tracking-wide'>Cronómetro</div>
+          <div class='font-mono text-xs' id='dev-modal-timer'>${label}</div>
+          <div class='h-1.5 w-full bg-base-300/30 rounded-full overflow-hidden'>
+            <div class='h-full bg-primary/80' style='width:${Math.min(100, Math.max(0, pct)).toFixed(1)}%' id='dev-modal-bar'></div>
+          </div>
+        </div>`;
+    }
+
+    if(modalTitle){
+      modalTitle.textContent = displayName;
+    }
+    if(modalBody){
+      modalBody.innerHTML = `
+        <div class='space-y-3 text-xs'>
+          <div class='flex justify-between items-center text-[11px] opacity-70 font-mono'><span>Código</span><span>${escapeHtml(codigo)}</span></div>
+          ${ordersBlock || "<div class='text-[10px] opacity-60'>Sin órdenes asociadas</div>"}
+          ${countLine}
+          <div class='space-y-1'>
+            <div class='text-[10px] uppercase opacity-60 tracking-wide'>Componentes</div>
+            <div class='flex flex-wrap gap-1'>${componentes}</div>
+          </div>
+          ${timerSection}
+        </div>`;
+    }
+    try{ modal.showModal(); }catch{ modal.classList.remove('hidden'); }
   }
   async function load(){
     try { spin?.classList.remove('hidden');
@@ -796,33 +904,109 @@
   });
   function updateModalTimer(){ if(!modalCajaId) return; const caja = (data.cajas||[]).find(c=> String(c.id)===String(modalCajaId)); if(!caja||!caja.timer) return; const span=document.getElementById('dev-modal-timer'); const bar=document.getElementById('dev-modal-bar'); if(span){ span.textContent = caja.timer.completedAt? 'Listo' : timerDisplay(msRemaining(caja.timer)); } if(bar && caja.timer.startsAt && caja.timer.endsAt){ bar.style.width = progressPct(caja.timer).toFixed(1)+'%'; } }
   modalReturn?.addEventListener('click', ()=>{ if(!modalCajaId) return; processCaja(modalCajaId); });
-  async function processCaja(id){
-    // 1) evaluar si es reusable (>50% restante)
-    try {
-      if(scanMsg) scanMsg.textContent='Evaluando...';
-      const r = await fetch('/operacion/devolucion/evaluate',{ method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ caja_id: id })});
-      const j = await r.json();
-      if(!j.ok){ if(scanMsg) scanMsg.textContent=j.error||'No elegible'; if(scanResult) scanResult.classList.add('hidden'); return; }
-      const reusable = !!j.reusable;
-      const remainingSeconds = Number(j.seconds_remaining) || 0;
-      const timeLabel = formatRemainingLabel(remainingSeconds);
-      const belowThreshold = remainingSeconds < REUSE_THRESHOLD_SEC;
-      let html = '';
-      if(reusable){
-        if(decideMsg) decideMsg.textContent = `Restan ${timeLabel} del cronómetro. ¿Deseas reutilizar la caja (volver a Acond · Ensamblaje) o enviarla a Bodega · Pendiente a Inspección?`;
-        html = `<button class='btn btn-primary btn-sm flex-1' data-act='reuse' data-id='${id}'>Reutilizar</button>
-    <button class='btn btn-outline btn-sm flex-1' data-act='insp' data-id='${id}'>Pendiente a Inspección</button>`;
-      } else {
-        const reason = belowThreshold
-          ? `Restan ${timeLabel} del cronómetro (menos de 24 horas).`
-          : `Restan ${timeLabel} del cronómetro.`;
-        if(decideMsg) decideMsg.textContent = `${reason} No es posible reutilizar. ¿Deseas enviarla a Bodega · Pendiente a Inspección?`;
-        html = `<button class='btn btn-error btn-sm flex-1' data-act='insp' data-id='${id}'>Enviar a Pendiente a Inspección</button>`;
+
+  function resetDecisionState(){
+    decisionState = { cajaId: null, evaluation: null, thresholdSec: null };
+    if(decideThresholdWrap) decideThresholdWrap.classList.add('hidden');
+    if(decideThresholdSelect) decideThresholdSelect.innerHTML = '';
+    if(decideThresholdInfo) decideThresholdInfo.textContent = '';
+  }
+
+  async function processCaja(id, options){
+    const opts = options || {};
+    const cajaId = Number(id);
+    if(!Number.isFinite(cajaId)) return;
+    const payload = { caja_id: cajaId };
+    const override = opts.reuseThresholdSec != null ? Number(opts.reuseThresholdSec) : null;
+    if(override != null && Number.isFinite(override) && override > 0){
+      payload.reuse_threshold_sec = Math.max(1, Math.trunc(override));
+    } else if(decisionState.cajaId === cajaId && decisionState.thresholdSec != null){
+      const prev = Number(decisionState.thresholdSec);
+      if(Number.isFinite(prev) && prev > 0){
+        payload.reuse_threshold_sec = Math.max(1, Math.trunc(prev));
       }
-      if(decideActions) decideActions.innerHTML = html;
-      ensureDecideLocation();
+    }
+    try {
+      if(!opts.silent && scanMsg) scanMsg.textContent = 'Evaluando...';
+      const response = await fetch('/operacion/devolucion/evaluate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+      const result = await response.json();
+      if(!result.ok){
+        if(scanMsg) scanMsg.textContent = result.error || 'No elegible';
+        if(decideDlg && typeof decideDlg.open === 'boolean' && decideDlg.open){
+          if(decideMsg) decideMsg.textContent = result.error || 'No elegible';
+          if(decideActions) decideActions.innerHTML = '';
+          if(decideThresholdWrap) decideThresholdWrap.classList.add('hidden');
+        }
+        return;
+      }
+      const thresholdSec = Number(result.reuse_threshold_sec);
+      decisionState = {
+        cajaId,
+        evaluation: result,
+        thresholdSec: Number.isFinite(thresholdSec) && thresholdSec > 0
+          ? Math.trunc(thresholdSec)
+          : (payload.reuse_threshold_sec || null)
+      };
+      renderDecisionDialog(cajaId, result, { openModal: opts.openModal !== false });
+      if(scanMsg) scanMsg.textContent = '';
+    } catch(err){
+      if(scanMsg) scanMsg.textContent = 'Error';
+    }
+  }
+
+  function renderDecisionDialog(cajaId, evaluation, options){
+    const openModal = options?.openModal !== false;
+    const policy = evaluation?.reuse_policy || {};
+    const hasTimer = evaluation?.has_timer !== false && evaluation?.timer_status !== 'missing';
+    const remainingSeconds = Math.max(0, Math.floor(Number(evaluation?.seconds_remaining) || 0));
+    const thresholdBase = decisionState.thresholdSec != null
+      ? decisionState.thresholdSec
+      : Number(evaluation?.reuse_threshold_sec) || null;
+    const thresholdSec = Number.isFinite(thresholdBase) && thresholdBase > 0 ? Math.trunc(thresholdBase) : null;
+    decisionState.thresholdSec = thresholdSec;
+    populateThresholdOptions(policy, thresholdSec);
+
+    const thresholdLabel = thresholdSec ? formatRemainingLabel(thresholdSec) : null;
+    const remainingLabel = formatRemainingLabel(remainingSeconds);
+    const reuseAllowed = !!evaluation?.reusable && !policy?.reuse_blocked;
+    let message = '';
+    if(!hasTimer){
+      message = 'La caja no registra un cronómetro activo. Solo se puede enviar a Bodega · Pendiente a Inspección.';
+    } else if(policy?.reuse_blocked){
+      message = policy.reason || 'El umbral seleccionado no cumple con el mínimo requerido.';
+    } else if(reuseAllowed){
+      message = `Restan ${remainingLabel} del cronómetro${thresholdLabel ? ` (umbral ${thresholdLabel})` : ''}. ¿Deseas reutilizar la caja o enviarla a Bodega · Pendiente a Inspección?`;
+    } else {
+      if(thresholdLabel){
+        message = `Restan ${remainingLabel} del cronómetro (umbral ${thresholdLabel}). No es posible reutilizar con este umbral. ¿Deseas enviarla a Bodega · Pendiente a Inspección?`;
+      } else {
+        message = `Restan ${remainingLabel} del cronómetro. No es posible reutilizar. ¿Deseas enviarla a Bodega · Pendiente a Inspección?`;
+      }
+      if(policy?.reason && !policy?.reuse_blocked){
+        message = `${message} ${policy.reason}`.trim();
+      }
+    }
+    if(decideMsg) decideMsg.textContent = message;
+
+    if(decideActions){
+      let html = '';
+      if(reuseAllowed){
+        html = `<button class='btn btn-primary btn-sm flex-1' data-act='reuse' data-id='${cajaId}'>Reutilizar</button>
+    <button class='btn btn-outline btn-sm flex-1' data-act='insp' data-id='${cajaId}'>Pendiente a Inspección</button>`;
+      } else {
+        html = `<button class='btn btn-error btn-sm flex-1' data-act='insp' data-id='${cajaId}'>Enviar a Pendiente a Inspección</button>`;
+      }
+      decideActions.innerHTML = html;
+    }
+
+    ensureDecideLocation();
+    if(openModal){
       try { decideDlg.showModal(); } catch { decideDlg.classList.remove('hidden'); }
-    } catch(e){ if(scanMsg) scanMsg.textContent='Error'; }
+    }
   }
 
   // Manejar acciones de decisión
@@ -837,12 +1021,16 @@
       try {
         if(scanMsg) scanMsg.textContent='Aplicando...';
         const locationPayload = captureDecideLocation();
+        const thresholdPayload = decisionState.thresholdSec != null && Number.isFinite(Number(decisionState.thresholdSec))
+          ? Math.max(1, Math.trunc(Number(decisionState.thresholdSec)))
+          : null;
         if(act==='reuse'){
           const cajaLabel = cajaLabelById(id);
           const attempt = await postJSONWithSedeTransfer('/operacion/devolucion/reuse', {
             caja_id: id,
             zona_id: locationPayload.zona_id,
-            seccion_id: locationPayload.seccion_id
+            seccion_id: locationPayload.seccion_id,
+            ...(thresholdPayload ? { reuse_threshold_sec: thresholdPayload } : {})
           }, {
             promptMessage: (payload) => payload?.confirm || payload?.error || `La caja ${cajaLabel} pertenece a otra sede. ¿Deseas trasladarla a tu sede actual?`
           });
@@ -903,6 +1091,9 @@
     try {
       const cajaLabel = cajaLabelById(currentId);
       const locationPayload = capturePiLocation();
+      const thresholdPayload = decisionState.thresholdSec != null && Number.isFinite(Number(decisionState.thresholdSec))
+        ? Math.max(1, Math.trunc(Number(decisionState.thresholdSec)))
+        : null;
       const tempInput = piTemp ? String(piTemp.value || '').trim() : '';
       const tempNumber = tempInput ? Number(tempInput.replace(',', '.')) : NaN;
       if(!Number.isFinite(tempNumber)){
@@ -917,7 +1108,8 @@
         durationSec: sec,
         zona_id: locationPayload.zona_id,
         seccion_id: locationPayload.seccion_id,
-        temp_llegada_c: tempNormalized
+        temp_llegada_c: tempNormalized,
+        ...(thresholdPayload ? { reuse_threshold_sec: thresholdPayload } : {})
       }, {
         promptMessage: (payload) => payload?.confirm || payload?.error || `La caja ${cajaLabel} pertenece a otra sede. ¿Deseas trasladarla a tu sede actual?`
       });
@@ -949,6 +1141,15 @@
       }
     }
   });
+
+  decideThresholdSelect?.addEventListener('change', ()=>{
+    if(!decisionState.cajaId) return;
+    const raw = Number(decideThresholdSelect.value);
+    if(!Number.isFinite(raw) || raw <= 0) return;
+    const normalized = Math.max(1, Math.trunc(raw));
+    if(decisionState.thresholdSec != null && Math.trunc(decisionState.thresholdSec) === normalized) return;
+    processCaja(decisionState.cajaId, { reuseThresholdSec: normalized, openModal: false, updateOnly: true, silent: true });
+  });
   piCancel?.addEventListener('click', ()=>{
     piCajaId=null;
     piHours && (piHours.value='');
@@ -960,7 +1161,17 @@
   });
 
   // Cerrar con X
-  decideClose?.addEventListener('click', (e)=>{ e.preventDefault(); try{ decideDlg.close(); }catch{ decideDlg.classList.add('hidden'); } });
+  decideClose?.addEventListener('click', (e)=>{
+    e.preventDefault();
+    try{ decideDlg.close(); }catch{ decideDlg.classList.add('hidden'); }
+    resetDecisionState();
+  });
+  decideDlg?.addEventListener('close', ()=> resetDecisionState());
+  decideDlg?.addEventListener('cancel', (event)=>{
+    event.preventDefault();
+    resetDecisionState();
+    try{ decideDlg.close(); }catch{ decideDlg.classList.add('hidden'); }
+  });
   modalClose?.addEventListener('click', ()=>{ modalCajaId=null; try{ modal.close(); }catch{ modal.classList.add('hidden'); } });
   // también cerrar al backdrop form (native dialog auto cierra)
 

@@ -185,7 +185,10 @@
             <input id="scan-timer-min" type="number" min="0" step="1" placeholder="Ej. 30" class="input input-bordered input-sm" />
           </label>
         </div>
-  <div class="text-xs opacity-60 mt-2" id="scan-timer-hint">Al confirmar: las TICs movidas recibirán un nuevo lote automáticamente junto con el cronómetro. Desmarca para no iniciar ahora.</div>
+        <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 mt-3">
+          <button id="scan-apply-default" type="button" class="btn btn-xs btn-outline self-start">Usar tiempo predeterminado</button>
+          <span class="text-xs opacity-60" id="scan-timer-hint">Al confirmar: las TICs movidas recibirán un nuevo lote automáticamente junto con el cronómetro. Desmarca para no iniciar ahora.</span>
+        </div>
       </div>
     </div>
 
@@ -250,11 +253,42 @@
           <input id="gtimer-min" type="number" min="0" step="1" class="input input-bordered" placeholder="Ej. 30" />
       </label>
       </div>
+      <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
+        <button id="gtimer-apply-default" type="button" class="btn btn-sm btn-outline self-start">Usar tiempo predeterminado</button>
+        <span id="gtimer-default-hint" class="text-xs opacity-70 hidden"></span>
+      </div>
       <div id="gtimer-msg" class="text-sm text-error"></div>
     </div>
     <div class="modal-action">
       <form method="dialog"><button class="btn btn-ghost">Cancelar</button></form>
       <button id="gtimer-confirm" class="btn btn-primary">Iniciar</button>
+    </div>
+  </div>
+</dialog>
+
+<!-- Modal: confirmar aplicación de tiempos predeterminados -->
+<dialog id="dlg-default-confirm" class="modal">
+  <div class="modal-box max-w-sm sm:max-w-md">
+    <h3 class="font-bold text-lg">Confirmar tiempos predeterminados</h3>
+    <p class="text-sm opacity-70">Se aplicará el tiempo seleccionado a todas las TICs elegibles en esta vista.</p>
+    <div class="mt-4">
+      <table class="table table-xs">
+        <thead>
+          <tr>
+            <th class="w-10"></th>
+            <th>Modelo / Litraje</th>
+            <th class="text-right">TICs</th>
+            <th class="text-right">Minutos</th>
+          </tr>
+        </thead>
+        <tbody id="default-confirm-body"></tbody>
+      </table>
+      <div id="default-confirm-empty" class="text-sm text-warning mt-3 hidden">No hay tiempos predeterminados configurados para las piezas seleccionadas.</div>
+      <div id="default-confirm-mixed" class="text-xs opacity-70 mt-2 hidden">Selecciona uno o varios tiempos predeterminados. Si mezclas litrajes con distintas duraciones, los cronómetros se iniciarán uno a uno con su propio tiempo.</div>
+    </div>
+    <div class="modal-action">
+      <form method="dialog"><button class="btn btn-ghost">Cancelar</button></form>
+      <button id="default-confirm-apply" class="btn btn-primary" disabled>Aplicar</button>
     </div>
   </div>
 </dialog>
