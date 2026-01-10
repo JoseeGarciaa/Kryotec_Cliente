@@ -140,6 +140,7 @@ export const AuthController = {
         sede_id: user.sede_id ?? null,
         sede_nombre: user.sede_nombre ?? null,
         mustChangePassword,
+        sessionTtlMinutes,
         sessionVersion: sessionMeta.sessionVersion,
       }, config.jwtSecret, { expiresIn: `${sessionTtlMinutes}m` });
       res.cookie('token', token, {

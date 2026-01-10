@@ -63,9 +63,9 @@ export const SedesModel = {
     return rows[0] || null;
   },
 
-  async remove(client: PoolClient, sedeId: number): Promise<boolean> {
+  async deactivate(client: PoolClient, sedeId: number): Promise<boolean> {
     const { rowCount } = await client.query(
-      `DELETE FROM sedes WHERE sede_id = $1`,
+      `UPDATE sedes SET activa = FALSE WHERE sede_id = $1`,
       [sedeId]
     );
     return (rowCount ?? 0) > 0;

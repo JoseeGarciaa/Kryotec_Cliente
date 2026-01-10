@@ -38,8 +38,9 @@ export const config: AppConfig = {
     lockMinutes: Math.max(5, Number(process.env.LOGIN_LOCK_MINUTES || 15)),
     passwordMinLength: 8,
     passwordMaxAgeDays: Math.max(30, Number(process.env.PASSWORD_MAX_AGE_DAYS || 180)),
-    defaultSessionMinutes: Math.max(30, Number(process.env.DEFAULT_SESSION_MINUTES || 120)),
-    minSessionMinutes: Math.max(15, Number(process.env.MIN_SESSION_MINUTES || 30)),
-    maxSessionMinutes: Math.max(60, Number(process.env.MAX_SESSION_MINUTES || 720)),
+    // TTL base de sesión: 10 minutos por defecto (alineado con inactividad requerida)
+    defaultSessionMinutes: Math.max(10, Number(process.env.DEFAULT_SESSION_MINUTES || 10)),
+    minSessionMinutes: Math.max(10, Number(process.env.MIN_SESSION_MINUTES || 10)),
+    maxSessionMinutes: Math.max(120, Number(process.env.MAX_SESSION_MINUTES || 1440)),
   },
 };

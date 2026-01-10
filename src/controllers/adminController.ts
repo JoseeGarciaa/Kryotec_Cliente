@@ -279,17 +279,17 @@ export const AdminController = {
       if (!exists) {
         return res.redirect('/administracion?error=Sede+no+encontrada');
       }
-      const removed = await withTenant(tenant, (client) => SedesModel.remove(client, sedeId));
-      if (!removed) {
-        return res.redirect('/administracion?error=No+se+eliminó+la+sede');
+      const deactivated = await withTenant(tenant, (client) => SedesModel.deactivate(client, sedeId));
+      if (!deactivated) {
+        return res.redirect('/administracion?error=No+se+pudo+inhabilitar+la+sede');
       }
-      return res.redirect('/administracion?ok=Sede+eliminada');
+      return res.redirect('/administracion?ok=Sede+inhabilitada');
     } catch (e: any) {
       console.error(e);
       if (e?.code === '23503') {
-        return res.redirect('/administracion?error=No+se+puede+eliminar,+tiene+relaciones+activas');
+        return res.redirect('/administracion?error=No+se+puede+inhabilitar,+tiene+relaciones+activas');
       }
-      return res.redirect('/administracion?error=Error+eliminando+sede');
+      return res.redirect('/administracion?error=Error+inhabilitando+sede');
     }
   },
 

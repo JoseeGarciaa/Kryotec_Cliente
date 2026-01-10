@@ -71,8 +71,10 @@ export async function requireAuth(req: Request, res: Response, next: NextFunctio
     const payloadRoles = Array.isArray((payload as any)?.roles)
       ? (payload as any).roles
       : ((payload as any)?.roles ? [ (payload as any).roles ] : []);
-    (req as any).user = { ...payload, roles: payloadRoles, mustChangePassword };
-    (res.locals as any).user = { ...(res.locals as any).user, ...payload, roles: payloadRoles, mustChangePassword };
+    const idleMinutes = Number((payload as any)?.sessionTtlMinutes || snapshot.sesion_ttl_minutos || config.security.defaultSessionMinutes);
+    (req as any).user = { ...payload, roles: payloadRoles, mustChangePassword, sesion_ttl_minutos: idleMinutes };
+    (res.locals as any).user = { ...(res.locals as any).user, ...payload, roles: payloadRoles, mustChangePassword, sesion_ttl_minutos: idleMinutes };
+    (res.locals as any).idleMinutes = idleMinutes;
 
   const mustChange = mustChangePassword;
   const rawFullPath = `${req.baseUrl || ''}${req.path}` || req.path;

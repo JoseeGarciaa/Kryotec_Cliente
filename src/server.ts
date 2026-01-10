@@ -33,6 +33,7 @@ import sharp from 'sharp';
 dotenv.config();
 
 const app = express();
+const appVersion = process.env.APP_VERSION || '0.3.0';
 
 // Resolve views path robustly (src in repo; fallback to dist in production builds)
 const viewsSrc = path.join(process.cwd(), 'src', 'views');
@@ -180,6 +181,10 @@ app.use(async (req, res, next) => {
 	res.locals.currentPath = req.path;
 	// asset version for cache-busting across environments
 	(res.locals as any).assetVersion = process.env.ASSET_VERSION || process.env.RAILWAY_GIT_COMMIT_SHA || String(Date.now());
+	// default idle minutes (overridden by authenticated middleware)
+	(res.locals as any).idleMinutes = config.security.defaultSessionMinutes;
+	// app version for UI display
+	(res.locals as any).appVersion = appVersion;
 	// expose user (decoded) if present
 	const token = req.cookies?.token;
 	if (token) {
@@ -189,6 +194,7 @@ app.use(async (req, res, next) => {
 				? decoded.roles
 				: decoded?.roles ? [decoded.roles] : [];
 			res.locals.user = { ...decoded, roles };
+			(res.locals as any).idleMinutes = decoded?.sessionTtlMinutes || config.security.defaultSessionMinutes;
 		} catch {}
 	}
 	// Si falta nombre/correo en el token (tokens antiguos), completarlo desde BD

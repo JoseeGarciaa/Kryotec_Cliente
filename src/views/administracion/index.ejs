@@ -251,7 +251,7 @@
       <label class="form-control">
         <span class="label-text text-xs opacity-70">Contraseña inicial</span>
         <div class="flex items-center gap-2">
-          <input id="admin-new-password" required name="password" type="password" placeholder="Contraseña inicial" class="input input-sm input-bordered flex-1" minlength="8" autocomplete="new-password" />
+          <input id="admin-new-password" required name="password" type="password" placeholder="Contraseña inicial" class="input input-sm input-bordered flex-1" minlength="8" autocomplete="off" onpaste="return false" ondrop="return false" />
           <button type="button" class="btn btn-xs btn-outline btn-circle" data-password-toggle="admin-new-password" aria-label="Mostrar u ocultar contraseña" aria-pressed="false">
             <span class="inline-flex h-4 w-4 items-center justify-center" data-eye-icon></span>
           </button>
@@ -295,7 +295,7 @@
       <label class="form-control">
         <span class="label-text text-xs opacity-70">Contraseña (dejar vacío para no cambiar)</span>
         <div class="flex items-center gap-2">
-          <input id="admin-edit-password" name="password" type="password" placeholder="Password (dejar vacío para no cambiar)" class="input input-sm input-bordered flex-1" minlength="8" autocomplete="new-password" />
+          <input id="admin-edit-password" name="password" type="password" placeholder="Password (dejar vacío para no cambiar)" class="input input-sm input-bordered flex-1" minlength="8" autocomplete="off" onpaste="return false" ondrop="return false" />
           <button type="button" class="btn btn-xs btn-outline btn-circle" data-password-toggle="admin-edit-password" aria-label="Mostrar u ocultar contraseña" aria-pressed="false">
             <span class="inline-flex h-4 w-4 items-center justify-center" data-eye-icon></span>
           </button>

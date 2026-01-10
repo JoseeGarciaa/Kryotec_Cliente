@@ -173,8 +173,10 @@
       </aside>
     </div>
   </div>
+  <script>window.__IDLE_MINUTES__ = <%= typeof idleMinutes !== 'undefined' ? idleMinutes : (user?.sesion_ttl_minutos || 10) %>;</script>
   <script src="/static/js/theme.js?v=<%= assetVersion %>"></script>
   <script src="/static/js/ux.js?v=<%= assetVersion %>"></script>
+  <script src="/static/js/idle-logout.js?v=<%= assetVersion %>" defer></script>
   <script src="/static/js/user-menu.js?v=<%= assetVersion %>" defer></script>
   <script src="/static/js/notifications.js?v=<%= assetVersion %>" defer></script>
   <script src="/static/js/pwa.js?v=<%= assetVersion %>" defer></script>

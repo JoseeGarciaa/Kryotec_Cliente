@@ -46,7 +46,7 @@
       <% } %>
 
       <!-- Formulario de login -->
-      <form id="login-form" method="post" action="/auth/login" class="space-y-5">
+      <form id="login-form" method="post" action="/auth/login" class="space-y-5" autocomplete="off">
         <div class="form-control">
           <label class="label" for="correo">
             <span class="label-text text-light-text dark:text-dark-text">Correo electrónico</span>
@@ -73,7 +73,9 @@
               name="password"
               placeholder="Tu contraseña"
               class="input input-bordered w-full pr-12 rounded-xl bg-white placeholder:text-slate-400 border-light-border focus:ring-2 focus:ring-primary-500 focus:border-transparent dark:bg-dark-card dark:border-dark-border dark:text-dark-text placeholder:dark:text-slate-400"
-              autocomplete="current-password"
+              autocomplete="off"
+              onpaste="return false"
+              ondrop="return false"
               required
             />
             <button
@@ -101,6 +103,10 @@
       </form>
     </div>
   </div>
+</div>
+
+<div class="w-full flex justify-center pb-6 text-center text-sm text-light-text/70 dark:text-dark-text/70">
+  <p class="font-semibold text-primary-400 dark:text-primary-300">Versión <%= appVersion %></p>
 </div>
 
 <!-- JS externo para cumplir CSP -->

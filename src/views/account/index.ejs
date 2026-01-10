@@ -51,25 +51,25 @@
     <div class="card-body">
       <h2 class="card-title">Cambiar contraseña</h2>
       <p class="text-sm opacity-80 mb-2"><%= passwordPolicy %></p>
-      <form action="/cuenta/change-password" method="post" class="grid gap-4 sm:grid-cols-2">
+      <form action="/cuenta/change-password" method="post" class="grid gap-4 sm:grid-cols-2" autocomplete="off">
         <label class="form-control">
           <span class="label-text">Actual</span>
           <div class="flex items-center gap-2">
-            <input id="account-current-password" class="input input-bordered flex-1" type="password" name="current_password" required />
+            <input id="account-current-password" class="input input-bordered flex-1" type="password" name="current_password" autocomplete="off" onpaste="return false" ondrop="return false" required />
             <button type="button" class="btn btn-xs btn-outline btn-circle" data-password-toggle="account-current-password" aria-label="Mostrar u ocultar contraseña" aria-pressed="false"><span class="inline-flex h-4 w-4 items-center justify-center" data-eye-icon></span></button>
           </div>
         </label>
         <label class="form-control">
           <span class="label-text">Nueva</span>
           <div class="flex items-center gap-2">
-            <input id="account-new-password" class="input input-bordered flex-1" type="password" name="new_password" minlength="8" required />
+            <input id="account-new-password" class="input input-bordered flex-1" type="password" name="new_password" minlength="8" autocomplete="off" onpaste="return false" ondrop="return false" required />
             <button type="button" class="btn btn-xs btn-outline btn-circle" data-password-toggle="account-new-password" aria-label="Mostrar u ocultar contraseña" aria-pressed="false"><span class="inline-flex h-4 w-4 items-center justify-center" data-eye-icon></span></button>
           </div>
         </label>
         <label class="form-control">
           <span class="label-text">Confirmar nueva contraseña</span>
           <div class="flex items-center gap-2">
-            <input id="account-confirm-password" class="input input-bordered flex-1" type="password" name="confirm_password" minlength="8" required />
+            <input id="account-confirm-password" class="input input-bordered flex-1" type="password" name="confirm_password" minlength="8" autocomplete="off" onpaste="return false" ondrop="return false" required />
             <button type="button" class="btn btn-xs btn-outline btn-circle" data-password-toggle="account-confirm-password" aria-label="Mostrar u ocultar contraseña" aria-pressed="false"><span class="inline-flex h-4 w-4 items-center justify-center" data-eye-icon></span></button>
           </div>
         </label>
