@@ -49,7 +49,8 @@
     const date = value instanceof Date ? value : new Date(value);
     if (Number.isNaN(date.getTime())) return '-';
     try {
-      return date.toLocaleString('es-CO');
+      // Forzar zona horaria de operación (Bogotá) para evitar desfases en navegadores con tz distinta
+      return date.toLocaleString('es-CO', { timeZone: 'America/Bogota' });
     } catch {
       return date.toLocaleString();
     }
