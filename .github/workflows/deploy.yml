@@ -1,11 +1,39 @@
-script: |
-        # 1. Entrar a la ruta raíz del proyecto (donde están src, public, etc.)
-        cd /var/www/kryotec
-        
-        # 2. Actualizar el código desde GitHub
-        git reset --hard HEAD
-        git pull origin main
-        
-        # 3. Ejecutar el script de despliegue interno
-        chmod +x deploy/deploy.sh
-        bash deploy/deploy.sh
+name: Deploy Workflow
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Deploy to Hostinger
+        uses: appleboy/ssh-action@v1.0.0
+        with:
+          host: ${{ secrets.HOSTINGER_IP }}
+          username: ${{ secrets.USERNAME }}
+          key: ${{ secrets.SSH_KEY }}
+          script: |
+            cd /var/www/kryotec
+            git reset --hard HEAD
+            git pull origin main
+            chmod +x deploy/deploy.sh
+            bash deploy/deploy.sh
+
+      - name: Deploy to Contabo
+        uses: appleboy/ssh-action@v1.0.0
+        with:
+          host: ${{ secrets.CONTABO_IP }}
+          username: ${{ secrets.USERNAME }}
+          key: ${{ secrets.SSH_KEY }}
+          script: |
+            cd /var/www/kryotec
+            git reset --hard HEAD
+            git pull origin main
+            chmod +x deploy/deploy.sh
+            bash deploy/deploy.sh
