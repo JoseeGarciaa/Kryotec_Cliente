@@ -11,21 +11,22 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: SSH Deploy
+      # DESPLIEGUE EN HOSTINGER
+      - name: Deploy to Hostinger
         uses: appleboy/ssh-action@v1.0.0
         with:
-          host: ${{ secrets.VPS_HOST }}
+          host: ${{ secrets.HOSTINGER_IP }}
           username: ${{ secrets.VPS_USER }}
           password: ${{ secrets.VPS_PASS }}
-          port: 22
           script: |
-            bash /var/www/kryotec/Kryotec_Cliente/deploy/deploy.sh || {
-              echo "Primera vez: preparando";
-              mkdir -p /var/www/kryotec;
-              cd /var/www/kryotec;
-              if [ ! -d Kryotec_Cliente ]; then
-                git clone https://github.com/JoseeGarciaa/Kryotec_Cliente.git;
-              fi;
-              cd Kryotec_Cliente;
-              bash deploy/deploy.sh;
-            }
+            cd /var/www/kryotec/Kryotec_Cliente && git pull origin main && bash deploy/deploy.sh
+
+      # DESPLIEGUE EN CONTABO
+      - name: Deploy to Contabo
+        uses: appleboy/ssh-action@v1.0.0
+        with:
+          host: ${{ secrets.CONTABO_IP }}
+          username: ${{ secrets.VPS_USER }}
+          password: ${{ secrets.VPS_PASS }}
+          script: |
+            cd /var/www/kryotec/Kryotec_Cliente && git pull origin main && bash deploy/deploy.sh
