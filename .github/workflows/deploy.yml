@@ -19,6 +19,8 @@ jobs:
           username: ${{ secrets.VPS_USER }}
           key: ${{ secrets.SSH_KEY }}
           port: 22
+          # Esta línea ayuda a evitar errores de conexión inicial
+          envs: GITHUB_SHA
           script: |
             cd /var/www/kryotec
             git reset --hard HEAD
