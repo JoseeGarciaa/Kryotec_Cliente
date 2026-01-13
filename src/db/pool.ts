@@ -84,6 +84,8 @@ export async function withTenant<T>(tenantSchema: string, fn: (client: PoolClien
   try {
     // Important: set the schema search path for this session (use set_config to avoid SQL injection)
     await client.query('SELECT set_config($1, $2, false)', ['search_path', `${tenantSchema},public`]);
+    // Force TZ to Bogotá to avoid 5h offsets when inserting/updating timestamps
+    await client.query("SET TIME ZONE 'America/Bogota'");
 
   const explicitSedeId = options?.sedeId;
   const ctxSedeId = getCurrentSedeContext();
