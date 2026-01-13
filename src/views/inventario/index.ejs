@@ -112,9 +112,9 @@
         <tbody id="inv-tbody">
           <% if (items && items.length) { items.forEach(i => { %>
             <% 
-              const fechaIngreso = i.fecha_ingreso ? new Date(i.fecha_ingreso).toLocaleString('es-CO') : '-';
+              const fechaIngreso = i.fecha_ingreso ? new Date(i.fecha_ingreso).toLocaleString('es-CO', { timeZone: 'America/Bogota' }) : '-';
               const fechaIngresoIso = i.fecha_ingreso ? new Date(i.fecha_ingreso).toISOString() : '';
-              const fechaActualizacion = i.ultima_actualizacion ? new Date(i.ultima_actualizacion).toLocaleString('es-CO') : '-';
+              const fechaActualizacion = i.ultima_actualizacion ? new Date(i.ultima_actualizacion).toLocaleString('es-CO', { timeZone: 'America/Bogota' }) : '-';
               const fechaActualizacionIso = i.ultima_actualizacion ? new Date(i.ultima_actualizacion).toISOString() : '';
               const activoTexto = i.activo === false ? 'Inhabilitado' : 'Habilitado';
               const activoTone = i.activo === false ? 'badge-error' : 'badge-success';
