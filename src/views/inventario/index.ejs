@@ -1,6 +1,6 @@
-<% if (typeof error !== 'undefined' && error === 'eliminar') { %>
+<% if (typeof error !== 'undefined' && (error === 'inhabilitar' || error === 'eliminar')) { %>
   <div class="alert alert-error mb-4">
-    <span>Ocurrió un error al eliminar el registro.</span>
+    <span>Ocurrió un error al inhabilitar el registro.</span>
   </div>
 <% } %>
 <% title = 'Inventario' %>
@@ -162,7 +162,7 @@
                     ✎
                   </button>
                   <form method="post" action="/inventario/<%= i.id %>/delete" class="join-item inv-delete-form">
-                    <button class="btn btn-ghost btn-xs text-error" aria-label="Eliminar">🗑</button>
+                    <button class="btn btn-ghost btn-xs text-error" aria-label="Inhabilitar" title="Inhabilitar">🗑</button>
                   </form>
                 </div>
               </td>

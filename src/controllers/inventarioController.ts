@@ -537,29 +537,33 @@ ${selectClause}
     const id = Number((req.params as any).id);
     if(!Number.isFinite(id) || id<=0) return res.status(400).json({ ok:false, error:'id inválido' });
     try {
-      // Crear alerta antes de borrar para conservar el id en el registro de alertas
-      await withTenant(tenant, (c) =>
-        AlertsModel.create(c, {
-          inventario_id: id,
-          tipo_alerta: 'inventario:eliminado',
-          descripcion: `Item ${id} eliminado`,
-        })
-      );
-      // Hard delete: elimina el registro de la base de datos
+      // Soft delete: inhabilita el item para mantener trazabilidad
       const params: any[] = [id];
-      let sql = 'DELETE FROM inventario_credocubes WHERE id = $1';
+      let sql = `UPDATE inventario_credocubes
+                    SET activo = FALSE,
+                        estado = 'Inhabilitado',
+                        sub_estado = NULL,
+                        ultima_actualizacion = NOW()
+                  WHERE id = $1`;
       if (sedeId !== null) {
         params.push(sedeId);
         sql += ' AND (sede_id = $2 OR sede_id IS NULL)';
       }
       const result = await withTenant(tenant, (c)=> c.query(sql, params));
       if ((result as any).rowCount === 0) {
-        return res.redirect('/inventario?error=eliminar');
+        return res.redirect('/inventario?error=inhabilitar');
       }
+      await withTenant(tenant, (c) =>
+        AlertsModel.create(c, {
+          inventario_id: id,
+          tipo_alerta: 'inventario:inhabilitado',
+          descripcion: `Item ${id} inhabilitado`,
+        })
+      );
       return res.redirect('/inventario');
     } catch(e:any){
       // Redirige con mensaje de error en vez de enviar error crudo
-      return res.redirect('/inventario?error=eliminar');
+      return res.redirect('/inventario?error=inhabilitar');
     }
   },
 
