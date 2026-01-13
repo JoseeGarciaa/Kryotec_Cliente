@@ -1,4 +1,17 @@
-# DESPLIEGUE EN HOSTINGER
+name: Deploy to VPS
+
+on:
+  push:
+    branches: [ "main" ]
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # DESPLIEGUE EN HOSTINGER
       - name: Deploy to Hostinger
         uses: appleboy/ssh-action@v1.0.0
         with:
@@ -6,17 +19,9 @@
           username: ${{ secrets.VPS_USER }}
           password: ${{ secrets.VPS_PASS }}
           script: |
-            # Entramos a la carpeta base
-            cd /var/www/kryotec/Kryotec_Cliente || cd /var/www/kryotec
-            
-            # Si estamos en la carpeta equivocada, entramos a la subcarpeta
-            if [ -d "Kryotec_Cliente" ]; then cd Kryotec_Cliente; fi
-            
-            # Limpiamos cambios locales para evitar bloqueos del git pull
+            cd /var/www/kryotec/Kryotec_Cliente
             git reset --hard HEAD
             git pull origin main
-            
-            # Ejecutamos el deploy
             chmod +x deploy/deploy.sh
             bash deploy/deploy.sh
 
@@ -28,8 +33,7 @@
           username: ${{ secrets.VPS_USER }}
           password: ${{ secrets.VPS_PASS }}
           script: |
-            cd /var/www/kryotec/Kryotec_Cliente || cd /var/www/kryotec
-            if [ -d "Kryotec_Cliente" ]; then cd Kryotec_Cliente; fi
+            cd /var/www/kryotec/Kryotec_Cliente
             git reset --hard HEAD
             git pull origin main
             chmod +x deploy/deploy.sh
