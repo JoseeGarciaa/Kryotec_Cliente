@@ -18,6 +18,7 @@ jobs:
           host: ${{ secrets.HOSTINGER_IP }}
           username: ${{ secrets.VPS_USER }}
           key: ${{ secrets.SSH_KEY }}
+          port: 22
           script: |
             cd /var/www/kryotec
             git reset --hard HEAD
@@ -31,6 +32,7 @@ jobs:
           host: ${{ secrets.CONTABO_IP }}
           username: ${{ secrets.VPS_USER }}
           key: ${{ secrets.SSH_KEY }}
+          port: 22
           script: |
             cd /var/www/kryotec
             git reset --hard HEAD
