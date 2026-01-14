@@ -74,10 +74,22 @@
           <% const hasExtendedRole = Array.from(rolesSet).some((r) => !limitedRoles.includes(r)); %>
           <% const hasRole = (value) => rolesSet.has(value); %>
           <% const hasAdminRole = hasRole('admin') || hasRole('super_admin'); %>
+          <% const adminSection = (
+            `<li>
+              <details ${currentPath.startsWith('/administracion') ? 'open' : ''}>
+                <summary>Administración</summary>
+                <ul>
+                  <li><a class="${currentPath === '/administracion' ? 'active' : ''}" href="/administracion">Usuarios y sedes</a></li>
+                  <li><a class="${currentPath.startsWith('/administracion/zonas') ? 'active' : ''}" href="/administracion/zonas">Zonas y secciones</a></li>
+                  <li><a class="${currentPath.startsWith('/administracion/config-tiempos') ? 'active' : ''}" href="/administracion/config-tiempos">Cronómetros predeterminados</a></li>
+                </ul>
+              </details>
+            </li>`
+          ); %>
           <% if (isSuperAdmin) { %>
             <li><a class="<%= currentPath.startsWith('/dashboard') ? 'active' : '' %>" href="/dashboard">Dashboard</a></li>
             <li><a class="<%= currentPath.startsWith('/inventario') ? 'active' : '' %>" href="/inventario">Inventario</a></li>
-            <li><a class="<%= currentPath.startsWith('/administracion') ? 'active' : '' %>" href="/administracion">Administración</a></li>
+            <%- adminSection %>
             <li><a class="<%= currentPath.startsWith('/reportes') ? 'active' : '' %>" href="/reportes">Reportes</a></li>
           <% } else if (hasExtendedRole) { %>
             <li><a class="<%= currentPath.startsWith('/dashboard') ? 'active' : '' %>" href="/dashboard">Dashboard</a></li>
@@ -132,8 +144,7 @@
             <li><a class="<%= currentPath.startsWith('/auditoria') ? 'active' : '' %>" href="/auditoria">Auditoría</a></li>
           <% } %>
           <% if (hasAdminRole && hasSede) { %>
-            <li><a class="<%= currentPath.startsWith('/administracion') ? 'active' : '' %>" href="/administracion">Administración</a></li>
-            <li><a class="<%= currentPath.startsWith('/administracion/config-tiempos') ? 'active' : '' %>" href="/administracion/config-tiempos">Cronómetros predeterminados</a></li>
+            <%- adminSection %>
             <li><a class="<%= currentPath.startsWith('/reportes') ? 'active' : '' %>" href="/reportes">Reportes</a></li>
           <% } %>
         </ul>
