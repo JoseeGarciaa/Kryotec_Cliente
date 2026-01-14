@@ -45,6 +45,7 @@
   const piSeccion = qs('#dev-pi-seccion');
   const piLocationHint = qs('#dev-pi-location-hint');
   const piTemp = qs('#dev-pi-temp');
+  const piSerial = qs('#dev-pi-serial');
   const piSensor = qs('#dev-pi-sensor');
   const piSalidaWrap = qs('#dev-pi-salida-wrap');
   const piSalidaValue = qs('#dev-pi-salida');
@@ -1052,7 +1053,7 @@
           piCajaId = id;
           syncPiLocationFromDecide();
           ensurePiLocation();
-          const entry = scannedCajas.get(String(id));
+          const entry = scannedCajas.get(String(id)) || (data.cajas||[]).find(c=> String(c.id)===String(id));
           const sensorDisplay = entry && entry.sensorId ? entry.sensorId : '';
           if(piSensor){ piSensor.textContent = sensorDisplay || '-'; }
           const salidaDisplay = entry ? formatTempValue(entry.tempSalida) : '';
@@ -1068,6 +1069,10 @@
           if(piTemp){
             const llegadaDisplay = entry ? formatTempValue(entry.tempLlegada) : '';
             piTemp.value = llegadaDisplay;
+          }
+          if(piSerial){
+            piSerial.value = '';
+            piSerial.placeholder = sensorDisplay || 'Reingresa el serial';
           }
           try { piDlg.showModal(); } catch { piDlg.classList.remove('hidden'); }
         }
@@ -1102,6 +1107,26 @@
         piTemp && piTemp.focus();
         return;
       }
+      const serialInput = piSerial ? String(piSerial.value || '').trim() : '';
+      const entry = scannedCajas.get(String(currentId)) || (data.cajas||[]).find(c=> String(c.id)===String(currentId));
+      const originalSerial = entry && entry.sensorId ? String(entry.sensorId).trim() : '';
+      if(!serialInput){
+        shouldReset = false;
+        if(scanMsg) scanMsg.textContent = 'Ingresa el serial del dispositivo.';
+        piSerial && piSerial.focus();
+        return;
+      }
+      let serialToSend = serialInput;
+      if(originalSerial && serialToSend && originalSerial !== serialToSend){
+        const proceed = typeof window !== 'undefined' && typeof window.confirm === 'function'
+          ? window.confirm(`El serial ingresado (${serialToSend}) es diferente al registrado (${originalSerial}). ¿Deseas continuar con el nuevo serial?`)
+          : true;
+        if(!proceed){
+          shouldReset = false;
+          if(scanMsg) scanMsg.textContent = 'Operación cancelada: verifica el serial.';
+          return;
+        }
+      }
       const tempNormalized = Math.round(tempNumber * 100) / 100;
       const attempt = await postJSONWithSedeTransfer('/operacion/devolucion/to-pend-insp', {
         caja_id: currentId,
@@ -1109,6 +1134,7 @@
         zona_id: locationPayload.zona_id,
         seccion_id: locationPayload.seccion_id,
         temp_llegada_c: tempNormalized,
+        sensor_id: serialToSend,
         ...(thresholdPayload ? { reuse_threshold_sec: thresholdPayload } : {})
       }, {
         promptMessage: (payload) => payload?.confirm || payload?.error || `La caja ${cajaLabel} pertenece a otra sede. ¿Deseas trasladarla a tu sede actual?`
@@ -1135,6 +1161,7 @@
         piHours && (piHours.value='');
         piMins && (piMins.value='');
         piTemp && (piTemp.value='');
+        piSerial && (piSerial.value='');
         if(piSensor) piSensor.textContent = '-';
         if(piSalidaWrap) piSalidaWrap.classList.add('hidden');
         try{ piDlg.close(); }catch{ piDlg.classList.add('hidden'); }
@@ -1155,6 +1182,7 @@
     piHours && (piHours.value='');
     piMins && (piMins.value='');
     piTemp && (piTemp.value='');
+    piSerial && (piSerial.value='');
     if(piSensor) piSensor.textContent='-';
     if(piSalidaWrap) piSalidaWrap.classList.add('hidden');
     try{ piDlg.close(); }catch{ piDlg.classList.add('hidden'); }

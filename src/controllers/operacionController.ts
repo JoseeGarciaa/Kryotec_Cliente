@@ -2848,6 +2848,7 @@ export const OperacionController = {
     const tenant = (req as any).user?.tenant;
     const sedeId = getRequestSedeId(req);
     const { caja_id, durationSec, temp_llegada_c: tempLlegadaRaw } = req.body as any;
+    const sensorRaw = (req.body as any)?.sensor_id ?? (req.body as any)?.sensorId;
     const cajaId = Number(caja_id);
   const dur = Number(durationSec);
     const orderId = parseOptionalNumber((req.body as any)?.order_id ?? (req.body as any)?.orderId);
@@ -2872,6 +2873,11 @@ export const OperacionController = {
         return res.status(400).json({ ok:false, error:'Temperatura de llegada inválida.' });
       }
       const tempLlegadaValue = tempLlegadaResult;
+      const sensorNormalized = sensorRaw === undefined || sensorRaw === null ? '' : String(sensorRaw).trim();
+      if(!sensorNormalized){
+        return res.status(400).json({ ok:false, error:'Debes ingresar el serial del dispositivo.' });
+      }
+      const sensorValue = sensorNormalized.slice(0, 100);
       // Validar elegibilidad primero
       const eligQ = await withTenant(tenant, (c)=> c.query(
         `SELECT COUNT(*)::int AS total,
@@ -2928,12 +2934,13 @@ export const OperacionController = {
                 SET estado='En bodega',
                     sub_estado='Pendiente a Inspección',
                     temp_llegada_c=$5,
+                    sensor_id=$6,
                     zona_id = $3,
                     seccion_id = $4,
                     sede_id = COALESCE($2::int, ic.sede_id)
               WHERE ic.rfid = ANY($1::text[])
                 AND ic.estado='Operación'`,
-            [rfids, targetSede, zonaParam, seccionParam, tempLlegadaValue]
+            [rfids, targetSede, zonaParam, seccionParam, tempLlegadaValue, sensorValue]
           );
           await c.query(`UPDATE acond_caja_timers SET active=false, started_at=NULL, duration_sec=NULL, updated_at=NOW() WHERE caja_id=$1`, [cajaId]);
           await c.query(`UPDATE operacion_caja_timers SET active=false, started_at=NULL, duration_sec=NULL, updated_at=NOW() WHERE caja_id=$1`, [cajaId]);
@@ -2962,7 +2969,7 @@ export const OperacionController = {
           await c.query('COMMIT');
         } catch(e){ await c.query('ROLLBACK'); throw e; }
       }, { allowCrossSedeTransfer: transferCheck.allowCrossTransfer });
-      res.json({ ok:true, temp_llegada_c: tempLlegadaValue });
+      res.json({ ok:true, temp_llegada_c: tempLlegadaValue, sensor_id: sensorValue });
     } catch(e:any){ res.status(500).json({ ok:false, error: e.message||'Error enviando a Pendiente a Inspección' }); }
   },
   devolucionValidate: async (req: Request, res: Response) => {
