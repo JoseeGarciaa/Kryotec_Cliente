@@ -1109,7 +1109,8 @@
       }
       const serialInput = piSerial ? String(piSerial.value || '').trim() : '';
       const entry = scannedCajas.get(String(currentId)) || (data.cajas||[]).find(c=> String(c.id)===String(currentId));
-      const originalSerial = entry && entry.sensorId ? String(entry.sensorId).trim() : '';
+      const displayedSerial = piSensor && typeof piSensor.textContent === 'string' ? String(piSensor.textContent).trim() : '';
+      const originalSerial = entry && entry.sensorId ? String(entry.sensorId).trim() : displayedSerial;
       if(!serialInput){
         shouldReset = false;
         if(scanMsg) scanMsg.textContent = 'Ingresa el serial del dispositivo.';
@@ -1121,8 +1122,12 @@
       const normalizedInput = normalizeSerial(serialInput);
       let serialToSend = serialInput;
       if(normalizedOriginal && normalizedInput && normalizedOriginal !== normalizedInput){
+        const msg = `El serial ingresado (${serialInput || '—'}) es diferente al registrado (${originalSerial || '—'}).`;
+        if(typeof window !== 'undefined' && typeof window.alert === 'function'){
+          window.alert(msg);
+        }
         const proceed = typeof window !== 'undefined' && typeof window.confirm === 'function'
-          ? window.confirm(`El serial ingresado (${serialInput}) es diferente al registrado (${originalSerial || '—'}). ¿Deseas continuar con el nuevo serial?`)
+          ? window.confirm('¿Deseas continuar con el nuevo serial?')
           : true;
         if(!proceed){
           shouldReset = false;
