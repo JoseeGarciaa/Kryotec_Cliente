@@ -642,7 +642,7 @@ const parsePositiveInt = (value: unknown, label: string): number => {
   return Math.round(num);
 };
 
-const DEFAULT_REUSE_THRESHOLD_SEC = 24 * 60 * 60; // 24 horas
+const DEFAULT_REUSE_THRESHOLD_SEC = 12 * 60 * 60; // 12 horas
 
 type ReusePolicyCandidate = {
   seconds: number;
@@ -2720,7 +2720,7 @@ export const OperacionController = {
       res.status(500).json({ ok:false, error: e.message||'Error confirmando retorno' });
     }
   },
-  // Nuevo flujo devolución: si restan al menos 24 horas del cronómetro original de acond, vuelve a Acond (Lista para Despacho); de lo contrario pasa a "En bodega · Pendiente a Inspección".
+  // Nuevo flujo devolución: si restan al menos 12 horas del cronómetro original de acond, vuelve a Acond (Lista para Despacho); de lo contrario pasa a "En bodega · Pendiente a Inspección".
   devolucionCajaProcess: async (req: Request, res: Response) => {
     const tenant = (req as any).user?.tenant;
     const sedeId = getRequestSedeId(req);
@@ -2993,7 +2993,7 @@ export const OperacionController = {
       res.json({ ok:true, valid, invalid });
     } catch(e:any){ res.status(500).json({ ok:false, error: e.message||'Error validando RFIDs' }); }
   },
-  // Evaluar si una caja puede reutilizarse según cronómetro (requiere >=24 horas restantes)
+  // Evaluar si una caja puede reutilizarse según cronómetro (requiere >=12 horas restantes)
   devolucionCajaEvaluate: async (req: Request, res: Response) => {
     const tenant = (req as any).user?.tenant;
     const sedeId = getRequestSedeId(req);
