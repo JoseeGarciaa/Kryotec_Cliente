@@ -1,39 +1,42 @@
-name: Deploy to VPS
+name: Deploy Workflow
 
 on:
   push:
-    branches: [ "main" ]
+    branches:
+      - main
 
 jobs:
   deploy:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout
+      - name: Checkout code
         uses: actions/checkout@v4
 
-      # DESPLIEGUE EN HOSTINGER
       - name: Deploy to Hostinger
         uses: appleboy/ssh-action@v1.0.0
         with:
           host: ${{ secrets.HOSTINGER_IP }}
           username: ${{ secrets.VPS_USER }}
-          password: ${{ secrets.VPS_PASS }}
+          key: ${{ secrets.SSH_KEY }}
+          port: 22
+          # Esta línea ayuda a evitar errores de conexión inicial
+          envs: GITHUB_SHA
           script: |
-            cd /var/www/kryotec/Kryotec_Cliente
+            cd /var/www/kryotec
             git reset --hard HEAD
             git pull origin main
             chmod +x deploy/deploy.sh
             bash deploy/deploy.sh
 
-      # DESPLIEGUE EN CONTABO
       - name: Deploy to Contabo
         uses: appleboy/ssh-action@v1.0.0
         with:
           host: ${{ secrets.CONTABO_IP }}
           username: ${{ secrets.VPS_USER }}
-          password: ${{ secrets.VPS_PASS }}
+          key: ${{ secrets.SSH_KEY }}
+          port: 22
           script: |
-            cd /var/www/kryotec/Kryotec_Cliente
+            cd /var/www/kryotec
             git reset --hard HEAD
             git pull origin main
             chmod +x deploy/deploy.sh
