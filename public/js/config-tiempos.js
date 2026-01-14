@@ -222,7 +222,7 @@
 
   const refreshData = async () => {
     try {
-      const res = await fetch('/operacion/config-tiempos/data', { headers: { Accept: 'application/json' } });
+      const res = await fetch('/administracion/config-tiempos/data', { headers: { Accept: 'application/json' } });
       if (!res.ok) throw new Error('No se pudo actualizar la lista');
       const json = await res.json().catch(() => null);
       if (!json || json.ok !== true || !Array.isArray(json.configs)) throw new Error(json?.error || 'Respuesta inesperada');
@@ -256,7 +256,7 @@
     saveBtn.setAttribute('disabled', 'true');
     saveBtn.classList.add('loading');
     try {
-      const res = await fetch('/operacion/config-tiempos/save', {
+      const res = await fetch('/administracion/config-tiempos/save', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -287,7 +287,7 @@
     toggleBtn.setAttribute('disabled', 'true');
     toggleBtn.classList.add('loading');
     try {
-      const res = await fetch(`/operacion/config-tiempos/${configId}/toggle`, {
+      const res = await fetch(`/administracion/config-tiempos/${configId}/toggle`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

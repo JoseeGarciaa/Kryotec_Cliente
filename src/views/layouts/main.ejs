@@ -119,7 +119,7 @@
                   <li><a class="<%= currentPath === '/operacion/inspeccion' ? 'active' : '' %>" href="/operacion/inspeccion">Inspección</a></li>
                 <% } %>
                 <% if (hasExtendedRole || hasAdminRole) { %>
-                  <li><a class="<%= currentPath === '/operacion/config-tiempos' ? 'active' : '' %>" href="/operacion/config-tiempos">Cronómetros predeterminados</a></li>
+                  <!-- Cronómetros predeterminados se movió a Administración -->
                 <% } %>
               </ul>
             </details>
@@ -133,6 +133,7 @@
           <% } %>
           <% if (hasAdminRole && hasSede) { %>
             <li><a class="<%= currentPath.startsWith('/administracion') ? 'active' : '' %>" href="/administracion">Administración</a></li>
+            <li><a class="<%= currentPath.startsWith('/administracion/config-tiempos') ? 'active' : '' %>" href="/administracion/config-tiempos">Cronómetros predeterminados</a></li>
             <li><a class="<%= currentPath.startsWith('/reportes') ? 'active' : '' %>" href="/reportes">Reportes</a></li>
           <% } %>
         </ul>
