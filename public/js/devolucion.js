@@ -1116,10 +1116,13 @@
         piSerial && piSerial.focus();
         return;
       }
+      const normalizeSerial = (s) => s.trim().toUpperCase();
+      const normalizedOriginal = originalSerial ? normalizeSerial(originalSerial) : '';
+      const normalizedInput = normalizeSerial(serialInput);
       let serialToSend = serialInput;
-      if(originalSerial && serialToSend && originalSerial !== serialToSend){
+      if(normalizedOriginal && normalizedInput && normalizedOriginal !== normalizedInput){
         const proceed = typeof window !== 'undefined' && typeof window.confirm === 'function'
-          ? window.confirm(`El serial ingresado (${serialToSend}) es diferente al registrado (${originalSerial}). ¿Deseas continuar con el nuevo serial?`)
+          ? window.confirm(`El serial ingresado (${serialInput}) es diferente al registrado (${originalSerial || '—'}). ¿Deseas continuar con el nuevo serial?`)
           : true;
         if(!proceed){
           shouldReset = false;
