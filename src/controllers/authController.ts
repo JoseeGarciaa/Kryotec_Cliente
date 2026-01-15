@@ -42,11 +42,15 @@ export const AuthController = {
         const matches = await findUserInAnyTenant(correo);
         console.log('[auth][login] discovery matches fallback?', matches?.map(m=>m.tenant));
         if (!matches) return res.status(401).render('auth/login', { error: 'Usuario o contraseña incorrectos', layout: 'layouts/auth', title: 'Acceso al Cliente' });
-        if (matches.length > 1) {
+        const activeMatches = matches.filter((m) => m.user?.activo);
+        if (activeMatches.length === 0) {
+          return res.status(403).render('auth/login', { error: 'Usuario inactivo', layout: 'layouts/auth', title: 'Acceso al Cliente' });
+        }
+        if (activeMatches.length > 1) {
           return res.status(409).render('auth/login', { error: 'Correo duplicado en múltiples tenants', layout: 'layouts/auth', title: 'Acceso al Cliente' });
         }
-        tenantSchema = matches[0].tenant;
-        user = matches[0].user;
+        tenantSchema = activeMatches[0].tenant;
+        user = activeMatches[0].user;
       }
 
       // If we still don't have a user (e.g., DEFAULT_TENANT provided but user belongs to another tenant), try discovery
@@ -54,11 +58,15 @@ export const AuthController = {
         const matches = await findUserInAnyTenant(correo);
         console.log('[auth][login] discovery matches final?', matches?.map(m=>m.tenant));
         if (!matches) return res.status(401).render('auth/login', { error: 'Usuario o contraseña incorrectos', layout: 'layouts/auth', title: 'Acceso al Cliente' });
-        if (matches.length > 1) {
+        const activeMatches = matches.filter((m) => m.user?.activo);
+        if (activeMatches.length === 0) {
+          return res.status(403).render('auth/login', { error: 'Usuario inactivo', layout: 'layouts/auth', title: 'Acceso al Cliente' });
+        }
+        if (activeMatches.length > 1) {
           return res.status(409).render('auth/login', { error: 'Correo duplicado en múltiples tenants', layout: 'layouts/auth', title: 'Acceso al Cliente' });
         }
-        tenantSchema = matches[0].tenant;
-        user = matches[0].user;
+        tenantSchema = activeMatches[0].tenant;
+        user = activeMatches[0].user;
       }
 
       if (!user || !tenantSchema) {
@@ -168,9 +176,16 @@ export const AuthController = {
         // As final fallback, attempt discovery
         try {
           const matches = await findUserInAnyTenant((req.body as any)?.correo);
-          if (matches && matches.length === 1) {
-            const tenant = matches[0].tenant;
-            const user = matches[0].user;
+          if (matches) {
+            const activeMatches = matches.filter((m) => m.user?.activo);
+            if (activeMatches.length === 0) {
+              return res.status(403).render('auth/login', { error: 'Usuario inactivo', layout: 'layouts/auth', title: 'Acceso al Cliente' });
+            }
+            if (activeMatches.length > 1) {
+              return res.status(409).render('auth/login', { error: 'Correo duplicado en múltiples tenants', layout: 'layouts/auth', title: 'Acceso al Cliente' });
+            }
+            const tenant = activeMatches[0].tenant;
+            const user = activeMatches[0].user;
             await ensureSecurityArtifacts(tenant);
             if (!user.activo) {
               return res.status(403).render('auth/login', { error: 'Usuario inactivo', layout: 'layouts/auth', title: 'Acceso al Cliente' });

@@ -148,7 +148,8 @@ export const AdminController = {
       const currentTenantMatches = matches?.filter((match) => normalizeTenantSchema(match.tenant) === tenant) ?? [];
       const otherTenantMatches = matches?.filter((match) => normalizeTenantSchema(match.tenant) !== tenant) ?? [];
 
-      if (otherTenantMatches.length) {
+      const activeCrossTenant = otherTenantMatches.filter((match) => match.user?.activo);
+      if (activeCrossTenant.length) {
         return res.redirect('/administracion?error=' + encodeURIComponent('usuario ya pertenece a otro esquema, por favor intentar con otro correo'));
       }
 
@@ -160,7 +161,7 @@ export const AdminController = {
         return res.redirect(`/administracion?error=Correo+ya+existe:+${encodeURIComponent(correoInput)}`);
       }
       const globalMatches = await findUserInAnyTenant(correoNorm);
-      const crossTenantDuplicate = Boolean(globalMatches?.some((match) => match.tenant !== tenant));
+      const crossTenantDuplicate = Boolean(globalMatches?.some((match) => normalizeTenantSchema(match.tenant) !== tenant && match.user?.activo));
       if (crossTenantDuplicate) {
         return res.redirect('/administracion?error=' + encodeURIComponent('usuario ya pertenece a otro esquema, por favor intentar con otro correo'));
       }
