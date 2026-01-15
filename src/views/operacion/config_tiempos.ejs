@@ -42,28 +42,43 @@
         <div class="divider my-2"></div>
         <div class="grid gap-4 md:grid-cols-2">
           <label class="form-control">
-            <span class="label-text text-xs">Congelamiento (horas:minutos)</span>
-            <input id="cfg-min-cong" type="text" inputmode="numeric" placeholder="Ej. 0:05 o 5" class="input input-bordered" />
+            <span class="label-text text-xs">Congelamiento</span>
+            <div class="grid grid-cols-2 gap-2">
+              <input id="cfg-min-cong-h" type="number" min="0" step="1" placeholder="Horas" class="input input-bordered" />
+              <input id="cfg-min-cong-m" type="number" min="0" max="59" step="1" placeholder="Minutos (0-59)" class="input input-bordered" />
+            </div>
           </label>
           <label class="form-control">
-            <span class="label-text text-xs">Atemperamiento (horas:minutos)</span>
-            <input id="cfg-atem" type="text" inputmode="numeric" placeholder="Ej. 0:30 o 30" class="input input-bordered" />
+            <span class="label-text text-xs">Atemperamiento</span>
+            <div class="grid grid-cols-2 gap-2">
+              <input id="cfg-atem-h" type="number" min="0" step="1" placeholder="Horas" class="input input-bordered" />
+              <input id="cfg-atem-m" type="number" min="0" max="59" step="1" placeholder="Minutos (0-59)" class="input input-bordered" />
+            </div>
           </label>
           <label class="form-control">
-            <span class="label-text text-xs">Máximo sobre atemperamiento (horas:minutos)</span>
-            <input id="cfg-max-atem" type="text" inputmode="numeric" placeholder="Ej. 0:45 o 45" class="input input-bordered" />
+            <span class="label-text text-xs">Máximo sobre atemperamiento</span>
+            <div class="grid grid-cols-2 gap-2">
+              <input id="cfg-max-atem-h" type="number" min="0" step="1" placeholder="Horas" class="input input-bordered" />
+              <input id="cfg-max-atem-m" type="number" min="0" max="59" step="1" placeholder="Minutos (0-59)" class="input input-bordered" />
+            </div>
           </label>
           <label class="form-control">
-            <span class="label-text text-xs">Vida útil de la caja (horas:minutos)</span>
-            <input id="cfg-vida" type="text" inputmode="numeric" placeholder="Ej. 12:00 o 720" class="input input-bordered" />
+            <span class="label-text text-xs">Vida útil de la caja</span>
+            <div class="grid grid-cols-2 gap-2">
+              <input id="cfg-vida-h" type="number" min="0" step="1" placeholder="Horas" class="input input-bordered" />
+              <input id="cfg-vida-m" type="number" min="0" max="59" step="1" placeholder="Minutos (0-59)" class="input input-bordered" />
+            </div>
           </label>
           <label class="form-control md:col-span-2">
-            <span class="label-text text-xs">Tiempo mínimo para reutilización (horas:minutos)</span>
-            <input id="cfg-reuso" type="text" inputmode="numeric" placeholder="Ej. 12:00 o 720" class="input input-bordered" />
+            <span class="label-text text-xs">Tiempo mínimo para reutilización</span>
+            <div class="grid grid-cols-2 gap-2">
+              <input id="cfg-reuso-h" type="number" min="0" step="1" placeholder="Horas" class="input input-bordered" />
+              <input id="cfg-reuso-m" type="number" min="0" max="59" step="1" placeholder="Minutos (0-59)" class="input input-bordered" />
+            </div>
           </label>
         </div>
         <p class="text-xs opacity-60">
-          Puedes escribir en formato horas:minutos (HH:MM) o solo minutos. Se normaliza para que los minutos sean &lt; 60 (ej. 90 ➜ 1:30, 12:75 no se permite).
+          Ingresa horas y minutos. Los minutos se limitan a 0-59; el valor total debe ser mayor a 0.
         </p>
         <div class="flex flex-wrap gap-2 justify-end items-center">
           <span id="cfg-status" class="text-xs opacity-70 hidden"></span>

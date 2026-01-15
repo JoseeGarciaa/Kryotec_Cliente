@@ -8,11 +8,16 @@
   const qs = (sel) => document.querySelector(sel);
   const sedeSelect = qs('#cfg-sede');
   const modeloSelect = qs('#cfg-modelo');
-  const inputMinCong = qs('#cfg-min-cong');
-  const inputAtem = qs('#cfg-atem');
-  const inputMaxAtem = qs('#cfg-max-atem');
-  const inputVida = qs('#cfg-vida');
-  const inputReuso = qs('#cfg-reuso');
+  const inputMinCongH = qs('#cfg-min-cong-h');
+  const inputMinCongM = qs('#cfg-min-cong-m');
+  const inputAtemH = qs('#cfg-atem-h');
+  const inputAtemM = qs('#cfg-atem-m');
+  const inputMaxAtemH = qs('#cfg-max-atem-h');
+  const inputMaxAtemM = qs('#cfg-max-atem-m');
+  const inputVidaH = qs('#cfg-vida-h');
+  const inputVidaM = qs('#cfg-vida-m');
+  const inputReusoH = qs('#cfg-reuso-h');
+  const inputReusoM = qs('#cfg-reuso-m');
   const alertBox = qs('#cfg-alert');
   const statusLabel = qs('#cfg-status');
   const saveBtn = qs('#cfg-save');
@@ -20,39 +25,24 @@
   const resetBtn = qs('#cfg-reset');
   const tableBody = qs('#cfg-table tbody');
 
-  const formatDuration = (sec) => {
+  const splitDuration = (sec) => {
     const total = Number(sec);
-    if (!Number.isFinite(total) || total <= 0) return '';
+    if (!Number.isFinite(total) || total <= 0) return { h: '', m: '' };
     const minutes = Math.round(total / 60);
     const h = Math.floor(minutes / 60);
     const m = minutes % 60;
-    return `${h}:${String(m).padStart(2, '0')}`;
+    return { h: String(h), m: String(m) };
   };
 
-  const parseDurationToSeconds = (raw) => {
-    if (raw === null || raw === undefined) return { ok: false, error: 'Valor requerido' };
-    const text = String(raw).trim();
-    if (!text) return { ok: false, error: 'Valor requerido' };
-    const colon = text.includes(':');
-    if (colon) {
-      const parts = text.split(':');
-      if (parts.length !== 2) return { ok: false, error: 'Usa formato HH:MM' };
-      const h = Number(parts[0]);
-      const m = Number(parts[1]);
-      if (!Number.isFinite(h) || h < 0) return { ok: false, error: 'Horas inválidas' };
-      if (!Number.isFinite(m) || m < 0 || m > 59) return { ok: false, error: 'Minutos debe estar entre 0 y 59' };
-      const totalSec = Math.round(h * 3600 + m * 60);
-      return totalSec > 0 ? { ok: true, seconds: totalSec, normalized: `${h}:${String(m).padStart(2, '0')}` } : { ok: false, error: 'Debe ser mayor a 0' };
+  const parseFieldsToSeconds = (hInput, mInput, label) => {
+    const hVal = hInput ? Number(hInput.value || 0) : 0;
+    const mVal = mInput ? Number(mInput.value || 0) : 0;
+    if ((!Number.isFinite(hVal) || hVal < 0) || (!Number.isFinite(mVal) || mVal < 0 || mVal > 59)) {
+      return { ok: false, error: `${label}: horas o minutos inválidos (minutos 0-59)` };
     }
-    const num = Number(text);
-    if (!Number.isFinite(num) || num <= 0) return { ok: false, error: 'Ingresa un número mayor a 0' };
-    // Interpreta como minutos totales. Si pasa de 59, se normaliza.
-    const minutes = Math.round(num);
-    const h = Math.floor(minutes / 60);
-    const m = minutes % 60;
-    const totalSec = minutes * 60;
-    const normalized = `${h}:${String(m).padStart(2, '0')}`;
-    return { ok: true, seconds: totalSec, normalized };
+    const totalSec = Math.round(hVal * 3600 + mVal * 60);
+    if (totalSec <= 0) return { ok: false, error: `${label}: debe ser mayor a 0` };
+    return { ok: true, seconds: totalSec };
   };
 
   const escapeHtml = (value) => String(value ?? '')
@@ -127,11 +117,21 @@
   };
 
   const fillInputs = (cfg) => {
-    if (inputMinCong) inputMinCong.value = cfg ? formatDuration(cfg.minCongelamientoSec) : '';
-    if (inputAtem) inputAtem.value = cfg ? formatDuration(cfg.atemperamientoSec) : '';
-    if (inputMaxAtem) inputMaxAtem.value = cfg ? formatDuration(cfg.maxSobreAtemperamientoSec) : '';
-    if (inputVida) inputVida.value = cfg ? formatDuration(cfg.vidaCajaSec) : '';
-    if (inputReuso) inputReuso.value = cfg ? formatDuration(cfg.minReusoSec) : '';
+    const cong = splitDuration(cfg?.minCongelamientoSec);
+    if (inputMinCongH) inputMinCongH.value = cong.h;
+    if (inputMinCongM) inputMinCongM.value = cong.m;
+    const atem = splitDuration(cfg?.atemperamientoSec);
+    if (inputAtemH) inputAtemH.value = atem.h;
+    if (inputAtemM) inputAtemM.value = atem.m;
+    const maxAtem = splitDuration(cfg?.maxSobreAtemperamientoSec);
+    if (inputMaxAtemH) inputMaxAtemH.value = maxAtem.h;
+    if (inputMaxAtemM) inputMaxAtemM.value = maxAtem.m;
+    const vida = splitDuration(cfg?.vidaCajaSec);
+    if (inputVidaH) inputVidaH.value = vida.h;
+    if (inputVidaM) inputVidaM.value = vida.m;
+    const reuso = splitDuration(cfg?.minReusoSec);
+    if (inputReusoH) inputReusoH.value = reuso.h;
+    if (inputReusoM) inputReusoM.value = reuso.m;
   };
 
   const syncForm = () => {
@@ -174,14 +174,9 @@
     }
   };
 
-  const durationFromInput = (input, label) => {
-    if (!input) return { ok: false, error: `${label} es obligatorio` };
-    const parsed = parseDurationToSeconds(input.value);
-    if (!parsed.ok) return { ok: false, error: `${label}: ${parsed.error}` };
-    // Normaliza en el propio input para dar feedback inmediato
-    if (input && typeof parsed.normalized === 'string') {
-      input.value = parsed.normalized;
-    }
+  const durationFromInputs = (hInput, mInput, label) => {
+    const parsed = parseFieldsToSeconds(hInput, mInput, label);
+    if (!parsed.ok) return { ok: false, error: parsed.error };
     return { ok: true, value: parsed.seconds };
   };
 
@@ -192,15 +187,15 @@
       return { ok: false, error: 'Selecciona un modelo.' };
     }
     const parts = [
-      { input: inputMinCong, label: 'Congelamiento' },
-      { input: inputAtem, label: 'Atemperamiento' },
-      { input: inputMaxAtem, label: 'Máximo sobre atemperamiento' },
-      { input: inputVida, label: 'Vida útil de la caja' },
-      { input: inputReuso, label: 'Tiempo mínimo para reutilización' },
+      { h: inputMinCongH, m: inputMinCongM, label: 'Congelamiento' },
+      { h: inputAtemH, m: inputAtemM, label: 'Atemperamiento' },
+      { h: inputMaxAtemH, m: inputMaxAtemM, label: 'Máximo sobre atemperamiento' },
+      { h: inputVidaH, m: inputVidaM, label: 'Vida útil de la caja' },
+      { h: inputReusoH, m: inputReusoM, label: 'Tiempo mínimo para reutilización' },
     ];
     const values = {};
     for (const part of parts) {
-      const result = durationFromInput(part.input, part.label);
+      const result = durationFromInputs(part.h, part.m, part.label);
       if (!result.ok) return { ok: false, error: result.error };
       const key = part.label;
       if (key === 'Congelamiento') values.min_congelamiento_sec = result.value;
@@ -335,11 +330,8 @@
   };
 
   const resetForm = () => {
-    if (inputMinCong) inputMinCong.value = '';
-    if (inputAtem) inputAtem.value = '';
-    if (inputMaxAtem) inputMaxAtem.value = '';
-    if (inputVida) inputVida.value = '';
-    if (inputReuso) inputReuso.value = '';
+    [inputMinCongH, inputMinCongM, inputAtemH, inputAtemM, inputMaxAtemH, inputMaxAtemM, inputVidaH, inputVidaM, inputReusoH, inputReusoM]
+      .forEach((inp) => { if (inp) inp.value = ''; });
     clearAlert();
     updateStatus('', 'info');
     if (toggleBtn) {
@@ -368,16 +360,15 @@
     syncForm();
   });
 
-  // Normalizar inputs al salir: convierte minutos totales a HH:MM y limita MM < 60
-  const normalizeOnBlur = (input) => {
+  // Clamp minutes to 0-59 on blur
+  const clampMinutes = (input) => {
     if (!input) return;
     input.addEventListener('blur', () => {
-      const parsed = parseDurationToSeconds(input.value);
-      if (parsed.ok && typeof parsed.normalized === 'string') {
-        input.value = parsed.normalized;
-      }
+      const val = Number(input.value || 0);
+      if (!Number.isFinite(val) || val < 0) { input.value = ''; return; }
+      const clamped = Math.min(59, Math.max(0, Math.trunc(val)));
+      input.value = String(clamped);
     });
   };
-
-  [inputMinCong, inputAtem, inputMaxAtem, inputVida, inputReuso].forEach(normalizeOnBlur);
+  [inputMinCongM, inputAtemM, inputMaxAtemM, inputVidaM, inputReusoM].forEach(clampMinutes);
 })();
