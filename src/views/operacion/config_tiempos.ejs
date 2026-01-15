@@ -42,28 +42,28 @@
         <div class="divider my-2"></div>
         <div class="grid gap-4 md:grid-cols-2">
           <label class="form-control">
-            <span class="label-text text-xs">Congelamiento (minutos)</span>
-            <input id="cfg-min-cong" type="number" min="1" step="1" placeholder="Ej. 5" class="input input-bordered" />
+            <span class="label-text text-xs">Congelamiento (horas:minutos)</span>
+            <input id="cfg-min-cong" type="text" inputmode="numeric" placeholder="Ej. 0:05 o 5" class="input input-bordered" />
           </label>
           <label class="form-control">
-            <span class="label-text text-xs">Atemperamiento (minutos)</span>
-            <input id="cfg-atem" type="number" min="1" step="1" placeholder="Ej. 30" class="input input-bordered" />
+            <span class="label-text text-xs">Atemperamiento (horas:minutos)</span>
+            <input id="cfg-atem" type="text" inputmode="numeric" placeholder="Ej. 0:30 o 30" class="input input-bordered" />
           </label>
           <label class="form-control">
-            <span class="label-text text-xs">Máximo sobre atemperamiento (minutos)</span>
-            <input id="cfg-max-atem" type="number" min="1" step="1" placeholder="Ej. 45" class="input input-bordered" />
+            <span class="label-text text-xs">Máximo sobre atemperamiento (horas:minutos)</span>
+            <input id="cfg-max-atem" type="text" inputmode="numeric" placeholder="Ej. 0:45 o 45" class="input input-bordered" />
           </label>
           <label class="form-control">
-            <span class="label-text text-xs">Vida útil de la caja (minutos)</span>
-            <input id="cfg-vida" type="number" min="1" step="1" placeholder="Ej. 720" class="input input-bordered" />
+            <span class="label-text text-xs">Vida útil de la caja (horas:minutos)</span>
+            <input id="cfg-vida" type="text" inputmode="numeric" placeholder="Ej. 12:00 o 720" class="input input-bordered" />
           </label>
           <label class="form-control md:col-span-2">
-            <span class="label-text text-xs">Tiempo mínimo para reutilización (minutos)</span>
-            <input id="cfg-reuso" type="number" min="1" step="1" placeholder="Ej. 720" class="input input-bordered" />
+            <span class="label-text text-xs">Tiempo mínimo para reutilización (horas:minutos)</span>
+            <input id="cfg-reuso" type="text" inputmode="numeric" placeholder="Ej. 12:00 o 720" class="input input-bordered" />
           </label>
         </div>
         <p class="text-xs opacity-60">
-          Ingresa todos los valores en minutos. Puedes convertir horas multiplicando por 60 (por ejemplo, 12 horas = 720 minutos).
+          Puedes escribir en formato horas:minutos (HH:MM) o solo minutos. Se normaliza para que los minutos sean &lt; 60 (ej. 90 ➜ 1:30, 12:75 no se permite).
         </p>
         <div class="flex flex-wrap gap-2 justify-end items-center">
           <span id="cfg-status" class="text-xs opacity-70 hidden"></span>

@@ -20,16 +20,39 @@
   const resetBtn = qs('#cfg-reset');
   const tableBody = qs('#cfg-table tbody');
 
-  const minutesFromSeconds = (sec) => {
-    const value = Number(sec);
-    if (!Number.isFinite(value) || value <= 0) return '';
-    return Math.max(1, Math.round(value / 60));
+  const formatDuration = (sec) => {
+    const total = Number(sec);
+    if (!Number.isFinite(total) || total <= 0) return '';
+    const minutes = Math.round(total / 60);
+    const h = Math.floor(minutes / 60);
+    const m = minutes % 60;
+    return `${h}:${String(m).padStart(2, '0')}`;
   };
 
-  const secondsFromMinutes = (min) => {
-    const value = Number(min);
-    if (!Number.isFinite(value) || value <= 0) return NaN;
-    return Math.round(value * 60);
+  const parseDurationToSeconds = (raw) => {
+    if (raw === null || raw === undefined) return { ok: false, error: 'Valor requerido' };
+    const text = String(raw).trim();
+    if (!text) return { ok: false, error: 'Valor requerido' };
+    const colon = text.includes(':');
+    if (colon) {
+      const parts = text.split(':');
+      if (parts.length !== 2) return { ok: false, error: 'Usa formato HH:MM' };
+      const h = Number(parts[0]);
+      const m = Number(parts[1]);
+      if (!Number.isFinite(h) || h < 0) return { ok: false, error: 'Horas inválidas' };
+      if (!Number.isFinite(m) || m < 0 || m > 59) return { ok: false, error: 'Minutos debe estar entre 0 y 59' };
+      const totalSec = Math.round(h * 3600 + m * 60);
+      return totalSec > 0 ? { ok: true, seconds: totalSec, normalized: `${h}:${String(m).padStart(2, '0')}` } : { ok: false, error: 'Debe ser mayor a 0' };
+    }
+    const num = Number(text);
+    if (!Number.isFinite(num) || num <= 0) return { ok: false, error: 'Ingresa un número mayor a 0' };
+    // Interpreta como minutos totales. Si pasa de 59, se normaliza.
+    const minutes = Math.round(num);
+    const h = Math.floor(minutes / 60);
+    const m = minutes % 60;
+    const totalSec = minutes * 60;
+    const normalized = `${h}:${String(m).padStart(2, '0')}`;
+    return { ok: true, seconds: totalSec, normalized };
   };
 
   const escapeHtml = (value) => String(value ?? '')
@@ -104,11 +127,11 @@
   };
 
   const fillInputs = (cfg) => {
-    if (inputMinCong) inputMinCong.value = cfg ? minutesFromSeconds(cfg.minCongelamientoSec) : '';
-    if (inputAtem) inputAtem.value = cfg ? minutesFromSeconds(cfg.atemperamientoSec) : '';
-    if (inputMaxAtem) inputMaxAtem.value = cfg ? minutesFromSeconds(cfg.maxSobreAtemperamientoSec) : '';
-    if (inputVida) inputVida.value = cfg ? minutesFromSeconds(cfg.vidaCajaSec) : '';
-    if (inputReuso) inputReuso.value = cfg ? minutesFromSeconds(cfg.minReusoSec) : '';
+    if (inputMinCong) inputMinCong.value = cfg ? formatDuration(cfg.minCongelamientoSec) : '';
+    if (inputAtem) inputAtem.value = cfg ? formatDuration(cfg.atemperamientoSec) : '';
+    if (inputMaxAtem) inputMaxAtem.value = cfg ? formatDuration(cfg.maxSobreAtemperamientoSec) : '';
+    if (inputVida) inputVida.value = cfg ? formatDuration(cfg.vidaCajaSec) : '';
+    if (inputReuso) inputReuso.value = cfg ? formatDuration(cfg.minReusoSec) : '';
   };
 
   const syncForm = () => {
@@ -151,13 +174,15 @@
     }
   };
 
-  const minutesFromInput = (input, label) => {
+  const durationFromInput = (input, label) => {
     if (!input) return { ok: false, error: `${label} es obligatorio` };
-    const value = Number(input.value);
-    if (!Number.isFinite(value) || value <= 0) {
-      return { ok: false, error: `${label} debe ser mayor a 0` };
+    const parsed = parseDurationToSeconds(input.value);
+    if (!parsed.ok) return { ok: false, error: `${label}: ${parsed.error}` };
+    // Normaliza en el propio input para dar feedback inmediato
+    if (input && typeof parsed.normalized === 'string') {
+      input.value = parsed.normalized;
     }
-    return { ok: true, value: secondsFromMinutes(value) };
+    return { ok: true, value: parsed.seconds };
   };
 
   const collectPayload = () => {
@@ -175,7 +200,7 @@
     ];
     const values = {};
     for (const part of parts) {
-      const result = minutesFromInput(part.input, part.label);
+      const result = durationFromInput(part.input, part.label);
       if (!result.ok) return { ok: false, error: result.error };
       const key = part.label;
       if (key === 'Congelamiento') values.min_congelamiento_sec = result.value;
@@ -342,4 +367,17 @@
     resetForm();
     syncForm();
   });
+
+  // Normalizar inputs al salir: convierte minutos totales a HH:MM y limita MM < 60
+  const normalizeOnBlur = (input) => {
+    if (!input) return;
+    input.addEventListener('blur', () => {
+      const parsed = parseDurationToSeconds(input.value);
+      if (parsed.ok && typeof parsed.normalized === 'string') {
+        input.value = parsed.normalized;
+      }
+    });
+  };
+
+  [inputMinCong, inputAtem, inputMaxAtem, inputVida, inputReuso].forEach(normalizeOnBlur);
 })();
