@@ -25,6 +25,16 @@
   const resetBtn = qs('#cfg-reset');
   const tableBody = qs('#cfg-table tbody');
 
+  const minutesFromSeconds = (sec) => {
+    const value = Number(sec);
+    if (!Number.isFinite(value) || value <= 0) return '';
+    const minutes = Math.round(value / 60);
+    const h = Math.floor(minutes / 60);
+    const m = minutes % 60;
+    if (h > 0) return `${h}:${String(m).padStart(2, '0')}`;
+    return String(minutes);
+  };
+
   const splitDuration = (sec) => {
     const total = Number(sec);
     if (!Number.isFinite(total) || total <= 0) return { h: '', m: '' };
