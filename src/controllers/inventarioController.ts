@@ -23,7 +23,8 @@ export const InventarioController = {
   const tenant = String(t0).startsWith('tenant_') ? String(t0) : `tenant_${t0}`;
     // Inputs
     const sedeId = getRequestSedeId(req);
-  const { q: qRaw, cat: catRaw, state: stateRaw, page: pageRaw, limit: limitRaw, rfids: rfidsRaw } = req.query as any;
+  const { q: qRaw, cat: catRaw, state: stateRaw, page: pageRaw, limit: limitRaw, rfids: rfidsRaw, error: errorRaw } = req.query as any;
+    const error = errorRaw ? String(errorRaw) : '';
     const q = (qRaw ? String(qRaw) : '').slice(0, 24);
     const cat = catRaw ? String(catRaw).toLowerCase() : '';
     const state = stateRaw ? String(stateRaw).toLowerCase() : '';
@@ -274,6 +275,7 @@ ${selectClause}
       scannedRfids,
       multiScan: scannedRfids.length > 0,
       cajaMode,
+      error,
       pageSizeOptions: PAGE_SIZE_OPTIONS,
     });
   },
@@ -375,6 +377,7 @@ ${selectClause}
     const id = Number((req.params as any).id);
     if(!Number.isFinite(id) || id<=0) return res.status(400).json({ ok:false, error:'id inválido' });
     const { nombre_unidad, lote, zona_id, seccion_id, activo: activoRaw } = req.body as any;
+    let currentRfid: string | null = null;
 
     const parseOptionalNumber = (value: unknown): number | null => {
       if (value === undefined || value === null || value === '') return null;
@@ -395,6 +398,19 @@ ${selectClause}
     const activoFlag = parseOptionalBoolean(activoRaw);
 
     try {
+      // Fetch current item RFID with sede guard
+      const fetchParams: any[] = [id];
+      let fetchSql = 'SELECT rfid FROM inventario_credocubes WHERE id = $1';
+      if (sedeId !== null) {
+        fetchParams.push(sedeId);
+        fetchSql += ' AND (sede_id = $2 OR sede_id IS NULL)';
+      }
+      const fetched = await withTenant(tenant, (c) => c.query(fetchSql, fetchParams));
+      if (!fetched.rowCount) {
+        return res.status(404).json({ ok: false, error: 'Item no encontrado para la sede' });
+      }
+      currentRfid = String(fetched.rows[0].rfid || '').trim();
+
       const validation = await withTenant(tenant, async (client) => {
         let zonaRecord: Awaited<ReturnType<typeof ZonasModel.findZonaById>> | null = null;
         let seccionRecord: Awaited<ReturnType<typeof ZonasModel.findSeccionById>> | null = null;
@@ -448,6 +464,15 @@ ${selectClause}
           seccionId: seccionFinal,
         };
       });
+
+      // Cross-tenant activation guard: only allow enable if no active elsewhere
+      if (activoFlag === true && currentRfid) {
+        const globalStatuses = await findRfidStatusesAcrossTenants([currentRfid], tenant);
+        const conflicts = (globalStatuses[currentRfid] || []).filter((c) => c.activo !== false);
+        if (conflicts.length > 0) {
+          return res.redirect('/inventario?error=rfid_activo_otro_tenant');
+        }
+      }
 
       zonaId = validation.zonaId;
       seccionId = validation.seccionId;

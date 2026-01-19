@@ -3,6 +3,11 @@
     <span>Ocurrió un error al inhabilitar el registro.</span>
   </div>
 <% } %>
+<% if (typeof error !== 'undefined' && error === 'rfid_activo_otro_tenant') { %>
+  <div class="alert alert-error mb-4">
+    <span>La pieza ya se encuentra habilitada en otro inventario. Desactívala allí antes de habilitarla aquí.</span>
+  </div>
+<% } %>
 <% title = 'Inventario' %>
 <%
   const safePage = Number(page) > 0 ? Number(page) : 1;

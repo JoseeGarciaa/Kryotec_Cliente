@@ -5,8 +5,8 @@ import { UsersModel } from '../models/User';
 import { SedesModel } from '../models/Sede';
 import { normalizeRoleName, resolveEffectiveRole } from '../middleware/roles';
 import { normalizeSessionTtl, PASSWORD_POLICY_MESSAGE, validatePasswordStrength } from '../utils/passwordPolicy';
-import { config } from '../config';
 import { findUserInAnyTenant } from '../services/tenantDiscovery';
+import { config } from '../config';
 
 function coerceSedeId(value: unknown): number | null {
   if (value === null || value === undefined) return null;
@@ -356,6 +356,14 @@ export const AdminController = {
       const sessionTtl = sesion_ttl_minutos !== undefined && sesion_ttl_minutos !== ''
         ? normalizeSessionTtl(sesion_ttl_minutos)
         : null;
+      // Cross-tenant activation guard: only allow enable if no other tenant has the correo activo
+      if (nuevoActivo === true) {
+        const matches = await findUserInAnyTenant(correoInput);
+        if (matches && matches.some((m) => m.tenant !== tenant && m.user?.activo)) {
+          return res.redirect('/administracion?error=Correo+activo+en+otro+tenant');
+        }
+      }
+
       const updated = await withTenant(tenant, async (client) => {
         if (hashed) {
           await UsersModel.markPasswordChange(client, id, hashed, (req as any).user?.sub ?? null);
@@ -403,6 +411,14 @@ export const AdminController = {
         });
         if (isLastAdmin) {
           return res.status(400).json({ ok: false, error: 'No se puede desactivar el último administrador' });
+        }
+      } else {
+        // Activar: verificar que no exista activo con mismo correo en otros tenants
+        const user = await withTenant(tenant, (client) => UsersModel.findById(client, id));
+        if (!user) return res.status(404).json({ ok: false, error: 'Usuario no encontrado' });
+        const matches = await findUserInAnyTenant(user.correo);
+        if (matches && matches.some((m) => m.tenant !== tenant && m.user?.activo)) {
+          return res.status(400).json({ ok: false, error: 'El correo ya está activo en otro tenant' });
         }
       }
       await withTenant(tenant, (client) => UsersModel.setActivo(client, id, desired));
