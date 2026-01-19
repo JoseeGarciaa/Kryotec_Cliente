@@ -15,8 +15,11 @@
   try { initialDupRfids = JSON.parse(dataEl.dataset.dups || '[]'); } catch { initialDupRfids = []; }
   let initialForeignConflicts = [];
   try { initialForeignConflicts = JSON.parse(dataEl.dataset.foreign || '[]'); } catch { initialForeignConflicts = []; }
+  let initialGlobalConflicts = [];
+  try { initialGlobalConflicts = JSON.parse(dataEl.dataset.global || '[]'); } catch { initialGlobalConflicts = []; }
   let lastDuplicates = [];
   let lastForeign = [];
+  let lastGlobal = [];
   let validationDone = false;
 
   const tipoEl = document.getElementById('tipo');
@@ -61,18 +64,36 @@
     }).filter(Boolean);
   }
 
+  function parseGlobalEntries(raw){
+    if(!Array.isArray(raw)) return [];
+    return raw.map((entry)=>{
+      if(!entry) return null;
+      const rfid = normalizeRfid(entry.rfid || entry.RFID || entry.code);
+      if(!rfid) return null;
+      const tenant = entry.tenant || entry.schema || '';
+      const estado = entry.estado || entry.state || '';
+      return { rfid, tenant, estado };
+    }).filter(Boolean);
+  }
+
   initialDupRfids = Array.isArray(initialDupRfids) ? initialDupRfids.map(normalizeRfid) : [];
   initialForeignConflicts = parseForeignEntries(initialForeignConflicts);
+  initialGlobalConflicts = parseGlobalEntries(initialGlobalConflicts);
 
-  function setValidationFeedback(duplicates, foreign){
+  function setValidationFeedback(duplicates, foreign, global){
     lastDuplicates = (duplicates||[]).map(normalizeRfid);
     lastForeign = parseForeignEntries(foreign || []);
+      lastGlobal = parseGlobalEntries(global || []); // Initialize with global conflicts
     if(!dupMsg) return;
     const chunks = [];
     if(lastDuplicates.length){ chunks.push(`Duplicados: ${lastDuplicates.join(', ')}`); }
     if(lastForeign.length){
       const formatted = lastForeign.map((item)=> item.sedeNombre ? `${item.rfid} (${item.sedeNombre})` : item.rfid);
       chunks.push(`Asignados a otra sede: ${formatted.join(', ')}`);
+    }
+    if(lastGlobal.length){
+      const formatted = lastGlobal.map((item)=> item.rfid);
+      chunks.push(`La pieza ya se encuentra registrada en otro inventario: ${formatted.join(', ')}`);
     }
     dupMsg.textContent = chunks.join(' · ');
   }
@@ -81,7 +102,7 @@
     rfids = [];
     pendingCodes.clear();
     validationDone = false;
-    setValidationFeedback([], []);
+    setValidationFeedback([], [], []);
     renderRFIDs();
   }
 
@@ -100,7 +121,7 @@
     // Visual chips list with remove buttons
     if(rfidList){
       rfidList.innerHTML = rfids.map((r,i)=>{
-        const status = (validationDone && lastDuplicates.length === 0 && lastForeign.length === 0) ? '<span class="text-[10px] text-success mt-1">ok</span>' : '';
+        const status = (validationDone && lastDuplicates.length === 0 && lastForeign.length === 0 && lastGlobal.length === 0) ? '<span class="text-[10px] text-success mt-1">ok</span>' : '';
         return `<div class="inline-flex flex-col items-center">
                   <span class="badge badge-outline gap-2">${r}<button type="button" class="btn btn-ghost btn-xs" data-remove="${i}">✕</button></span>
                   ${status}
@@ -114,7 +135,7 @@
     if(rfids.length === 0){
       validationDone = false;
       renderRFIDs();
-      setValidationFeedback([], []);
+      setValidationFeedback([], [], []);
       return;
     }
     try{
@@ -137,9 +158,15 @@
         rfids = rfids.filter((r)=> !foreignSet.has(r));
         foreignSet.forEach((code)=> pendingCodes.delete(code));
       }
+      const globalEntries = parseGlobalEntries(data.global);
+      if(globalEntries.length){
+        const globalSet = new Set(globalEntries.map((item)=> item.rfid));
+        rfids = rfids.filter((r)=> !globalSet.has(r));
+        globalSet.forEach((code)=> pendingCodes.delete(code));
+      }
       validationDone = true;
       renderRFIDs();
-      setValidationFeedback(rawDuplicates, foreignEntries);
+      setValidationFeedback(rawDuplicates, foreignEntries, globalEntries);
     }catch{
       // keep previous state on error
     }
@@ -178,10 +205,12 @@
       const rawDuplicates = Array.isArray(data.dups) ? data.dups : [];
       const normalizedDuplicates = rawDuplicates.map(normalizeRfid);
       const foreignEntries = parseForeignEntries(data.foreign);
+      const globalEntries = parseGlobalEntries(data.global);
       const isDup = normalizedDuplicates.includes(code);
       const isForeign = foreignEntries.some((item)=> item.rfid === code);
-      if(isDup || isForeign){
-        setValidationFeedback(rawDuplicates, foreignEntries);
+      const isGlobal = globalEntries.some((item)=> item.rfid === code);
+      if(isDup || isForeign || isGlobal){
+        setValidationFeedback(rawDuplicates, foreignEntries, globalEntries);
         pendingCodes.delete(code);
         return false;
       }
@@ -190,7 +219,7 @@
       }
       validationDone = false;
       renderRFIDs();
-      setValidationFeedback([], []);
+      setValidationFeedback([], [], []);
       pendingCodes.delete(code);
       return true;
     }catch{}
@@ -318,17 +347,21 @@
       scanEl.placeholder = 'Listo para escanear...';
     }
 
-  // Si el servidor envió duplicados o conflictos de sede, mostrar mensaje inicial
-  if(initialDupRfids.length || initialForeignConflicts.length){
+  // Si el servidor envió duplicados, conflictos de sede o de tenant, mostrar mensaje inicial
+  if(initialDupRfids.length || initialForeignConflicts.length || initialGlobalConflicts.length){
     const dupSet = new Set(initialDupRfids);
     const foreignSet = new Set(initialForeignConflicts.map((item)=> item.rfid));
-    if(dupSet.size || foreignSet.size){
-      rfids = rfids.filter((r)=> !dupSet.has(normalizeRfid(r)) && !foreignSet.has(normalizeRfid(r)));
+    const globalSet = new Set(initialGlobalConflicts.map((item)=> item.rfid));
+    if(dupSet.size || foreignSet.size || globalSet.size){
+      rfids = rfids.filter((r)=> {
+        const norm = normalizeRfid(r);
+        return !dupSet.has(norm) && !foreignSet.has(norm) && !globalSet.has(norm);
+      });
     }
   }
   renderRFIDs();
-  if(initialDupRfids.length || initialForeignConflicts.length){
-    setValidationFeedback(initialDupRfids, initialForeignConflicts);
+  if(initialDupRfids.length || initialForeignConflicts.length || initialGlobalConflicts.length){
+    setValidationFeedback(initialDupRfids, initialForeignConflicts, initialGlobalConflicts);
     if(rfids.length){ validateRfids(); }
   } else if(rfids.length){
     validateRfids();

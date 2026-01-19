@@ -4,6 +4,7 @@ import { AlertsModel } from '../models/Alerts';
 import { resolveTenant } from '../middleware/tenant';
 import { getRequestSedeId } from '../utils/sede';
 import { ZonasModel } from '../models/Zona';
+import { findRfidStatusesAcrossTenants } from '../utils/globalInventory';
 
 const PAGE_SIZE_OPTIONS = [5, 10, 15, 20] as const;
 const DEFAULT_PAGE_SIZE = 20;
@@ -573,7 +574,33 @@ ${selectClause}
   const tenant = String(t4).startsWith('tenant_') ? String(t4) : `tenant_${t4}`;
     const sedeId = getRequestSedeId(req);
     const { modelo_id, nombre_unidad, rfid, lote, estado, sub_estado } = req.body;
+
+    const renderError = async (message: string) => {
+      const modelos = await withTenant(tenant, (c) => c.query('SELECT modelo_id, nombre_modelo FROM modelos ORDER BY nombre_modelo'));
+      const itemsSql = sedeId !== null
+        ? 'SELECT * FROM inventario_credocubes WHERE sede_id = $1 ORDER BY id DESC LIMIT 100'
+        : 'SELECT * FROM inventario_credocubes ORDER BY id DESC LIMIT 100';
+      const itemsParams = sedeId !== null ? [sedeId] : [];
+      const items = await withTenant(tenant, (c) => c.query(itemsSql, itemsParams));
+      return res.status(400).render('inventario/index', { title: 'Inventario', modelos: modelos.rows, items: items.rows, error: message });
+    };
+
     try {
+      const normalizedRfid = String(rfid || '').trim();
+      if (normalizedRfid) {
+        const globalStatuses = await findRfidStatusesAcrossTenants([normalizedRfid], tenant);
+        const conflicts = globalStatuses[normalizedRfid] || [];
+        const activeConflicts = conflicts.filter((c) => c.activo !== false);
+        if (activeConflicts.length > 0) {
+          const conflictTenants = activeConflicts
+            .map((c) => c.tenant.replace(/^tenant_/, ''))
+            .join(', ');
+          return renderError(
+            `El RFID ya está activo en otro tenant (${conflictTenants || 'desconocido'}). Desactívalo antes de registrarlo.`
+          );
+        }
+      }
+
       const inserted = await withTenant(tenant, (c) =>
         c.query(
           `INSERT INTO inventario_credocubes (modelo_id, nombre_unidad, rfid, lote, estado, sub_estado, sede_id)
@@ -595,13 +622,7 @@ ${selectClause}
       return res.redirect('/inventario');
     } catch (e: any) {
       console.error(e);
-      const modelos = await withTenant(tenant, (c) => c.query('SELECT modelo_id, nombre_modelo FROM modelos ORDER BY nombre_modelo'));
-      const itemsSql = sedeId !== null
-        ? 'SELECT * FROM inventario_credocubes WHERE sede_id = $1 ORDER BY id DESC LIMIT 100'
-        : 'SELECT * FROM inventario_credocubes ORDER BY id DESC LIMIT 100';
-      const itemsParams = sedeId !== null ? [sedeId] : [];
-      const items = await withTenant(tenant, (c) => c.query(itemsSql, itemsParams));
-      return res.status(400).render('inventario/index', { title: 'Inventario', modelos: modelos.rows, items: items.rows, error: 'Error creando item (RFID duplicado u otro)' });
+      return renderError('Error creando item (RFID duplicado u otro)');
     }
   },
 };

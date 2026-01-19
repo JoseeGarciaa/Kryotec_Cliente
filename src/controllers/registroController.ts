@@ -4,6 +4,7 @@ import { AlertsModel } from '../models/Alerts';
 import { resolveTenant } from '../middleware/tenant';
 import { getRequestSedeId } from '../utils/sede';
 import { SedesModel } from '../models/Sede';
+import { findRfidStatusesAcrossTenants } from '../utils/globalInventory';
 
 type ModeloRow = { modelo_id: number; nombre_modelo: string; tipo: string | null };
 
@@ -36,13 +37,20 @@ export const RegistroController = {
     res.render('registro/index', {
       title: 'Registro de Items',
       modelosByTipo,
+      dups: [],
+      foreignConflicts: [],
+      globalConflicts: [],
+      rfids: [],
+      selectedModelo: null,
+      selectedTipo: '',
     });
   },
 
   create: async (req: Request, res: Response) => {
   const t = (req as any).user?.tenant || resolveTenant(req);
   if (!t) return res.status(400).send('Tenant no especificado');
-  const tenant = String(t).startsWith('tenant_') ? String(t) : `tenant_${t}`;
+    const tenant = String(t).startsWith('tenant_') ? String(t) : `tenant_${t}`;
+    const tenantKey = String(tenant).startsWith('tenant_') ? String(tenant) : `tenant_${tenant}`;
   const sedeId = getRequestSedeId(req);
   const { modelo_id, rfids } = req.body as any;
     const modeloIdNum = Number(modelo_id);
@@ -59,7 +67,7 @@ export const RegistroController = {
     const modelosByTipo = await loadModelosByTipo(tenant);
 
     if (!modeloIdNum || rfidsArr.length === 0) {
-  return res.status(200).render('registro/index', { title: 'Registro de Items', error: 'Complete tipo, litraje y escanee al menos un RFID', modelosByTipo, rfids: rfidsArr, selectedModelo: modeloIdNum });
+        return res.status(200).render('registro/index', { title: 'Registro de Items', error: 'Complete tipo, litraje y escanee al menos un RFID', modelosByTipo, rfids: rfidsArr, selectedModelo: modeloIdNum, dups: [], foreignConflicts: [], globalConflicts: [] });
     }
 
     try {
@@ -87,9 +95,11 @@ export const RegistroController = {
             WHERE ic.rfid = ANY($1::text[])`,
           [rfidsArr]
         );
+        const globalStatuses = await findRfidStatusesAcrossTenants(rfidsArr, tenantKey);
         const existingMap = new Map(existingQ.rows.map((row) => [row.rfid, row]));
         const foreignConflicts: Array<{ rfid: string; sedeNombre: string | null }> = [];
         const duplicateRfids: string[] = [];
+        const globalConflicts: Array<{ rfid: string; tenant: string; estado: string | null }> = [];
         for (const row of existingQ.rows) {
           const rfid = (row.rfid || '').toUpperCase();
           if (rfid.length !== 24) continue;
@@ -112,6 +122,12 @@ export const RegistroController = {
         let insertedCount = 0;
         for (const rfid of rfidsArr) {
           if (existingMap.has(rfid)) continue;
+          const conflicts = globalStatuses[rfid] || [];
+          const activeConflict = conflicts.find((c) => c.activo !== false);
+          if (activeConflict) {
+            globalConflicts.push({ rfid, tenant: activeConflict.tenant, estado: activeConflict.estado || null });
+            continue;
+          }
           const r = await c.query(
             `INSERT INTO inventario_credocubes 
                (modelo_id, nombre_unidad, rfid, lote, estado, sub_estado, sede_id)
@@ -123,7 +139,7 @@ export const RegistroController = {
           if (r.rowCount) insertedCount += r.rowCount;
         }
 
-        return { insertedCount, selectedTipo, foreignConflicts, duplicateRfids };
+        return { insertedCount, selectedTipo, foreignConflicts, duplicateRfids, globalConflicts };
       });
 
       if (result.insertedCount > 0) {
@@ -135,9 +151,9 @@ export const RegistroController = {
         ? `${result.insertedCount} item${result.insertedCount>1 ? 's' : ''} registrado${result.insertedCount>1 ? 's' : ''} correctamente.`
         : '';
 
-      const hasConflicts = result.foreignConflicts.length > 0 || result.duplicateRfids.length > 0;
+      const hasConflicts = result.foreignConflicts.length > 0 || result.duplicateRfids.length > 0 || result.globalConflicts.length > 0;
       const errorMessage = !result.insertedCount && hasConflicts
-        ? 'No se registraron items. Revisa los avisos de duplicados o piezas asignadas a otra sede.'
+        ? 'No se registraron items. Revisa los avisos de duplicados, piezas asignadas a otra sede o activos en otro tenant.'
         : '';
 
       return res.status(200).render('registro/index', {
@@ -147,6 +163,7 @@ export const RegistroController = {
         error: errorMessage,
         dups: result.duplicateRfids,
         foreignConflicts: result.foreignConflicts,
+        globalConflicts: result.globalConflicts,
         rfids: [],
         selectedModelo: modeloIdNum,
         selectedTipo: result.selectedTipo,
@@ -154,13 +171,13 @@ export const RegistroController = {
     } catch (e: any) {
       console.error(e);
       // Fallback: mostrar mensaje amable sin bloquear si algo menor falló
-      return res.status(200).render('registro/index', { title: 'Registro de Items', error: 'Error registrando items', modelosByTipo, rfids: [], selectedModelo: modeloIdNum });
+      return res.status(200).render('registro/index', { title: 'Registro de Items', error: 'Error registrando items', modelosByTipo, rfids: [], selectedModelo: modeloIdNum, dups: [], foreignConflicts: [], globalConflicts: [] });
     }
   },
   validate: async (req: Request, res: Response) => {
     try {
       const tenant = (req as any).user?.tenant || resolveTenant(req);
-      if (!tenant) return res.json({ dups: [], foreign: [] });
+      if (!tenant) return res.json({ dups: [], foreign: [], global: [] });
       const tenantKey = String(tenant).startsWith('tenant_') ? String(tenant) : `tenant_${tenant}`;
       const sedeId = getRequestSedeId(req);
       const body = req.body as any;
@@ -179,9 +196,11 @@ export const RegistroController = {
           WHERE ic.rfid = ANY($1::text[])`,
         [rfids]
       ));
+      const globalStatuses = await findRfidStatusesAcrossTenants(rfids, tenantKey);
 
       const duplicates: string[] = [];
       const foreign: Array<{ rfid: string; sede_nombre: string | null }> = [];
+      const globalConflicts: Array<{ rfid: string; tenant: string; estado: string | null }> = [];
       for (const row of found.rows) {
         const rfid = (row.rfid || '').toUpperCase();
         if (rfid.length !== 24) continue;
@@ -191,9 +210,16 @@ export const RegistroController = {
           duplicates.push(rfid);
         }
       }
-      return res.json({ dups: duplicates, foreign });
+      for (const rfid of rfids) {
+        const conflicts = globalStatuses[rfid] || [];
+        const activeConflict = conflicts.find((c) => c.activo !== false);
+        if (activeConflict) {
+          globalConflicts.push({ rfid, tenant: activeConflict.tenant, estado: activeConflict.estado || null });
+        }
+      }
+      return res.json({ dups: duplicates, foreign, global: globalConflicts });
     } catch (e) {
-      return res.json({ dups: [], foreign: [] });
+      return res.json({ dups: [], foreign: [], global: [] });
     }
   },
 };
