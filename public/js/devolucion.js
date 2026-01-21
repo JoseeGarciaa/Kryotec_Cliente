@@ -592,6 +592,12 @@
   }
 
   function inferTipo(nombre){ const n=(nombre||'').toLowerCase(); if(n.includes('vip')) return 'vip'; if(n.includes('tic')) return 'tic'; if(n.includes('cube')||n.includes('cubo')) return 'cube'; return 'otro'; }
+  function resolveComponentSensor(entry){
+    if(!entry || !Array.isArray(entry.componentes)) return '';
+    const hit = entry.componentes.find((c)=> c && (c.sensorId || c.sensor_id));
+    const raw = hit ? (hit.sensorId || hit.sensor_id) : '';
+    return raw ? String(raw).trim() : '';
+  }
   function miniCardHTML(c){
     const info = normalizeCajaOrders(c);
     const code = info.codigoCaja || info.lote || '';
@@ -802,6 +808,11 @@
       const items = Array.isArray(j.caja.items) ? j.caja.items : [];
       const cubeItem = items.find(it=> inferTipo(it.nombre_modelo||it.nombre||'') === 'cube');
       const cajaOrders = Array.isArray(j.caja.orders) ? j.caja.orders : [];
+      const componentesFromItems = items.map(it=> ({
+        codigo: it.rfid,
+        tipo: inferTipo(it.nombre_modelo||it.nombre||''),
+        sensorId: it.sensor_id
+      }));
       let cajaPayload;
       if(!caja){
         const nombreCaja = j.caja.nombre_caja || j.caja.nombreCaja || cubeItem?.nombre_modelo || null;
@@ -809,13 +820,22 @@
           id: cajaId,
           codigoCaja: j.caja.lote,
           nombreCaja: nombreCaja || null,
-          componentes: items.map(it=> ({ codigo: it.rfid, tipo: inferTipo(it.nombre_modelo||it.nombre||'') })),
+          componentes: componentesFromItems,
           timer: j.caja.timer ? { startsAt: j.caja.timer.startsAt, endsAt: j.caja.timer.endsAt, completedAt: j.caja.timer.active===false? j.caja.timer.endsAt:null } : null
         };
       } else {
         cajaPayload = { ...caja };
         if(!Array.isArray(cajaPayload.componentes)){
-          cajaPayload.componentes = items.map(it=> ({ codigo: it.rfid, tipo: inferTipo(it.nombre_modelo||it.nombre||'') }));
+          cajaPayload.componentes = componentesFromItems;
+        } else if(componentesFromItems.length){
+          const byCode = new Map(componentesFromItems.map((it)=> [String(it.codigo || '').toUpperCase(), it]));
+          cajaPayload.componentes = cajaPayload.componentes.map((comp)=>{
+            if(!comp || comp.sensorId || comp.sensor_id) return comp;
+            const key = String(comp.codigo || '').toUpperCase();
+            const incoming = byCode.get(key);
+            if(!incoming || !incoming.sensorId) return comp;
+            return { ...comp, sensorId: incoming.sensorId };
+          });
         }
         if(!cajaPayload.timer && j.caja.timer){
           cajaPayload.timer = { startsAt: j.caja.timer.startsAt, endsAt: j.caja.timer.endsAt, completedAt: j.caja.timer.active===false? j.caja.timer.endsAt:null };
@@ -1054,7 +1074,8 @@
           syncPiLocationFromDecide();
           ensurePiLocation();
           const entry = scannedCajas.get(String(id)) || (data.cajas||[]).find(c=> String(c.id)===String(id));
-          const sensorDisplay = entry && entry.sensorId ? entry.sensorId : '';
+          const fallbackSensor = resolveComponentSensor(entry);
+          const sensorDisplay = entry && entry.sensorId ? entry.sensorId : fallbackSensor;
           if(piSensor){ piSensor.textContent = sensorDisplay || '-'; }
           const salidaDisplay = entry ? formatTempValue(entry.tempSalida) : '';
           if(piSalidaValue){
@@ -1110,7 +1131,8 @@
       const serialInput = piSerial ? String(piSerial.value || '').trim() : '';
       const entry = scannedCajas.get(String(currentId)) || (data.cajas||[]).find(c=> String(c.id)===String(currentId));
       const displayedSerial = piSensor && typeof piSensor.textContent === 'string' ? String(piSensor.textContent).trim() : '';
-      const originalSerial = entry && entry.sensorId ? String(entry.sensorId).trim() : displayedSerial;
+      const fallbackSerial = resolveComponentSensor(entry);
+      const originalSerial = entry && entry.sensorId ? String(entry.sensorId).trim() : (displayedSerial || fallbackSerial);
       if(!serialInput){
         shouldReset = false;
         if(scanMsg) scanMsg.textContent = 'Ingresa el serial del dispositivo.';

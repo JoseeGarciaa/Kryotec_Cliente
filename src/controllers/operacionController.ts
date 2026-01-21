@@ -2362,6 +2362,7 @@ export const OperacionController = {
        m.nombre_modelo,
        ic.estado,
        ic.sub_estado,
+       ic.sensor_id,
        CASE WHEN m.nombre_modelo ILIKE '%tic%' THEN 'tic'
          WHEN m.nombre_modelo ILIKE '%vip%' THEN 'vip'
          WHEN (m.nombre_modelo ILIKE '%cube%' OR m.nombre_modelo ILIKE '%cubo%') THEN 'cube'
@@ -2416,6 +2417,7 @@ export const OperacionController = {
           nombre_unidad: r.nombre_unidad || null,
           estado: r.estado,
           sub_estado: r.sub_estado,
+          sensor_id: r.sensor_id || null,
           caja: r.caja_lote || null,
           caja_id: r.caja_id || null,
           order_id: r.order_id || null,
@@ -2438,10 +2440,12 @@ export const OperacionController = {
             estado: p.sub_estado || p.estado,
             orderId: p.order_id || null,
             orderNumero: p.order_num || null,
-            orderCliente: p.order_client || null
+            orderCliente: p.order_client || null,
+            sensorId: p.sensor_id || null
           };
         }
-        g.componentes.push({ codigo: p.rfid, tipo: p.rol, estado: p.estado, sub_estado: p.sub_estado, nombreUnidad: p.nombre_unidad || null });
+        g.componentes.push({ codigo: p.rfid, tipo: p.rol, estado: p.estado, sub_estado: p.sub_estado, nombreUnidad: p.nombre_unidad || null, sensorId: p.sensor_id || null });
+        if(!g.sensorId && p.sensor_id){ g.sensorId = p.sensor_id; }
       }
       const cajas = Object.values(cajasMap);
       cajas.forEach((c:any) => {
