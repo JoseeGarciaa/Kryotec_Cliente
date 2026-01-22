@@ -52,6 +52,8 @@ export const InventarioController = {
     let cajaParams: any[] = [];
     let cajaInfo: { by: 'caja_id'|'lote'; value: string|number } | null = null;
 
+    const fueraInventarioClause = "TRIM(LOWER(ic.estado)) <> TRIM(LOWER('Fuera de inventario'))";
+
     if (isRfidQuery && scannedRfids.length === 0) {
       try {
         // 1) Intentar encontrar caja_id por mapping
@@ -82,7 +84,7 @@ export const InventarioController = {
     }
 
     // Build filters (modo normal)
-  const where: string[] = [];
+  const where: string[] = [fueraInventarioClause];
   const params: any[] = [];
   pushSedeFilter(where, params, sedeId);
     if (q && !cajaMode && scannedRfids.length === 0) {
@@ -155,6 +157,7 @@ export const InventarioController = {
         cajaWhereSQL = `${cajaWhereSQL}${glue}ic.sede_id = $${cajaParams.length + 1}`;
         cajaParams.push(sedeId);
       }
+      cajaWhereSQL = cajaWhereSQL ? `${cajaWhereSQL} AND ${fueraInventarioClause}` : `WHERE ${fueraInventarioClause}`;
       // COUNT
       const countSQL = `SELECT COUNT(*)::int AS total
           FROM inventario_credocubes ic
@@ -239,7 +242,7 @@ ${selectClause}
         )
       );
       // COUNTS
-      const whereCounts: string[] = [];
+      const whereCounts: string[] = [fueraInventarioClause];
       const paramsCounts: any[] = [];
       pushSedeFilter(whereCounts, paramsCounts, sedeId);
       if (q) {
@@ -288,6 +291,7 @@ ${selectClause}
   const { q: qRaw, rfids: rfidsRaw, limit: limitRaw } = req.query as any;
     const q = (qRaw ? String(qRaw) : '').slice(0, 24);
     const limit = Math.min(500, Math.max(10, parseInt(String(limitRaw||'100'), 10) || 100));
+    const fueraInventarioClause = "TRIM(LOWER(ic.estado)) <> TRIM(LOWER('Fuera de inventario'))";
     let scanned: string[] = [];
     if(rfidsRaw){
       const toks = String(rfidsRaw).split(/[\s,;+]+/).map(s=>s.trim()).filter(Boolean);
@@ -304,7 +308,7 @@ ${selectClause}
          FROM inventario_credocubes ic
          LEFT JOIN zonas z ON z.zona_id = ic.zona_id
          LEFT JOIN secciones sc ON sc.seccion_id = ic.seccion_id
-        WHERE ic.rfid = $1`;
+        WHERE ic.rfid = $1 AND ${fueraInventarioClause}`;
         if (sedeId !== null) {
           params.push(sedeId);
           sql += ` AND ic.sede_id = $${params.length}`;
@@ -320,7 +324,7 @@ ${selectClause}
          FROM inventario_credocubes ic
          LEFT JOIN zonas z ON z.zona_id = ic.zona_id
          LEFT JOIN secciones sc ON sc.seccion_id = ic.seccion_id
-        WHERE ic.rfid IN (${placeholders.join(',')})`;
+        WHERE ic.rfid IN (${placeholders.join(',')}) AND ${fueraInventarioClause}`;
         const params: any[] = [...scanned];
         if (sedeId !== null) {
           params.push(sedeId);
@@ -333,7 +337,7 @@ ${selectClause}
       // Búsqueda normal limitada
       if(q){
         const params: any[] = ['%'+q+'%'];
-        const whereParts = [`(ic.nombre_unidad ILIKE $1 OR ic.rfid ILIKE $1 OR COALESCE(ic.lote,'') ILIKE $1 OR ic.estado ILIKE $1)`];
+        const whereParts = [`(ic.nombre_unidad ILIKE $1 OR ic.rfid ILIKE $1 OR COALESCE(ic.lote,'') ILIKE $1 OR ic.estado ILIKE $1)`, fueraInventarioClause];
         if (sedeId !== null) {
           params.push(sedeId);
           whereParts.push(`ic.sede_id = $${params.length}`);
@@ -357,7 +361,7 @@ ${selectClause}
              FROM inventario_credocubes ic
              LEFT JOIN zonas z ON z.zona_id = ic.zona_id
              LEFT JOIN secciones sc ON sc.seccion_id = ic.seccion_id
-            WHERE ic.sede_id = $1
+            WHERE ic.sede_id = $1 AND ${fueraInventarioClause}
             ORDER BY ic.id DESC
             LIMIT $2`, [sedeId, limit]
         ));

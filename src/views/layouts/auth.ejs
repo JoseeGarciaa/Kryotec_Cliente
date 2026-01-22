@@ -17,6 +17,10 @@
   <link rel="stylesheet" href="/static/css/overrides-acond.css?v=<%= assetVersion %>" />
   <style>
     .auth-wrap{min-height:100vh;display:block;padding:0;margin:0}
+    .logo-light{display:block}
+    .logo-dark{display:none}
+    [data-theme="kryoDark"] .logo-light,[data-theme="dark"] .logo-light{display:none}
+    [data-theme="kryoDark"] .logo-dark,[data-theme="dark"] .logo-dark{display:block}
   </style>
 </head>
 <body>
