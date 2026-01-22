@@ -55,7 +55,7 @@
     try {
       const notif = new Notification(title, {
         body: body + ' • ' + ts.toLocaleString(),
-      icon: '/static/images/favicon.png',
+      icon: '/static/images/vect.png',
       tag: 'kryo-alert-'+alert.id,
         requireInteraction: true,
         timestamp: ts.getTime(),

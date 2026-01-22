@@ -75,7 +75,7 @@ app.get('/sw.js', (_req, res) => {
 app.get('/favicon.ico', (_req, res) => {
 	res.type('image/png');
 	res.setHeader('Cache-Control', process.env.NODE_ENV === 'production' ? 'public, max-age=604800, immutable' : 'no-cache');
-	res.sendFile(path.join(staticDir, 'images', 'favicon.png'));
+	res.sendFile(path.join(staticDir, 'images', 'vect.png'));
 });
 
 // --- Dynamic PNG icon generation using base image (prefers EO_4PPKL_400x400.webp) ---
@@ -117,8 +117,7 @@ async function generateIcon(size: number): Promise<Buffer> {
 	const candidates = [
 		'vect.png', // now preferred
 		'EO_4PPKL_400x400.webp',
-		'logo_d6297621114f270d1502ecd0e1337992_1x.webp',
-		'favicon.png'
+		'logo_d6297621114f270d1502ecd0e1337992_1x.webp'
 	].map(f => path.join(staticDir, 'images', f));
 	let chosen: string | null = null;
 	for (const p of candidates) { if (fs.existsSync(p)) { chosen = p; break; } }
@@ -257,7 +256,7 @@ app.get('/pwa-start', (_req: Request, res: Response) => {
 		<title>KryoSense</title>
 		<link rel="manifest" href="/manifest.webmanifest" />
 		<meta name="viewport" content="width=device-width,initial-scale=1" />
-		<link rel="icon" type="image/png" href="/static/images/favicon.png" />
+		<link rel="icon" type="image/png" href="/static/images/vect.png" />
 		<link rel="stylesheet" href="/static/css/app.css?v=${(Date.now())}" />
 	</head>
 	<body class="min-h-screen flex items-center justify-center">

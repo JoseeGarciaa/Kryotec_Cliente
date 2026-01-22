@@ -10,7 +10,7 @@ self.addEventListener('install', event => {
       '/static/js/theme.js',
       '/static/js/ux.js',
       '/static/js/notifications.js',
-      '/static/images/favicon.png',
+      '/static/images/vect.png',
       '/icons/icon-192.png',
       '/icons/icon-512.png'
     ])).then(()=>self.skipWaiting())
