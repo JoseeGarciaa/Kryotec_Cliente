@@ -2466,11 +2466,11 @@
     const hasTempAndSensor = (entry) => {
       if(!entry) return false;
       const tempRaw = entry.tempSalida != null ? String(entry.tempSalida).trim() : '';
-      if(!tempRaw) return false;
-      const tempNum = Number(tempRaw.replace(',', '.'));
-      if(!Number.isFinite(tempNum)) return false;
-      const sensorText = entry.sensorId != null ? String(entry.sensorId).trim() : '';
-      return sensorText.length > 0;
+      if(tempRaw){
+        const tempNum = Number(tempRaw.replace(',', '.'));
+        if(!Number.isFinite(tempNum)) return false;
+      }
+      return true;
     };
 
     let queue = [];
@@ -2821,7 +2821,7 @@
         selectedSeccionId = selectSeccion ? String(selectSeccion.value || '') : '';
       }
       if(queue.some(entry => !hasTempAndSensor(entry))){
-        if(msg){ msg.textContent = 'Completa temperatura de salida y sensor para todas las cajas.'; }
+        if(msg){ msg.textContent = 'Revisa las temperaturas: hay un valor inválido.'; }
         updateConfirmState();
         return;
       }
@@ -2837,19 +2837,18 @@
           continue;
         }
         const tempText = entry.tempSalida != null ? String(entry.tempSalida).trim() : '';
-        const tempNumber = Number(tempText.replace(',', '.'));
-        if(!Number.isFinite(tempNumber)){
-          errors.push(`Caja ${entry.lote}: temperatura de salida inválida.`);
-          continue;
+        let normalizedTemp = null;
+        if(tempText){
+          const tempNumber = Number(tempText.replace(',', '.'));
+          if(!Number.isFinite(tempNumber)){
+            errors.push(`Caja ${entry.lote}: temperatura de salida inválida.`);
+            continue;
+          }
+          normalizedTemp = Math.round(tempNumber * 100) / 100;
         }
-        const normalizedTemp = Math.round(tempNumber * 100) / 100;
         let sensorValue = entry.sensorId != null ? String(entry.sensorId).trim() : '';
-        if(!sensorValue){
-          errors.push(`Caja ${entry.lote}: debes ingresar el serial del sensor.`);
-          continue;
-        }
         if(sensorValue.length > 120){ sensorValue = sensorValue.slice(0, 120); }
-        const movePayload = { rfid, zona_id: selectedZonaId, seccion_id: selectedSeccionId, temp_salida_c: normalizedTemp, sensor_id: sensorValue };
+        const movePayload = { rfid, zona_id: selectedZonaId, seccion_id: selectedSeccionId, temp_salida_c: normalizedTemp, sensor_id: sensorValue || null };
         if(durationSec > 0){ movePayload.durationSec = durationSec; }
         const attempt = await postJSONWithSedeTransfer('/operacion/acond/despacho/move', movePayload, {
           promptMessage: (data) => data?.confirm || data?.error || `La caja ${entry.lote} pertenece a otra sede. ¿Deseas trasladarla a tu sede actual?`

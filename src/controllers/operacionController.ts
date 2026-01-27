@@ -2870,18 +2870,12 @@ export const OperacionController = {
         return Math.round(num * 100) / 100;
       };
       const tempLlegadaResult = normalizeTemp(tempLlegadaRaw);
-      if(tempLlegadaResult === undefined){
-        return res.status(400).json({ ok:false, error:'Debes ingresar la temperatura de llegada (°C).' });
-      }
       if(Number.isNaN(tempLlegadaResult)){
         return res.status(400).json({ ok:false, error:'Temperatura de llegada inválida.' });
       }
-      const tempLlegadaValue = tempLlegadaResult;
+      const tempLlegadaValue = tempLlegadaResult === undefined ? null : tempLlegadaResult;
       const sensorNormalized = sensorRaw === undefined || sensorRaw === null ? '' : String(sensorRaw).trim();
-      if(!sensorNormalized){
-        return res.status(400).json({ ok:false, error:'Debes ingresar el serial del dispositivo.' });
-      }
-      const sensorValue = sensorNormalized.slice(0, 100);
+      const sensorValue = sensorNormalized ? sensorNormalized.slice(0, 100) : null;
       // Validar elegibilidad primero
       const eligQ = await withTenant(tenant, (c)=> c.query(
         `SELECT COUNT(*)::int AS total,
@@ -7067,20 +7061,15 @@ export const OperacionController = {
       return Math.round(num * 100) / 100;
     };
     const tempSalidaResult = normalizeTemp(tempSalidaRaw);
-    if(tempSalidaResult === undefined){
-      return res.status(400).json({ ok:false, error:'Debes ingresar la temperatura de salida (°C).' });
-    }
     if(Number.isNaN(tempSalidaResult)){
       return res.status(400).json({ ok:false, error:'Temperatura de salida inválida.' });
     }
-    const tempSalidaValue = tempSalidaResult;
-    let sensorId = typeof sensorIdRaw === 'string' ? sensorIdRaw.trim() : '';
-    if(!sensorId){
-      return res.status(400).json({ ok:false, error:'Debes ingresar el serial del sensor.' });
-    }
+    const tempSalidaValue = tempSalidaResult === undefined ? null : tempSalidaResult;
+    let sensorId = sensorIdRaw === undefined || sensorIdRaw === null ? '' : String(sensorIdRaw).trim();
     if(sensorId.length > 120){
       sensorId = sensorId.slice(0, 120);
     }
+    const sensorValue = sensorId || null;
     let responseTimerDuration: number | null = null;
     const parsedOrderIds: number[] = [];
     if(Array.isArray(order_ids)){
@@ -7279,7 +7268,7 @@ export const OperacionController = {
                     sede_id = COALESCE($2::int, ic.sede_id)
                WHERE ic.rfid IN (SELECT rfid FROM acond_caja_items WHERE caja_id=$1)
                  AND ic.estado='Acondicionamiento'
-                 AND ic.sub_estado ${estadoFiltro}`, [cajaId, targetSede, tempSalidaValue, sensorId]);
+                 AND ic.sub_estado ${estadoFiltro}`, [cajaId, targetSede, tempSalidaValue, sensorValue]);
           await c.query('COMMIT');
           const timerPayload = responseTimerDuration != null ? { durationSec: responseTimerDuration } : null;
           const finalOrdersMap = await fetchCajaOrdenes(tenant, [cajaId]);
@@ -7293,7 +7282,7 @@ export const OperacionController = {
             timer: timerPayload,
             timerActive,
             temp_salida_c: tempSalidaValue,
-            sensor_id: sensorId,
+            sensor_id: sensorValue,
             order_id: primaryOrder?.orderId ?? null,
             order_num: primaryOrder?.numeroOrden ?? null,
             orders: finalOrders
