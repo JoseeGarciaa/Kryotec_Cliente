@@ -33,7 +33,7 @@ import sharp from 'sharp';
 dotenv.config();
 
 const app = express();
-const appVersion = process.env.APP_VERSION || '0.3.0';
+const appVersion = process.env.APP_VERSION || '0.3.1';
 
 // Resolve views path robustly (src in repo; fallback to dist in production builds)
 const viewsSrc = path.join(process.cwd(), 'src', 'views');
