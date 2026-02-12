@@ -33,7 +33,7 @@ import sharp from 'sharp';
 dotenv.config();
 
 const app = express();
-const appVersion = process.env.APP_VERSION || '0.3.1';
+const appVersion = process.env.APP_VERSION || '0.3.0';
 
 // Resolve views path robustly (src in repo; fallback to dist in production builds)
 const viewsSrc = path.join(process.cwd(), 'src', 'views');
@@ -59,15 +59,22 @@ app.use('/static', express.static(staticDir, {
 	maxAge: process.env.NODE_ENV === 'production' ? '1d' : 0,
 	etag: true,
 }));
+// Serve PWA icons at /icons so manifest links resolve (needed for install prompt on mobile)
+app.use('/icons', express.static(path.join(staticDir, 'icons'), {
+	maxAge: process.env.NODE_ENV === 'production' ? '7d' : 0,
+	etag: true,
+}));
 
 // PWA assets at root paths
 app.get('/manifest.webmanifest', (_req, res) => {
 	res.type('application/manifest+json');
+	res.setHeader('Cache-Control', process.env.NODE_ENV === 'production' ? 'public, max-age=0' : 'no-cache');
 	res.sendFile(path.join(staticDir, 'manifest.webmanifest'));
 });
 app.get('/sw.js', (_req, res) => {
 	res.type('application/javascript');
 	res.setHeader('Cache-Control', 'no-cache');
+	res.setHeader('Service-Worker-Allowed', '/');
 	res.sendFile(path.join(staticDir, 'sw.js'));
 });
 
