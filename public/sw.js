@@ -1,4 +1,4 @@
-﻿const STATIC_CACHE = 'kryo-static-v4';
+﻿const STATIC_CACHE = 'kryo-static-v5';
 const OFFLINE_URL = '/auth/login';
 
 self.addEventListener('install', event => {
@@ -11,8 +11,8 @@ self.addEventListener('install', event => {
       '/static/js/ux.js',
       '/static/js/notifications.js',
       '/static/images/vect.png',
-      '/icons/icon-192.png',
-      '/icons/icon-512.png'
+      '/icons/app-192.png?v=7',
+      '/icons/app-512.png?v=7'
     ])).then(()=>self.skipWaiting())
   );
 });
