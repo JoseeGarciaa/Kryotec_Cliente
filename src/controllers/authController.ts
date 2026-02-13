@@ -196,6 +196,55 @@ export const AuthController = {
             }
 
             let match = false;
+
+        refresh: async (req: Request, res: Response) => {
+          try {
+            const token = req.cookies?.token;
+            if (!token) return res.status(401).json({ ok: false, error: 'missing token' });
+
+            const decoded = jwt.verify(token, config.jwtSecret) as any;
+            const tenant = decoded?.tenant as string | undefined;
+            const userIdRaw = decoded?.sub ?? decoded?.id ?? decoded?.user_id;
+            const userId = Number(userIdRaw);
+            if (!tenant || !Number.isFinite(userId)) {
+              res.clearCookie('token');
+              return res.status(401).json({ ok: false, error: 'invalid token' });
+            }
+
+            await ensureSecurityArtifacts(tenant);
+            const snapshot = await withTenant(tenant, (client) => UsersModel.getSecuritySnapshot(client, userId));
+            if (!snapshot || !snapshot.activo) {
+              res.clearCookie('token');
+              return res.status(401).json({ ok: false, error: 'inactive' });
+            }
+
+            const tokenSessionVersion = Number(decoded?.sessionVersion || 0);
+            if (snapshot.session_version !== tokenSessionVersion) {
+              res.clearCookie('token');
+              return res.status(401).json({ ok: false, error: 'session version mismatch' });
+            }
+
+            const sessionTtlMinutes = normalizeSessionTtl(snapshot.sesion_ttl_minutos ?? config.security.defaultSessionMinutes);
+            const payload = {
+              ...decoded,
+              sessionVersion: snapshot.session_version,
+              sessionTtlMinutes,
+            };
+
+            const newToken = jwt.sign(payload, config.jwtSecret, { expiresIn: `${sessionTtlMinutes}m` });
+            res.cookie('token', newToken, {
+              httpOnly: true,
+              sameSite: 'lax',
+              secure: process.env.NODE_ENV === 'production',
+              maxAge: sessionTtlMinutes * 60 * 1000,
+            });
+
+            return res.json({ ok: true, ttlMinutes: sessionTtlMinutes });
+          } catch (e) {
+            res.clearCookie('token');
+            return res.status(401).json({ ok: false, error: 'unauthorized' });
+          }
+        },
             if (/^\$2[aby]\$/.test(user.password)) {
               match = await bcrypt.compare(password, user.password);
             } else {
