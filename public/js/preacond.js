@@ -1009,6 +1009,9 @@
     validMeta.clear();
     chipsBox.innerHTML=''; msg.textContent='';
     btnConfirm.disabled = true;
+    scanInput.value = '';
+    if(scanLoteSummary){ scanLoteSummary.classList.add('hidden'); scanLoteSummary.innerHTML=''; }
+    renderChips(); // resetea contador a 0 y muestra estado vacío
   // If opening for congelamiento, force individual mode and hide lote option
   try {
     const radiosBox = document.querySelector('#dlg-scan');
