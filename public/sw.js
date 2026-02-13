@@ -1,5 +1,5 @@
-﻿const STATIC_CACHE = 'kryo-static-v5';
-const OFFLINE_URL = '/auth/login';
+﻿const STATIC_CACHE = 'kryo-static-v6';
+const OFFLINE_URL = '/pwa-start';
 
 self.addEventListener('install', event => {
   event.waitUntil(

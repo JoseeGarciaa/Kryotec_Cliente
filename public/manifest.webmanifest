@@ -2,7 +2,7 @@
   "name": "KryoSense",
   "short_name": "KryoSense",
   "description": "Gestión de credocubes y operaciones Kryotec",
-  "start_url": "/auth/login",
+  "start_url": "/pwa-start",
   "scope": "/",
   "display": "fullscreen",
   "display_override": ["fullscreen", "standalone", "minimal-ui"],
