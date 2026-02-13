@@ -35,7 +35,7 @@
   const confirmMsg = qs('#dev-confirm-msg');
   let confirmCajaId = null; let confirmFromModal = false;
   let modalCajaId = null;
-  // PI timer modal (Pendiente a Inspección)
+  // PI timer modal (En devolución)
   const piDlg = qs('#dev-pi-timer');
   const piHours = qs('#dev-pi-hours');
   const piMins = qs('#dev-pi-mins');
@@ -996,16 +996,16 @@
     const reuseAllowed = !!evaluation?.reusable && !policy?.reuse_blocked;
     let message = '';
     if(!hasTimer){
-      message = 'La caja no registra un cronómetro activo. Solo se puede enviar a Bodega · Pendiente a Inspección.';
+      message = 'La caja no registra un cronómetro activo. Solo se puede enviar a Bodega · En devolución.';
     } else if(policy?.reuse_blocked){
       message = policy.reason || 'El umbral seleccionado no cumple con el mínimo requerido.';
     } else if(reuseAllowed){
-      message = `Restan ${remainingLabel} del cronómetro${thresholdLabel ? ` (umbral ${thresholdLabel})` : ''}. ¿Deseas reutilizar la caja o enviarla a Bodega · Pendiente a Inspección?`;
+      message = `Restan ${remainingLabel} del cronómetro${thresholdLabel ? ` (umbral ${thresholdLabel})` : ''}. ¿Deseas reutilizar la caja o enviarla a Bodega · En devolución?`;
     } else {
       if(thresholdLabel){
-        message = `Restan ${remainingLabel} del cronómetro (umbral ${thresholdLabel}). No es posible reutilizar con este umbral. ¿Deseas enviarla a Bodega · Pendiente a Inspección?`;
+        message = `Restan ${remainingLabel} del cronómetro (umbral ${thresholdLabel}). No es posible reutilizar con este umbral. ¿Deseas enviarla a Bodega · En devolución?`;
       } else {
-        message = `Restan ${remainingLabel} del cronómetro. No es posible reutilizar. ¿Deseas enviarla a Bodega · Pendiente a Inspección?`;
+        message = `Restan ${remainingLabel} del cronómetro. No es posible reutilizar. ¿Deseas enviarla a Bodega · En devolución?`;
       }
       if(policy?.reason && !policy?.reuse_blocked){
         message = `${message} ${policy.reason}`.trim();
@@ -1017,9 +1017,9 @@
       let html = '';
       if(reuseAllowed){
         html = `<button class='btn btn-primary btn-sm flex-1' data-act='reuse' data-id='${cajaId}'>Reutilizar</button>
-    <button class='btn btn-outline btn-sm flex-1' data-act='insp' data-id='${cajaId}'>Pendiente a Inspección</button>`;
+    <button class='btn btn-outline btn-sm flex-1' data-act='insp' data-id='${cajaId}'>En devolución</button>`;
       } else {
-        html = `<button class='btn btn-error btn-sm flex-1' data-act='insp' data-id='${cajaId}'>Enviar a Pendiente a Inspección</button>`;
+        html = `<button class='btn btn-error btn-sm flex-1' data-act='insp' data-id='${cajaId}'>Enviar a En devolución</button>`;
       }
       decideActions.innerHTML = html;
     }
@@ -1176,7 +1176,7 @@
         const message = payload.error || payload.message || `Error (${attempt.status || 0})`;
         throw new Error(message);
       }
-      if(scanMsg) scanMsg.textContent='Caja enviada a Bodega · Pendiente a Inspección';
+      if(scanMsg) scanMsg.textContent='Caja enviada a Bodega · En devolución';
       // refrescar inmediatamente la lista para que desaparezca y limpiar panel derecho
       await load();
       removeScanned(currentId);
