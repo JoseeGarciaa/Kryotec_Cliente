@@ -138,6 +138,7 @@ export const AuthController = {
       });
 
       const sessionTtlMinutes = normalizeSessionTtl(user.sesion_ttl_minutos ?? config.security.defaultSessionMinutes);
+      const jwtTtlMinutes = Math.max(sessionTtlMinutes, config.security.maxSessionMinutes); // sesión absoluta más larga; idle la controla el front
       const token = jwt.sign({
         sub: user.id,
         tenant: tenantSchema,
@@ -150,12 +151,12 @@ export const AuthController = {
         mustChangePassword,
         sessionTtlMinutes,
         sessionVersion: sessionMeta.sessionVersion,
-      }, config.jwtSecret, { expiresIn: `${sessionTtlMinutes}m` });
+      }, config.jwtSecret, { expiresIn: `${jwtTtlMinutes}m` });
       res.cookie('token', token, {
         httpOnly: true,
         sameSite: 'lax',
         secure: process.env.NODE_ENV === 'production',
-        maxAge: sessionTtlMinutes * 60 * 1000,
+        maxAge: jwtTtlMinutes * 60 * 1000,
       });
 
   // Redirección según rol
@@ -315,18 +316,19 @@ export const AuthController = {
       }
 
       const sessionTtlMinutes = normalizeSessionTtl(snapshot.sesion_ttl_minutos ?? config.security.defaultSessionMinutes);
+      const jwtTtlMinutes = Math.max(sessionTtlMinutes, config.security.maxSessionMinutes);
       const payload = {
         ...decoded,
         sessionVersion: snapshot.session_version,
         sessionTtlMinutes,
       };
 
-      const newToken = jwt.sign(payload, config.jwtSecret, { expiresIn: `${sessionTtlMinutes}m` });
+      const newToken = jwt.sign(payload, config.jwtSecret, { expiresIn: `${jwtTtlMinutes}m` });
       res.cookie('token', newToken, {
         httpOnly: true,
         sameSite: 'lax',
         secure: process.env.NODE_ENV === 'production',
-        maxAge: sessionTtlMinutes * 60 * 1000,
+        maxAge: jwtTtlMinutes * 60 * 1000,
       });
 
       return res.json({ ok: true, ttlMinutes: sessionTtlMinutes });
