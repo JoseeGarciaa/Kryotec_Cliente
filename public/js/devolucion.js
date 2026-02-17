@@ -1065,8 +1065,8 @@
           const sensorDisplay = entry && entry.sensorId ? String(entry.sensorId).trim() : fallbackSensor;
           if(reuseSensor){ reuseSensor.textContent = sensorDisplay || '-'; }
           if(reuseSerial){
-            reuseSerial.value = sensorDisplay || '';
-            reuseSerial.placeholder = sensorDisplay ? 'Confirma o cambia el serial' : 'Ingresa el serial';
+            reuseSerial.value = '';
+            reuseSerial.placeholder = sensorDisplay || 'Ingresa el serial';
           }
           if(reuseTemp){ reuseTemp.value = ''; }
           const salidaDisplay = entry ? formatTempValue(entry.tempSalida) : '';

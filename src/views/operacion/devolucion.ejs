@@ -133,7 +133,7 @@
 <dialog id="dev-reuse" class="modal">
   <div class="modal-box max-w-sm p-5 space-y-3">
     <h3 class="font-semibold text-sm">Reutilizar caja</h3>
-    <p class="text-[11px] opacity-70">Ingresa la temperatura de llegada y confirma el serial. Al reutilizar se limpiarán las temperaturas de entrada y salida; el serial se conservará.</p>
+    <p class="text-[11px] opacity-70">Ingresa la temperatura de llegada y confirma el serial. Al reutilizar se limpiarán las temperaturas de entrada, salida y el serial.</p>
     <div class="grid gap-2 text-xs">
       <label class="form-control">
         <span class="label-text text-[11px] opacity-70">Temperatura de llegada (°C)</span>
@@ -141,9 +141,9 @@
       </label>
       <label class="form-control">
         <span class="label-text text-[11px] opacity-70">Serial del dispositivo</span>
-        <input id="dev-reuse-serial" type="text" class="input input-sm input-bordered" placeholder="Confirma el serial" autocomplete="off" />
+        <input id="dev-reuse-serial" type="text" class="input input-sm input-bordered" placeholder="Serial" autocomplete="off" />
       </label>
-      <div class="text-[11px] opacity-70">Sensor registrado: <span id="dev-reuse-sensor" class="font-mono">-</span></div>
+      <div class="text-[11px] opacity-70">Serial registrado: <span id="dev-reuse-sensor" class="font-mono">-</span></div>
       <div id="dev-reuse-salida-wrap" class="text-[11px] opacity-70 hidden">Temp salida registrada: <span id="dev-reuse-salida" class="font-mono">-</span></div>
       <div id="dev-reuse-llegada-wrap" class="text-[11px] opacity-70 hidden">Temp llegada registrada: <span id="dev-reuse-llegada" class="font-mono">-</span></div>
       <div class="text-[11px] opacity-70">Al reutilizar se limpiarán las temperaturas de entrada y salida.</div>
