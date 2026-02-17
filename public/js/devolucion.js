@@ -49,7 +49,20 @@
   const piSensor = qs('#dev-pi-sensor');
   const piSalidaWrap = qs('#dev-pi-salida-wrap');
   const piSalidaValue = qs('#dev-pi-salida');
+  // Reuse modal
+  const reuseDlg = qs('#dev-reuse');
+  const reuseTemp = qs('#dev-reuse-temp');
+  const reuseSerial = qs('#dev-reuse-serial');
+  const reuseSensor = qs('#dev-reuse-sensor');
+  const reuseSalidaWrap = qs('#dev-reuse-salida-wrap');
+  const reuseSalidaValue = qs('#dev-reuse-salida');
+  const reuseLlegadaWrap = qs('#dev-reuse-llegada-wrap');
+  const reuseLlegadaValue = qs('#dev-reuse-llegada');
+  const reuseAccept = qs('#dev-reuse-accept');
+  const reuseCancel = qs('#dev-reuse-cancel');
   let piCajaId = null;
+  let reuseCajaId = null;
+  let reuseLocationPayload = null;
   let data = { cajas: [], serverNow: null, ordenes: {} };
   let serverOffset = 0; // serverNow - Date.now()
   let tick = null; let poll = null;
@@ -1040,34 +1053,47 @@
       const id = btn.getAttribute('data-id');
       if(!id) return;
       try {
-        if(scanMsg) scanMsg.textContent='Aplicando...';
         const locationPayload = captureDecideLocation();
         const thresholdPayload = decisionState.thresholdSec != null && Number.isFinite(Number(decisionState.thresholdSec))
           ? Math.max(1, Math.trunc(Number(decisionState.thresholdSec)))
           : null;
         if(act==='reuse'){
-          const cajaLabel = cajaLabelById(id);
-          const attempt = await postJSONWithSedeTransfer('/operacion/devolucion/reuse', {
-            caja_id: id,
-            zona_id: locationPayload.zona_id,
-            seccion_id: locationPayload.seccion_id,
-            ...(thresholdPayload ? { reuse_threshold_sec: thresholdPayload } : {})
-          }, {
-            promptMessage: (payload) => payload?.confirm || payload?.error || `La caja ${cajaLabel} pertenece a otra sede. ¿Deseas trasladarla a tu sede actual?`
-          });
-          if(attempt.cancelled){
-            if(scanMsg) scanMsg.textContent = 'Operación cancelada.';
-            return;
+          reuseCajaId = id;
+          reuseLocationPayload = locationPayload;
+          const entry = scannedCajas.get(String(id)) || (data.cajas||[]).find(c=> String(c.id)===String(id));
+          const fallbackSensor = resolveComponentSensor(entry);
+          const sensorDisplay = entry && entry.sensorId ? String(entry.sensorId).trim() : fallbackSensor;
+          if(reuseSensor){ reuseSensor.textContent = sensorDisplay || '-'; }
+          if(reuseSerial){
+            reuseSerial.value = sensorDisplay || '';
+            reuseSerial.placeholder = sensorDisplay ? 'Confirma o cambia el serial' : 'Ingresa el serial';
           }
-          const payload = attempt.data || {};
-          if(!attempt.httpOk || payload.ok === false){
-            const message = payload.error || payload.message || `Error (${attempt.status || 0})`;
-            throw new Error(message);
+          if(reuseTemp){ reuseTemp.value = ''; }
+          const salidaDisplay = entry ? formatTempValue(entry.tempSalida) : '';
+          if(reuseSalidaWrap && reuseSalidaValue){
+            if(salidaDisplay){
+              reuseSalidaValue.textContent = salidaDisplay;
+              reuseSalidaWrap.classList.remove('hidden');
+            } else {
+              reuseSalidaValue.textContent = '-';
+              reuseSalidaWrap.classList.add('hidden');
+            }
           }
-          if(scanMsg) scanMsg.textContent='Caja enviada a Acondicionamiento · Ensamblaje';
-          await load();
-          removeScanned(id);
-          clearScanUI('');
+          const llegadaDisplay = entry ? formatTempValue(entry.tempLlegada) : '';
+          if(reuseLlegadaWrap && reuseLlegadaValue){
+            if(llegadaDisplay){
+              reuseLlegadaValue.textContent = llegadaDisplay;
+              reuseLlegadaWrap.classList.remove('hidden');
+            } else {
+              reuseLlegadaValue.textContent = '-';
+              reuseLlegadaWrap.classList.add('hidden');
+            }
+          }
+          if(scanMsg) scanMsg.textContent = 'Captura temperatura de llegada y serial para reutilizar.';
+          try{ decideDlg.close(); }catch{ decideDlg.classList.add('hidden'); }
+          try{ modal.close(); }catch{ modal.classList.add('hidden'); }
+          try { reuseDlg.showModal(); } catch { reuseDlg.classList.remove('hidden'); }
+          return;
         } else if(act==='insp'){
           // Abrir modal para horas/minutos; solo se envía tras Aceptar
           piCajaId = id;
@@ -1193,6 +1219,103 @@
         if(piSalidaWrap) piSalidaWrap.classList.add('hidden');
         try{ piDlg.close(); }catch{ piDlg.classList.add('hidden'); }
       }
+    }
+  });
+
+  function resetReuseModal(){
+    reuseCajaId = null;
+    reuseLocationPayload = null;
+    reuseTemp && (reuseTemp.value='');
+    reuseSerial && (reuseSerial.value='');
+    if(reuseSensor) reuseSensor.textContent = '-';
+    if(reuseSalidaWrap) reuseSalidaWrap.classList.add('hidden');
+    if(reuseLlegadaWrap) reuseLlegadaWrap.classList.add('hidden');
+  }
+
+  reuseCancel?.addEventListener('click', ()=>{
+    resetReuseModal();
+    try{ reuseDlg.close(); }catch{ reuseDlg.classList.add('hidden'); }
+  });
+
+  reuseAccept?.addEventListener('click', async ()=>{
+    if(!reuseCajaId){
+      resetReuseModal();
+      try{ reuseDlg.close(); }catch{ reuseDlg.classList.add('hidden'); }
+      return;
+    }
+    const tempInput = reuseTemp ? String(reuseTemp.value || '').trim() : '';
+    if(!tempInput){
+      if(scanMsg) scanMsg.textContent = 'Ingresa la temperatura de llegada.';
+      reuseTemp && reuseTemp.focus();
+      return;
+    }
+    const tempNumber = Number(tempInput.replace(',', '.'));
+    if(!Number.isFinite(tempNumber)){
+      if(scanMsg) scanMsg.textContent = 'Temperatura de llegada inválida.';
+      reuseTemp && reuseTemp.focus();
+      return;
+    }
+    const tempNormalized = Math.round(tempNumber * 100) / 100;
+    const serialInput = reuseSerial ? String(reuseSerial.value || '').trim() : '';
+    if(!serialInput){
+      if(scanMsg) scanMsg.textContent = 'Ingresa el serial.';
+      reuseSerial && reuseSerial.focus();
+      return;
+    }
+    const entry = scannedCajas.get(String(reuseCajaId)) || (data.cajas||[]).find(c=> String(c.id)===String(reuseCajaId));
+    const displayedSerial = reuseSensor && typeof reuseSensor.textContent === 'string' ? String(reuseSensor.textContent).trim() : '';
+    const fallbackSerial = resolveComponentSensor(entry);
+    const originalSerial = entry && entry.sensorId ? String(entry.sensorId).trim() : (displayedSerial || fallbackSerial);
+    const normalizeSerial = (s) => s.trim().toUpperCase();
+    const normalizedOriginal = originalSerial ? normalizeSerial(originalSerial) : '';
+    const normalizedInput = serialInput ? normalizeSerial(serialInput) : '';
+    let serialToSend = serialInput || null;
+    if(serialInput && normalizedOriginal && normalizedInput && normalizedOriginal !== normalizedInput){
+      const msg = `El serial ingresado (${serialInput || '—'}) es diferente al registrado (${originalSerial || '—'}).`;
+      if(typeof window !== 'undefined' && typeof window.alert === 'function'){
+        window.alert(msg);
+      }
+      const proceed = typeof window !== 'undefined' && typeof window.confirm === 'function'
+        ? window.confirm('¿Deseas continuar con el nuevo serial?')
+        : true;
+      if(!proceed){
+        if(scanMsg) scanMsg.textContent = 'Operación cancelada: verifica el serial.';
+        return;
+      }
+    }
+    const thresholdPayload = decisionState.thresholdSec != null && Number.isFinite(Number(decisionState.thresholdSec))
+      ? Math.max(1, Math.trunc(Number(decisionState.thresholdSec)))
+      : null;
+    try {
+      const cajaLabel = cajaLabelById(reuseCajaId);
+      if(scanMsg) scanMsg.textContent = 'Aplicando reutilización...';
+      const attempt = await postJSONWithSedeTransfer('/operacion/devolucion/reuse', {
+        caja_id: reuseCajaId,
+        zona_id: reuseLocationPayload?.zona_id,
+        seccion_id: reuseLocationPayload?.seccion_id,
+        temp_llegada_c: tempNormalized,
+        sensor_id: serialToSend,
+        ...(thresholdPayload ? { reuse_threshold_sec: thresholdPayload } : {})
+      }, {
+        promptMessage: (payload) => payload?.confirm || payload?.error || `La caja ${cajaLabel} pertenece a otra sede. ¿Deseas trasladarla a tu sede actual?`
+      });
+      if(attempt.cancelled){
+        if(scanMsg) scanMsg.textContent = 'Operación cancelada.';
+        return;
+      }
+      const payload = attempt.data || {};
+      if(!attempt.httpOk || payload.ok === false){
+        const message = payload.error || payload.message || `Error (${attempt.status || 0})`;
+        throw new Error(message);
+      }
+      if(scanMsg) scanMsg.textContent='Caja enviada a Acondicionamiento · Ensamblaje';
+      await load();
+      removeScanned(reuseCajaId);
+      clearScanUI('');
+    } catch(err){ if(scanMsg) scanMsg.textContent = err.message || 'Error'; }
+    finally {
+      resetReuseModal();
+      try{ reuseDlg.close(); }catch{ reuseDlg.classList.add('hidden'); }
     }
   });
 

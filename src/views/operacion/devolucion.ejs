@@ -129,5 +129,31 @@
   </div>
   <form method="dialog" class="modal-backdrop"><button>Cancelar</button></form>
 </dialog>
+<!-- Modal: Reutilizar caja (capturar temperatura y serial) -->
+<dialog id="dev-reuse" class="modal">
+  <div class="modal-box max-w-sm p-5 space-y-3">
+    <h3 class="font-semibold text-sm">Reutilizar caja</h3>
+    <p class="text-[11px] opacity-70">Ingresa la temperatura de llegada y confirma el serial. Al reutilizar se limpiarán las temperaturas de entrada y salida; el serial se conservará.</p>
+    <div class="grid gap-2 text-xs">
+      <label class="form-control">
+        <span class="label-text text-[11px] opacity-70">Temperatura de llegada (°C)</span>
+        <input id="dev-reuse-temp" type="number" inputmode="decimal" step="0.1" class="input input-sm input-bordered" placeholder="Ej. 3.2" />
+      </label>
+      <label class="form-control">
+        <span class="label-text text-[11px] opacity-70">Serial del dispositivo</span>
+        <input id="dev-reuse-serial" type="text" class="input input-sm input-bordered" placeholder="Confirma el serial" autocomplete="off" />
+      </label>
+      <div class="text-[11px] opacity-70">Sensor registrado: <span id="dev-reuse-sensor" class="font-mono">-</span></div>
+      <div id="dev-reuse-salida-wrap" class="text-[11px] opacity-70 hidden">Temp salida registrada: <span id="dev-reuse-salida" class="font-mono">-</span></div>
+      <div id="dev-reuse-llegada-wrap" class="text-[11px] opacity-70 hidden">Temp llegada registrada: <span id="dev-reuse-llegada" class="font-mono">-</span></div>
+      <div class="text-[11px] opacity-70">Al reutilizar se limpiarán las temperaturas de entrada y salida.</div>
+    </div>
+    <div class="flex gap-2 pt-2">
+      <button id="dev-reuse-accept" class="btn btn-sm btn-primary flex-1">Reutilizar</button>
+      <button id="dev-reuse-cancel" class="btn btn-sm">Cancelar</button>
+    </div>
+  </div>
+  <form method="dialog" class="modal-backdrop"><button>Cancelar</button></form>
+</dialog>
 <script src="/static/js/location-selector.js?v=<%= assetVersion %>" defer></script>
 <script src="/static/js/devolucion.js?v=<%= assetVersion %>" defer></script>

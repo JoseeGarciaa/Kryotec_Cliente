@@ -3073,11 +3073,25 @@ export const OperacionController = {
   devolucionCajaReuse: async (req: Request, res: Response) => {
     const tenant = (req as any).user?.tenant;
     const sedeId = getRequestSedeId(req);
-    const { caja_id } = req.body as any; const cajaId = Number(caja_id);
+    const { caja_id, temp_llegada_c: tempLlegadaRaw } = req.body as any; const cajaId = Number(caja_id);
     const allowSedeTransferFlag = resolveAllowSedeTransferFlag(req, req.body?.allowSedeTransfer);
     if(!Number.isFinite(cajaId) || cajaId<=0) return res.status(400).json({ ok:false, error:'caja_id invalido' });
     await ensureCajaOrdenesTable(tenant);
+    await ensureInventarioTempColumns(tenant);
     try {
+      const normalizeTemp = (input: any): number | undefined => {
+        if(input === undefined || input === null || input === '') return undefined;
+        const text = String(input).trim().replace(',', '.');
+        if(!text) return undefined;
+        const num = Number(text);
+        if(!Number.isFinite(num)) return NaN;
+        return Math.round(num * 100) / 100;
+      };
+      const tempLlegadaResult = normalizeTemp(tempLlegadaRaw);
+      if(Number.isNaN(tempLlegadaResult)){
+        return res.status(400).json({ ok:false, error:'Temperatura de llegada inválida.' });
+      }
+      const tempLlegadaValue = tempLlegadaResult === undefined ? null : tempLlegadaResult;
       const eligQ = await withTenant(tenant, (c)=> c.query(
         `SELECT COUNT(*)::int AS total,
                 SUM(CASE WHEN ic.estado='Operación' AND ic.sub_estado='Transito' THEN 1 ELSE 0 END)::int AS ok
@@ -3132,14 +3146,17 @@ export const OperacionController = {
           const orderIds = await collectCajaOrderIds(c, cajaId);
           await c.query(
             `UPDATE inventario_credocubes ic
-                SET estado='Acondicionamiento',
-                    sub_estado='Ensamblaje',
-                    zona_id = $3,
-                    seccion_id = $4,
-                    sede_id = COALESCE($2::int, ic.sede_id)
+                  SET estado='Acondicionamiento',
+                      sub_estado='Ensamblaje',
+                      zona_id = $3,
+                      seccion_id = $4,
+                            sede_id = COALESCE($2::int, ic.sede_id),
+                            temp_salida_c = NULL,
+                            temp_llegada_c = NULL,
+                            sensor_id = NULL
               WHERE ic.rfid = ANY($1::text[])
                 AND ic.estado='Operación'`,
-            [rfids, targetSede, zonaParam, seccionParam]
+                          [rfids, targetSede, zonaParam, seccionParam]
           );
           await c.query(`UPDATE inventario_credocubes SET numero_orden=NULL WHERE rfid = ANY($1::text[])`, [rfids]);
           await c.query(`UPDATE acond_cajas SET order_id = NULL WHERE caja_id=$1`, [cajaId]);
@@ -3147,7 +3164,7 @@ export const OperacionController = {
           await c.query('COMMIT');
         } catch(e){ await c.query('ROLLBACK'); throw e; }
       }, { allowCrossSedeTransfer: transferCheck.allowCrossTransfer });
-      res.json({ ok:true, caja_id: cajaId, order_id: null, reusada: true });
+      res.json({ ok:true, caja_id: cajaId, order_id: null, reusada: true, temp_llegada_c: tempLlegadaValue, temp_reset: true });
     } catch(e:any){ res.status(500).json({ ok:false, error: e.message||'Error reutilizando caja' }); }
   },
 
