@@ -5,10 +5,26 @@
       console.debug('SW register failed', err);
     });
   };
+  var lockOrientation = function(){
+    var target = 'portrait-primary';
+    try {
+      if (screen.orientation && screen.orientation.lock) {
+        var res = screen.orientation.lock(target);
+        if (res && typeof res.catch === 'function') res.catch(function(){});
+        return;
+      }
+      var legacy = screen.lockOrientation || screen.mozLockOrientation || screen.msLockOrientation;
+      if (legacy) legacy.call(screen, target);
+    } catch(_){ }
+  };
   if (document.readyState === 'complete' || document.readyState === 'interactive') {
     register();
+    lockOrientation();
   } else {
-    document.addEventListener('DOMContentLoaded', register);
+    document.addEventListener('DOMContentLoaded', function(){
+      register();
+      lockOrientation();
+    });
   }
 
   // Custom install prompt
