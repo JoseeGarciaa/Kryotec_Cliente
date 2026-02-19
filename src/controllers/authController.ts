@@ -247,6 +247,7 @@ export const AuthController = {
             });
 
             const sessionTtlMinutes = normalizeSessionTtl(user.sesion_ttl_minutos ?? config.security.defaultSessionMinutes);
+            const jwtTtlMinutes = Math.max(sessionTtlMinutes, config.security.maxSessionMinutes);
             const token = jwt.sign({
               sub: user.id,
               tenant,
@@ -257,13 +258,14 @@ export const AuthController = {
               sede_id: user.sede_id ?? null,
               sede_nombre: user.sede_nombre ?? null,
               mustChangePassword,
+              sessionTtlMinutes,
               sessionVersion: sessionMeta.sessionVersion,
-            }, config.jwtSecret, { expiresIn: `${sessionTtlMinutes}m` });
+            }, config.jwtSecret, { expiresIn: `${jwtTtlMinutes}m` });
             res.cookie('token', token, {
               httpOnly: true,
               sameSite: 'lax',
               secure: process.env.NODE_ENV === 'production',
-              maxAge: sessionTtlMinutes * 60 * 1000,
+              maxAge: jwtTtlMinutes * 60 * 1000,
             });
             const roleKey = resolveEffectiveRole(user) || normalizeRoleName(user.rol);
             if (mustChangePassword) {

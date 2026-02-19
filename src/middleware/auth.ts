@@ -7,6 +7,7 @@ import { runWithUserContext } from '../utils/userContext';
 import { withTenant } from '../db/pool';
 import { UsersModel } from '../models/User';
 import { ensureSecurityArtifacts } from '../services/securityBootstrap';
+import { normalizeSessionTtl } from '../utils/passwordPolicy';
 
 export async function requireAuth(req: Request, res: Response, next: NextFunction) {
   const token = req.cookies?.token;
@@ -71,7 +72,8 @@ export async function requireAuth(req: Request, res: Response, next: NextFunctio
     const payloadRoles = Array.isArray((payload as any)?.roles)
       ? (payload as any).roles
       : ((payload as any)?.roles ? [ (payload as any).roles ] : []);
-    const idleMinutes = Number((payload as any)?.sessionTtlMinutes || snapshot.sesion_ttl_minutos || config.security.defaultSessionMinutes);
+    const rawIdle = (payload as any)?.sessionTtlMinutes ?? snapshot.sesion_ttl_minutos ?? config.security.defaultSessionMinutes;
+    const idleMinutes = normalizeSessionTtl(rawIdle);
     (req as any).user = { ...payload, roles: payloadRoles, mustChangePassword, sesion_ttl_minutos: idleMinutes };
     (res.locals as any).user = { ...(res.locals as any).user, ...payload, roles: payloadRoles, mustChangePassword, sesion_ttl_minutos: idleMinutes };
     (res.locals as any).idleMinutes = idleMinutes;
