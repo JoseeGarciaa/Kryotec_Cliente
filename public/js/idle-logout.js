@@ -114,12 +114,10 @@
   setInterval(checkIdle, CHECK_MS);
 
   // Inicializar estado compartido si estaba vacío
-  const storedActivity = getSharedActivity();
-  const hasActivity = Number.isFinite(storedActivity) && storedActivity > 0;
-  if (!hasActivity) {
-    setSharedActivity(lastActivity);
-    setDeadline(lastActivity + IDLE_MS);
-  }
-  syncActivity(getSharedActivity());
+  // Siempre reiniciar al cargar para evitar timestamps viejos de otra sesión
+  lastActivity = Date.now();
+  setSharedActivity(lastActivity);
+  setDeadline(lastActivity + IDLE_MS);
+  syncActivity(lastActivity);
   checkIdle();
 })();
