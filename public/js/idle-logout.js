@@ -100,6 +100,7 @@
 
   // Renovar sesión mientras hay actividad reciente (evita expiración de token cuando el usuario está activo)
   setInterval(() => {
+    if (document.hidden) return; // evita refresh en segundo plano para no perder cookie si devuelve 401
     const globalLast = Math.max(lastActivity, getSharedActivity());
     const inactiveFor = Date.now() - globalLast;
     if (inactiveFor >= IDLE_MS) return; // ya está inactivo, el logout lo hará el timer
