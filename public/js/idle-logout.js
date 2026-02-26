@@ -2,6 +2,7 @@
   const IDLE_MINUTES = Math.max(1, Number(window.__IDLE_MINUTES__ || 10));
   const IDLE_MS = IDLE_MINUTES * 60 * 1000;
   const STORAGE_KEY = 'kryo:last-activity';
+  const DEADLINE_KEY = 'kryo:idle-deadline';
   let idleTimer;
   let lastActivity = Date.now();
   const REFRESH_MS = Math.max(120000, Math.min(IDLE_MS / 2, 5 * 60 * 1000)); // cada 2-5 min y siempre < idle
@@ -18,15 +19,29 @@
     try { localStorage.setItem(STORAGE_KEY, String(ts)); } catch {}
   }
 
+  function getDeadline(){
+    try {
+      const v = Number(localStorage.getItem(DEADLINE_KEY));
+      return Number.isFinite(v) ? v : 0;
+    } catch { return 0; }
+  }
+
+  function setDeadline(ts){
+    try { localStorage.setItem(DEADLINE_KEY, String(ts)); } catch {}
+  }
+
   function syncActivity(ts){
     if (!Number.isFinite(ts)) return;
     lastActivity = Math.max(lastActivity, ts);
-    scheduleFrom(lastActivity);
+    const deadline = lastActivity + IDLE_MS;
+    setSharedActivity(lastActivity);
+    setDeadline(deadline);
+    scheduleFromDeadline(deadline);
   }
 
-  function scheduleFrom(ts){
+  function scheduleFromDeadline(deadline){
     clearTimeout(idleTimer);
-    const remaining = IDLE_MS - Math.max(0, Date.now() - ts);
+    const remaining = deadline - Date.now();
     idleTimer = setTimeout(triggerLogout, Math.max(1000, remaining));
   }
 
@@ -50,19 +65,21 @@
 
   function resetTimer(){
     lastActivity = Date.now();
+    const deadline = lastActivity + IDLE_MS;
     setSharedActivity(lastActivity);
-    scheduleFrom(lastActivity);
+    setDeadline(deadline);
+    scheduleFromDeadline(deadline);
   }
 
   function checkIdle(){
     const globalLast = Math.max(lastActivity, getSharedActivity());
     lastActivity = globalLast;
-    const inactiveFor = Date.now() - globalLast;
-    if (inactiveFor >= IDLE_MS) {
+    const deadline = getDeadline() || (globalLast + IDLE_MS);
+    if (Date.now() >= deadline) {
       triggerLogout();
       return;
     }
-    scheduleFrom(globalLast);
+    scheduleFromDeadline(deadline);
   }
 
   ['click','mousemove','mousedown','keydown','scroll','touchstart','touchmove'].forEach((evt) => {
@@ -75,6 +92,10 @@
       const ts = Number(ev.newValue);
       if (Number.isFinite(ts)) syncActivity(ts);
     }
+  });
+
+  document.addEventListener('visibilitychange', () => {
+    if (!document.hidden) checkIdle();
   });
 
   // Renovar sesión mientras hay actividad reciente (evita expiración de token cuando el usuario está activo)
@@ -93,7 +114,12 @@
   setInterval(checkIdle, CHECK_MS);
 
   // Inicializar estado compartido si estaba vacío
-  if (!getSharedActivity()) setSharedActivity(lastActivity);
+  const storedActivity = getSharedActivity();
+  const hasActivity = Number.isFinite(storedActivity) && storedActivity > 0;
+  if (!hasActivity) {
+    setSharedActivity(lastActivity);
+    setDeadline(lastActivity + IDLE_MS);
+  }
   syncActivity(getSharedActivity());
   checkIdle();
 })();
