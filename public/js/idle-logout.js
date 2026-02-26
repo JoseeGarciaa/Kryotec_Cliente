@@ -5,6 +5,7 @@
   let idleTimer;
   let lastActivity = Date.now();
   const REFRESH_MS = Math.max(120000, Math.min(IDLE_MS / 2, 5 * 60 * 1000)); // cada 2-5 min y siempre < idle
+  const CHECK_MS = Math.min(60000, Math.max(5000, Math.round(IDLE_MS / 4))); // chequeo periódico para usar reloj real
 
   function getSharedActivity(){
     try {
@@ -20,8 +21,13 @@
   function syncActivity(ts){
     if (!Number.isFinite(ts)) return;
     lastActivity = Math.max(lastActivity, ts);
+    scheduleFrom(lastActivity);
+  }
+
+  function scheduleFrom(ts){
     clearTimeout(idleTimer);
-    idleTimer = setTimeout(triggerLogout, IDLE_MS - Math.max(0, Date.now() - lastActivity));
+    const remaining = IDLE_MS - Math.max(0, Date.now() - ts);
+    idleTimer = setTimeout(triggerLogout, Math.max(1000, remaining));
   }
 
   function triggerLogout(){
@@ -45,8 +51,18 @@
   function resetTimer(){
     lastActivity = Date.now();
     setSharedActivity(lastActivity);
-    clearTimeout(idleTimer);
-    idleTimer = setTimeout(triggerLogout, IDLE_MS);
+    scheduleFrom(lastActivity);
+  }
+
+  function checkIdle(){
+    const globalLast = Math.max(lastActivity, getSharedActivity());
+    lastActivity = globalLast;
+    const inactiveFor = Date.now() - globalLast;
+    if (inactiveFor >= IDLE_MS) {
+      triggerLogout();
+      return;
+    }
+    scheduleFrom(globalLast);
   }
 
   ['click','mousemove','mousedown','keydown','scroll','touchstart','touchmove'].forEach((evt) => {
@@ -73,7 +89,11 @@
       });
   }, REFRESH_MS);
 
+  // Chequeo periódico basado en reloj real (mitiga throttling de timers en segundo plano)
+  setInterval(checkIdle, CHECK_MS);
+
   // Inicializar estado compartido si estaba vacío
   if (!getSharedActivity()) setSharedActivity(lastActivity);
   syncActivity(getSharedActivity());
+  checkIdle();
 })();
