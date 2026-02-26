@@ -106,7 +106,9 @@
     fetch('/auth/refresh', { method: 'POST', credentials: 'include' })
       .catch(() => {})
       .then((res) => {
-        if (res && res.status === 401) triggerLogout();
+        // Si el refresh falla (401), no cerrar sesión de inmediato: deja que el idle cierre a los 10 min
+        // Esto evita que un refresh con cookie ausente o sesión invalidada en background saque al usuario antes de tiempo
+        if (res && res.status === 401) return;
       });
   }, REFRESH_MS);
 
