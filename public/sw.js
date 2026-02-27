@@ -34,24 +34,34 @@ self.addEventListener('fetch', event => {
   const url = new URL(req.url);
   // Same-origin cache strategies
   if (url.origin === self.location.origin) {
-    // Cache-first for static assets
-    if (url.pathname.startsWith('/static/') || ['style','script','image','font'].includes(req.destination)) {
+    const isStatic = url.pathname.startsWith('/static/') || ['style','script','image','font'].includes(req.destination);
+    const isAuth = url.pathname.startsWith('/auth');
+    const isManifestOrIcon = url.pathname.startsWith('/manifest') || url.pathname.startsWith('/icons');
+    const isNav = req.mode === 'navigate';
+
+    // Cache-first only for static assets and manifest/icons
+    if (isStatic || isManifestOrIcon) {
       event.respondWith(
         caches.match(req).then(res => res || fetch(req).then(resp => {
           const copy = resp.clone();
           caches.open(STATIC_CACHE).then(cache => cache.put(req, copy));
           return resp;
-        }).catch(()=>caches.match(OFFLINE_URL)))
+        }).catch(() => caches.match(OFFLINE_URL)))
       );
       return;
     }
-    // Network-first for pages/API, fallback to cache
+
+    // For auth and navigation, avoid caching responses; fallback to offline shell
+    if (isNav || isAuth) {
+      event.respondWith(
+        fetch(req).catch(() => caches.match(OFFLINE_URL))
+      );
+      return;
+    }
+
+    // For other same-origin GET (APIs), use network-only with offline fallback
     event.respondWith(
-      fetch(req).then(resp => {
-        const copy = resp.clone();
-        caches.open(STATIC_CACHE).then(cache => cache.put(req, copy));
-        return resp;
-      }).catch(() => caches.match(req).then(r => r || caches.match(OFFLINE_URL)))
+      fetch(req).catch(() => caches.match(OFFLINE_URL))
     );
   }
 });
