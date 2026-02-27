@@ -3150,16 +3150,17 @@ export const OperacionController = {
                       sub_estado='Ensamblaje',
                       zona_id = $3,
                       seccion_id = $4,
-                            sede_id = COALESCE($2::int, ic.sede_id),
-                            temp_salida_c = NULL,
-                            temp_llegada_c = NULL,
-                            sensor_id = NULL
+                      sede_id = COALESCE($2::int, ic.sede_id),
+                      temp_salida_c = NULL,
+                      temp_llegada_c = NULL,
+                      sensor_id = NULL
               WHERE ic.rfid = ANY($1::text[])
                 AND ic.estado='Operación'`,
                           [rfids, targetSede, zonaParam, seccionParam]
           );
           await c.query(`UPDATE inventario_credocubes SET numero_orden=NULL WHERE rfid = ANY($1::text[])`, [rfids]);
           await c.query(`UPDATE acond_cajas SET order_id = NULL WHERE caja_id=$1`, [cajaId]);
+          await c.query(`DELETE FROM acond_caja_ordenes WHERE caja_id = $1`, [cajaId]);
           await disableOrdersByIds(c, orderIds);
           await c.query('COMMIT');
         } catch(e){ await c.query('ROLLBACK'); throw e; }
