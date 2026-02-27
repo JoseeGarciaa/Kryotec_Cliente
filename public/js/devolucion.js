@@ -1244,24 +1244,17 @@
       return;
     }
     const tempInput = reuseTemp ? String(reuseTemp.value || '').trim() : '';
-    if(!tempInput){
-      if(scanMsg) scanMsg.textContent = 'Ingresa la temperatura de llegada.';
-      reuseTemp && reuseTemp.focus();
-      return;
+    let tempNormalized = null;
+    if(tempInput){
+      const tempNumber = Number(tempInput.replace(',', '.'));
+      if(!Number.isFinite(tempNumber)){
+        if(scanMsg) scanMsg.textContent = 'Temperatura de llegada inválida.';
+        reuseTemp && reuseTemp.focus();
+        return;
+      }
+      tempNormalized = Math.round(tempNumber * 100) / 100;
     }
-    const tempNumber = Number(tempInput.replace(',', '.'));
-    if(!Number.isFinite(tempNumber)){
-      if(scanMsg) scanMsg.textContent = 'Temperatura de llegada inválida.';
-      reuseTemp && reuseTemp.focus();
-      return;
-    }
-    const tempNormalized = Math.round(tempNumber * 100) / 100;
     const serialInput = reuseSerial ? String(reuseSerial.value || '').trim() : '';
-    if(!serialInput){
-      if(scanMsg) scanMsg.textContent = 'Ingresa el serial.';
-      reuseSerial && reuseSerial.focus();
-      return;
-    }
     const entry = scannedCajas.get(String(reuseCajaId)) || (data.cajas||[]).find(c=> String(c.id)===String(reuseCajaId));
     const displayedSerial = reuseSensor && typeof reuseSensor.textContent === 'string' ? String(reuseSensor.textContent).trim() : '';
     const fallbackSerial = resolveComponentSensor(entry);
