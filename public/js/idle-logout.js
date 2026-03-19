@@ -5,6 +5,7 @@
   let lastActivity = Date.now();
   const REFRESH_MS = Math.min(60000, Math.max(15000, Math.round(IDLE_MS / 6))); // cada 15-60s
   let refreshInFlight = false;
+  let unauthorizedRetryInFlight = false;
 
   function getSharedActivity(){
     try {
@@ -44,6 +45,18 @@
       .catch(() => ({ ok: false, status: 0 }));
   }
 
+  function handleUnauthorized(){
+    if (unauthorizedRetryInFlight) return;
+    unauthorizedRetryInFlight = true;
+    setTimeout(() => {
+      refreshSession().then((retry) => {
+        if (retry.status === 401) triggerLogout();
+      }).finally(() => {
+        unauthorizedRetryInFlight = false;
+      });
+    }, 1200);
+  }
+
   function checkSession(){
     if (document.hidden) return;
     if (refreshInFlight) return;
@@ -56,7 +69,7 @@
     if (inactiveFor < IDLE_MS) {
       refreshInFlight = true;
       refreshSession().then((res) => {
-        if (res.status === 401) triggerLogout();
+        if (res.status === 401) handleUnauthorized();
       }).finally(() => {
         refreshInFlight = false;
       });
@@ -65,7 +78,7 @@
 
     refreshInFlight = true;
     refreshSession().then((res) => {
-      if (res.status === 401) triggerLogout();
+      if (res.status === 401) handleUnauthorized();
     }).finally(() => {
       refreshInFlight = false;
     });
