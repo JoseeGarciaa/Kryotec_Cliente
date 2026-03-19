@@ -3,7 +3,6 @@
   const IDLE_MS = IDLE_MINUTES * 60 * 1000;
   const BACKGROUND_GRACE_MS = Math.max(30000, Math.min(60000, Math.round(IDLE_MS * 0.1)));
   const STORAGE_KEY = 'kryo:last-activity';
-  const DEADLINE_KEY = 'kryo:idle-deadline';
   let idleTimer;
   let lastActivity = Date.now();
   let hiddenAt = 0;
@@ -22,29 +21,16 @@
     try { localStorage.setItem(STORAGE_KEY, String(ts)); } catch {}
   }
 
-  function getDeadline(){
-    try {
-      const v = Number(localStorage.getItem(DEADLINE_KEY));
-      return Number.isFinite(v) ? v : 0;
-    } catch { return 0; }
-  }
-
-  function setDeadline(ts){
-    try { localStorage.setItem(DEADLINE_KEY, String(ts)); } catch {}
-  }
-
   function syncActivity(ts){
     if (!Number.isFinite(ts)) return;
     lastActivity = Math.max(lastActivity, ts);
-    const deadline = lastActivity + IDLE_MS;
     setSharedActivity(lastActivity);
-    setDeadline(deadline);
-    scheduleFromDeadline(deadline);
+    scheduleFromLastActivity(lastActivity);
   }
 
-  function scheduleFromDeadline(deadline){
+  function scheduleFromLastActivity(baseTs){
     clearTimeout(idleTimer);
-    const remaining = deadline - Date.now();
+    const remaining = (baseTs + IDLE_MS) - Date.now();
     idleTimer = setTimeout(triggerLogout, Math.max(1000, remaining));
   }
 
@@ -68,10 +54,8 @@
 
   function resetTimer(){
     lastActivity = Date.now();
-    const deadline = lastActivity + IDLE_MS;
     setSharedActivity(lastActivity);
-    setDeadline(deadline);
-    scheduleFromDeadline(deadline);
+    scheduleFromLastActivity(lastActivity);
   }
 
   function refreshSession(){
@@ -84,10 +68,10 @@
     const allowGrace = Boolean(opts && opts.allowGrace);
     const globalLast = Math.max(lastActivity, getSharedActivity());
     lastActivity = globalLast;
-    const deadline = getDeadline() || (globalLast + IDLE_MS);
     const now = Date.now();
-    if (now >= deadline) {
-      const overdue = now - deadline;
+    const inactiveFor = now - globalLast;
+    if (inactiveFor >= IDLE_MS) {
+      const overdue = inactiveFor - IDLE_MS;
       if (allowGrace && overdue <= BACKGROUND_GRACE_MS) {
         if (graceRefreshInFlight) return;
         graceRefreshInFlight = true;
@@ -101,7 +85,7 @@
       triggerLogout();
       return;
     }
-    scheduleFromDeadline(deadline);
+    scheduleFromLastActivity(globalLast);
   }
 
   ['click','mousemove','mousedown','keydown','scroll','touchstart','touchmove','pointerdown','pointermove'].forEach((evt) => {
@@ -144,7 +128,6 @@
   // Siempre reiniciar al cargar para evitar timestamps viejos de otra sesión
   lastActivity = Date.now();
   setSharedActivity(lastActivity);
-  setDeadline(lastActivity + IDLE_MS);
   syncActivity(lastActivity);
   checkIdle();
 })();
