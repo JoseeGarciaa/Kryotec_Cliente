@@ -1,10 +1,13 @@
 (function(){
   const IDLE_MINUTES = Math.max(1, Number(window.__IDLE_MINUTES__ || 10));
   const IDLE_MS = IDLE_MINUTES * 60 * 1000;
+  const BACKGROUND_GRACE_MS = Math.max(30000, Math.min(60000, Math.round(IDLE_MS * 0.1)));
   const STORAGE_KEY = 'kryo:last-activity';
   const DEADLINE_KEY = 'kryo:idle-deadline';
   let idleTimer;
   let lastActivity = Date.now();
+  let hiddenAt = 0;
+  let graceRefreshInFlight = false;
   const REFRESH_MS = Math.max(120000, Math.min(IDLE_MS / 2, 5 * 60 * 1000)); // cada 2-5 min y siempre < idle
   const CHECK_MS = Math.min(60000, Math.max(5000, Math.round(IDLE_MS / 4))); // chequeo periódico para usar reloj real
 
@@ -71,20 +74,41 @@
     scheduleFromDeadline(deadline);
   }
 
-  function checkIdle(){
+  function refreshSession(){
+    return fetch('/auth/refresh', { method: 'POST', credentials: 'include' })
+      .then((res) => Boolean(res && res.ok))
+      .catch(() => false);
+  }
+
+  function checkIdle(opts){
+    const allowGrace = Boolean(opts && opts.allowGrace);
     const globalLast = Math.max(lastActivity, getSharedActivity());
     lastActivity = globalLast;
     const deadline = getDeadline() || (globalLast + IDLE_MS);
-    if (Date.now() >= deadline) {
+    const now = Date.now();
+    if (now >= deadline) {
+      const overdue = now - deadline;
+      if (allowGrace && overdue <= BACKGROUND_GRACE_MS) {
+        if (graceRefreshInFlight) return;
+        graceRefreshInFlight = true;
+        refreshSession()
+          .finally(() => {
+            graceRefreshInFlight = false;
+            syncActivity(Date.now());
+          });
+        return;
+      }
       triggerLogout();
       return;
     }
     scheduleFromDeadline(deadline);
   }
 
-  ['click','mousemove','mousedown','keydown','scroll','touchstart','touchmove'].forEach((evt) => {
+  ['click','mousemove','mousedown','keydown','scroll','touchstart','touchmove','pointerdown','pointermove'].forEach((evt) => {
     window.addEventListener(evt, resetTimer, { passive: true });
   });
+  window.addEventListener('focus', resetTimer);
+  window.addEventListener('pageshow', resetTimer);
 
   // Sincronizar actividad entre pestañas/ventanas
   window.addEventListener('storage', (ev) => {
@@ -95,7 +119,13 @@
   });
 
   document.addEventListener('visibilitychange', () => {
-    if (!document.hidden) checkIdle();
+    if (document.hidden) {
+      hiddenAt = Date.now();
+      return;
+    }
+    const wasBackgrounded = hiddenAt > 0;
+    hiddenAt = 0;
+    checkIdle({ allowGrace: wasBackgrounded });
   });
 
   // Renovar sesión mientras hay actividad reciente (evita expiración de token cuando el usuario está activo)
@@ -104,17 +134,11 @@
     const globalLast = Math.max(lastActivity, getSharedActivity());
     const inactiveFor = Date.now() - globalLast;
     if (inactiveFor >= IDLE_MS) return; // ya está inactivo, el logout lo hará el timer
-    fetch('/auth/refresh', { method: 'POST', credentials: 'include' })
-      .catch(() => {})
-      .then((res) => {
-        // Si el refresh falla (401), no cerrar sesión de inmediato: deja que el idle cierre a los 10 min
-        // Esto evita que un refresh con cookie ausente o sesión invalidada en background saque al usuario antes de tiempo
-        if (res && res.status === 401) return;
-      });
+    refreshSession();
   }, REFRESH_MS);
 
   // Chequeo periódico basado en reloj real (mitiga throttling de timers en segundo plano)
-  setInterval(checkIdle, CHECK_MS);
+  setInterval(() => checkIdle(), CHECK_MS);
 
   // Inicializar estado compartido si estaba vacío
   // Siempre reiniciar al cargar para evitar timestamps viejos de otra sesión
