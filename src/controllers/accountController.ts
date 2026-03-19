@@ -101,6 +101,7 @@ export const AccountController = {
           sede_id: current.sede_id ?? null,
         });
         if (updated) {
+          const ttlMinutes = normalizeSessionTtl(updated.sesion_ttl_minutos ?? config.security.defaultSessionMinutes);
           // Refrescar cookie JWT para reflejar inmediatamente el nuevo nombre/correo
           const token = jwt.sign({
             sub: updated.id,
@@ -111,8 +112,9 @@ export const AccountController = {
             correo: updated.correo,
             sede_id: updated.sede_id ?? null,
             sede_nombre: updated.sede_nombre ?? null,
-          }, config.jwtSecret, { expiresIn: '120m' });
-          res.cookie('token', token, { httpOnly: true, sameSite: 'lax', secure: process.env.NODE_ENV === 'production', maxAge: 120*60*1000 });
+            sessionTtlMinutes: ttlMinutes,
+          }, config.jwtSecret, { expiresIn: `${ttlMinutes}m` });
+          res.cookie('token', token, { httpOnly: true, sameSite: 'lax', secure: process.env.NODE_ENV === 'production', maxAge: ttlMinutes * 60 * 1000 });
         }
       });
       return res.redirect('/cuenta');

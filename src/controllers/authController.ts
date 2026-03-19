@@ -138,7 +138,7 @@ export const AuthController = {
       });
 
       const sessionTtlMinutes = normalizeSessionTtl(user.sesion_ttl_minutos ?? config.security.defaultSessionMinutes);
-      const jwtTtlMinutes = Math.max(sessionTtlMinutes, config.security.maxSessionMinutes); // sesión absoluta más larga; idle la controla el front
+      const jwtTtlMinutes = sessionTtlMinutes;
       const token = jwt.sign({
         sub: user.id,
         tenant: tenantSchema,
@@ -247,7 +247,7 @@ export const AuthController = {
             });
 
             const sessionTtlMinutes = normalizeSessionTtl(user.sesion_ttl_minutos ?? config.security.defaultSessionMinutes);
-            const jwtTtlMinutes = Math.max(sessionTtlMinutes, config.security.maxSessionMinutes);
+            const jwtTtlMinutes = sessionTtlMinutes;
             const token = jwt.sign({
               sub: user.id,
               tenant,
@@ -318,7 +318,7 @@ export const AuthController = {
       }
 
       const sessionTtlMinutes = normalizeSessionTtl(snapshot.sesion_ttl_minutos ?? config.security.defaultSessionMinutes);
-      const jwtTtlMinutes = Math.max(sessionTtlMinutes, config.security.maxSessionMinutes);
+      const jwtTtlMinutes = sessionTtlMinutes;
       const payload = {
         ...decoded,
         sessionVersion: snapshot.session_version,

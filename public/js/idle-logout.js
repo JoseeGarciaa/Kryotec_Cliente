@@ -1,14 +1,10 @@
 (function(){
   const IDLE_MINUTES = Math.max(1, Number(window.__IDLE_MINUTES__ || 10));
   const IDLE_MS = IDLE_MINUTES * 60 * 1000;
-  const BACKGROUND_GRACE_MS = Math.max(30000, Math.min(60000, Math.round(IDLE_MS * 0.1)));
   const STORAGE_KEY = 'kryo:last-activity';
-  let idleTimer;
   let lastActivity = Date.now();
-  let hiddenAt = 0;
-  let graceRefreshInFlight = false;
-  const REFRESH_MS = Math.max(120000, Math.min(IDLE_MS / 2, 5 * 60 * 1000)); // cada 2-5 min y siempre < idle
-  const CHECK_MS = Math.min(60000, Math.max(5000, Math.round(IDLE_MS / 4))); // chequeo periódico para usar reloj real
+  const REFRESH_MS = Math.min(60000, Math.max(15000, Math.round(IDLE_MS / 6))); // cada 15-60s
+  let refreshInFlight = false;
 
   function getSharedActivity(){
     try {
@@ -25,24 +21,9 @@
     if (!Number.isFinite(ts)) return;
     lastActivity = Math.max(lastActivity, ts);
     setSharedActivity(lastActivity);
-    scheduleFromLastActivity(lastActivity);
-  }
-
-  function scheduleFromLastActivity(baseTs){
-    clearTimeout(idleTimer);
-    const remaining = (baseTs + IDLE_MS) - Date.now();
-    idleTimer = setTimeout(triggerLogout, Math.max(1000, remaining));
   }
 
   function triggerLogout(){
-    // Verificar actividad en otras pestañas antes de cerrar sesión
-    const shared = getSharedActivity();
-    const now = Date.now();
-    if (shared && now - shared < IDLE_MS) {
-      syncActivity(shared);
-      return;
-    }
-
     const form = document.getElementById('logout-form');
     if (form) {
       try { form.submit(); return; } catch(e) {}
@@ -55,37 +36,39 @@
   function resetTimer(){
     lastActivity = Date.now();
     setSharedActivity(lastActivity);
-    scheduleFromLastActivity(lastActivity);
   }
 
   function refreshSession(){
     return fetch('/auth/refresh', { method: 'POST', credentials: 'include' })
-      .then((res) => Boolean(res && res.ok))
-      .catch(() => false);
+      .then((res) => ({ ok: Boolean(res && res.ok), status: Number(res?.status || 0) }))
+      .catch(() => ({ ok: false, status: 0 }));
   }
 
-  function checkIdle(opts){
-    const allowGrace = Boolean(opts && opts.allowGrace);
+  function checkSession(){
+    if (document.hidden) return;
+    if (refreshInFlight) return;
+
     const globalLast = Math.max(lastActivity, getSharedActivity());
     lastActivity = globalLast;
-    const now = Date.now();
-    const inactiveFor = now - globalLast;
-    if (inactiveFor >= IDLE_MS) {
-      const overdue = inactiveFor - IDLE_MS;
-      if (allowGrace && overdue <= BACKGROUND_GRACE_MS) {
-        if (graceRefreshInFlight) return;
-        graceRefreshInFlight = true;
-        refreshSession()
-          .finally(() => {
-            graceRefreshInFlight = false;
-            syncActivity(Date.now());
-          });
-        return;
-      }
-      triggerLogout();
+
+    const inactiveFor = Date.now() - globalLast;
+    // El servidor decide expiración real. El cliente solo consulta y evita refresh durante inactividad larga.
+    if (inactiveFor < IDLE_MS) {
+      refreshInFlight = true;
+      refreshSession().then((res) => {
+        if (res.status === 401) triggerLogout();
+      }).finally(() => {
+        refreshInFlight = false;
+      });
       return;
     }
-    scheduleFromLastActivity(globalLast);
+
+    refreshInFlight = true;
+    refreshSession().then((res) => {
+      if (res.status === 401) triggerLogout();
+    }).finally(() => {
+      refreshInFlight = false;
+    });
   }
 
   ['click','mousemove','mousedown','keydown','scroll','touchstart','touchmove','pointerdown','pointermove'].forEach((evt) => {
@@ -103,31 +86,16 @@
   });
 
   document.addEventListener('visibilitychange', () => {
-    if (document.hidden) {
-      hiddenAt = Date.now();
-      return;
-    }
-    const wasBackgrounded = hiddenAt > 0;
-    hiddenAt = 0;
-    checkIdle({ allowGrace: wasBackgrounded });
+    if (document.hidden) return;
+    checkSession();
   });
 
-  // Renovar sesión mientras hay actividad reciente (evita expiración de token cuando el usuario está activo)
-  setInterval(() => {
-    if (document.hidden) return; // evita refresh en segundo plano para no perder cookie si devuelve 401
-    const globalLast = Math.max(lastActivity, getSharedActivity());
-    const inactiveFor = Date.now() - globalLast;
-    if (inactiveFor >= IDLE_MS) return; // ya está inactivo, el logout lo hará el timer
-    refreshSession();
-  }, REFRESH_MS);
-
-  // Chequeo periódico basado en reloj real (mitiga throttling de timers en segundo plano)
-  setInterval(() => checkIdle(), CHECK_MS);
+  setInterval(checkSession, REFRESH_MS);
 
   // Inicializar estado compartido si estaba vacío
   // Siempre reiniciar al cargar para evitar timestamps viejos de otra sesión
   lastActivity = Date.now();
   setSharedActivity(lastActivity);
   syncActivity(lastActivity);
-  checkIdle();
+  checkSession();
 })();
