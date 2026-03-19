@@ -319,8 +319,9 @@ export const AuthController = {
 
       const sessionTtlMinutes = normalizeSessionTtl(snapshot.sesion_ttl_minutos ?? config.security.defaultSessionMinutes);
       const jwtTtlMinutes = sessionTtlMinutes;
+      const { exp, iat, nbf, ...safeDecoded } = decoded;
       const payload = {
-        ...decoded,
+        ...safeDecoded,
         sessionVersion: snapshot.session_version,
         sessionTtlMinutes,
       };
